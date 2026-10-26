@@ -130,6 +130,39 @@ test('cancel intent wins over an in-flight PR reconciliation before auto-merge c
   assert.equal(job.mergeArmed, false);
 });
 
+test('PR merged during disarm returns to delivery reconciliation instead of remaining cancelling', async t => {
+  const { repo } = await repository(t);
+  const head = await git(repo.root, 'rev-parse', 'HEAD');
+  const pull = { number: 19, state: 'OPEN', baseRefName: 'main', headRefOid: head, mergeCommit: { oid: head }, isDraft: false, reviewDecision: null, statusCheckRollup: [], autoMergeRequest: {} };
+  const github = {
+    pull: async () => ({ ...pull }),
+    disableAutoMerge: async () => { pull.state = 'MERGED'; pull.autoMergeRequest = null; },
+    feedback: async () => ({ items: [], hash: 'empty' }),
+    approvals: async () => ({ approved: 0, changesRequested: false }),
+    merge: async () => assert.fail('A landed PR must not be armed again.'),
+    closeIssue: async () => { github.closed = true; },
+    progress: async () => {}, issue: async () => issue(9),
+  };
+  const c = coordinator({ repo, github });
+  c.base = async () => head;
+  c.state = { version: 1, repository: 'example/project', jobs: [] };
+  c.wake = async () => {};
+  const job = {
+    issue: 9, branch: 'symphony/issue-9', worktree: repo.root, phase: 'waiting',
+    threadId: 'thread-9', prepared: true, pr: 19, acceptanceComplete: true,
+    checkBase: head, checkHead: head, mergeArmed: true, feedbackSeen: [],
+  };
+  c.state.jobs.push(job);
+
+  await assert.rejects(c.cancel(9), /cannot be cancelled because PR #19 already landed/);
+  assert.equal(job.phase, 'waiting');
+  assert.equal(job.intent, null);
+  await c.reconcilePull(job, head);
+  assert.equal(job.phase, 'complete');
+  assert.equal(job.mergedCommit, head);
+  assert.equal(github.closed, true);
+});
+
 test('queued control survives a crash and remains pending when acknowledgement loses ownership', async t => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'symphony-controls-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
