@@ -219,7 +219,10 @@ export class CodexClient extends EventEmitter {
       this._reportError(new Error(`Invalid JSON from Codex App Server: ${line.slice(0, 500)}`, { cause }));
       return;
     }
-    if (!message || typeof message !== 'object' || message.jsonrpc !== '2.0') {
+    // Codex App Server 0.164.0's stdio transport emits JSON-RPC-shaped
+    // objects without the optional `jsonrpc` member. Accept that wire form,
+    // while rejecting an explicitly incompatible protocol version.
+    if (!message || typeof message !== 'object' || (message.jsonrpc !== undefined && message.jsonrpc !== '2.0')) {
       this._reportError(new Error('Invalid JSON-RPC frame from Codex App Server'));
       return;
     }
