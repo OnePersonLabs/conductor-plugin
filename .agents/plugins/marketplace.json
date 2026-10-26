@@ -1,0 +1,20 @@
+{
+  "name": "symphony-lite",
+  "interface": {
+    "displayName": "Symphony Lite"
+  },
+  "plugins": [
+    {
+      "name": "symphony-lite",
+      "source": {
+        "source": "local",
+        "path": "./plugins/symphony-lite"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

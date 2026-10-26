@@ -1,0 +1,14 @@
+{
+  "name": "symphony-lite",
+  "version": "0.1.0",
+  "description": "Foreground Codex workers for authorized GitHub issue-to-PR delivery.",
+  "license": "MIT",
+  "repository": "https://github.com/OnePersonLabs/symphony-lite",
+  "keywords": ["github", "codex", "workflow", "issue-tracking", "pull-requests"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Symphony Lite",
+    "shortDescription": "Run an explicitly authorized foreground GitHub issue workflow",
+    "longDescription": "Selects eligible GitHub issues under an explicitly configured repository policy, starts or resumes Codex builders in separate worktrees, runs configured checks, opens pull requests, routes review and check failures to the original builder, and reconciles landing. Installation alone never starts production work."
+  }
+}

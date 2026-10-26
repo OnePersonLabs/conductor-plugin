@@ -13,6 +13,7 @@
     "test": "node --test tests/*.test.mjs",
     "test:contract": "node tools/verify.mjs contract",
     "test:unit": "node tools/verify.mjs unit",
+    "test:docs": "node tools/verify.mjs docs",
     "test:installed": "node tools/verify.mjs installed",
     "verify": "node tools/verify.mjs verify"
   }

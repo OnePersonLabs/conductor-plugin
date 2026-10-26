@@ -1,0 +1,6 @@
+interface:
+  display_name: "Set up repository workflow"
+  short_description: "Configure native issue and review workflow"
+  default_prompt: "Use $symphony-lite:setup-repo-workflow to inspect and explicitly configure this repository's issue-to-PR workflow."
+policy:
+  allow_implicit_invocation: false
