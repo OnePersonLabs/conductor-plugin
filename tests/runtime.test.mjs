@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, mkdir, rm, symlink } from 'node:fs/promises';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
-import { git } from '../plugins/symphony-lite/lib/process.mjs';
+import { git, run } from '../plugins/symphony-lite/lib/process.mjs';
 import { validateConfig, duration } from '../plugins/symphony-lite/lib/config.mjs';
 import { admission, WakeLoop } from '../plugins/symphony-lite/lib/scheduler.mjs';
 import { Store, atomicJSON } from '../plugins/symphony-lite/lib/state.mjs';
@@ -16,6 +17,15 @@ import { parseArgs } from '../plugins/symphony-lite/bin/symphony-lite.mjs';
 
 const issue = (number, labels = ['symphony:ready']) => ({ number, title: `Task ${number}`, body: `Write task ${number}`, state: 'open', labels, created_at: '2026-01-01' });
 const config = () => validateConfig({ repository: 'example/project', baseBranch: 'main', authorized: true, checks: [{ command: process.execPath, args: ['check.mjs'] }] });
+
+test('npm-style linked CLI executes its entry point through spaces and Unicode', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'symphony-cli-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const alias = join(dir, 'linked package café');
+  await symlink(fileURLToPath(new URL('../plugins/symphony-lite', import.meta.url)), alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const result = await run(process.execPath, [join(alias, 'bin/symphony-lite.mjs'), '--version'], { cwd: dir });
+  assert.equal(result.stdout.trim(), '0.1.0');
+});
 async function until(predicate, message = 'condition', timeout = 15000) {
   const end = Date.now() + timeout;
   while (!await predicate()) { if (Date.now() > end) throw new Error(`Timed out waiting for ${message}`); await delay(10); }
