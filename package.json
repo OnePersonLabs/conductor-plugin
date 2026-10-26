@@ -1,0 +1,19 @@
+{
+  "name": "symphony-lite",
+  "version": "0.1.0",
+  "description": "A foreground Codex worker pool for GitHub issue-to-PR delivery",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "repository": "https://github.com/OnePersonLabs/symphony-lite",
+  "engines": { "node": ">=24" },
+  "bin": { "symphony-lite": "plugins/symphony-lite/bin/symphony-lite.mjs" },
+  "files": ["plugins/symphony-lite", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:contract": "node tools/verify.mjs contract",
+    "test:unit": "node tools/verify.mjs unit",
+    "test:installed": "node tools/verify.mjs installed",
+    "verify": "node tools/verify.mjs verify"
+  }
+}
