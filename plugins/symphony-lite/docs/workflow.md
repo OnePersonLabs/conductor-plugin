@@ -68,16 +68,26 @@ symphony-lite signal
 symphony-lite stop
 symphony-lite cancel 42
 symphony-lite resume 42
+symphony-lite resume 42 --thread THREAD_ID
 ```
 
 `status` reads saved state. `signal` asks the active process to scan now. `stop`
 gracefully stops admission, interrupts active turns, and preserves recovery
 state. `cancel ISSUE` disables automatic redispatch for that owned issue and
 retains its branch and worktree. `resume ISSUE` is an explicit request to
-continue a stopped or blocked issue, or one marked uncertain after its original
-thread and process ownership have been reconciled. Inspect status and the
-worktree first. Resume never creates a replacement conversation for an
-unresolved launch.
+continue a stopped or blocked issue. If startup stopped before saving a thread
+ID, the runtime lists Codex threads for that issue's exact saved worktree and
+adopts the sole candidate only. If none or several match, it blocks and asks you
+to inspect the candidates, then choose one with
+`symphony-lite resume ISSUE --thread THREAD_ID`. A selected thread must belong
+to that exact worktree and have no active turn. If the issue already has a saved
+thread ID, `--thread` cannot replace it. Inspect status and the worktree before
+resuming; unresolved thread ownership never starts a replacement builder.
+
+`status` includes the ten most recent completed control-command receipts and
+their errors. Commands submitted while the process is stopping remain queued
+until the next run can acknowledge them. Check status after startup to confirm
+the outcome.
 
 When the foreground terminal displays a Codex permission or input request, read
 the request before answering. Use its displayed key and an explicit response:
@@ -107,6 +117,11 @@ launch must remain blocked until its ownership is understood; do not start a
 second builder in the same issue directory or infer that a turn was delivered.
 If a check modified the worktree or left files uncommitted, have the original
 builder reconcile that work before delivery.
+
+Review and failed-check feedback is saved with the issue until a repair build
+succeeds. If the process stops during repair, inspect the saved pending feedback
+and resume the same issue and thread; do not discard the evidence or start a new
+builder to get a clean prompt.
 
 `maxTurns`, when configured, caps the total persisted Codex turns for a bounded
 qualification run. A limit reached stops further turns; inspect status and

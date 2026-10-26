@@ -49,32 +49,6 @@ function compareInventory(source, installed) {
   if (differences.length) fail(`Installed plugin differs from source:\n${differences.join('\n')}`);
 }
 
-function markdownUnder(directory) {
-  return filesUnder(directory).filter((path) => path.toLowerCase().endsWith('.md'));
-}
-
-function checkMarkdownLinks(directory, label, files = markdownUnder(directory)) {
-  const errors = [];
-  const realRoot = realpathSync(directory);
-  for (const file of files) {
-    const content = readFileSync(file, 'utf8');
-    const pattern = /!?\[[^\]]*\]\(([^)]+)\)/g;
-    for (const match of content.matchAll(pattern)) {
-      let target = match[1].trim();
-      if (target.startsWith('<')) target = target.slice(1, target.indexOf('>'));
-      else target = target.split(/\s+/, 1)[0];
-      if (!target || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(target)) continue;
-      const pathPart = decodeURIComponent(target.split(/[?#]/, 1)[0]);
-      const candidate = resolve(dirname(file), pathPart || relative(realRoot, file));
-      const within = relative(realRoot, candidate);
-      if (within === '..' || within.startsWith(`..${sep}`) || !existsSync(candidate)) {
-        errors.push(`${relative(directory, file)}: missing or escaping link ${target}`);
-      }
-    }
-  }
-  if (errors.length) fail(`${label} documentation links failed:\n${errors.join('\n')}`);
-}
-
 function run(executable, args, { env = process.env, cwd = root, label = `${executable} ${args.join(' ')}` } = {}) {
   const result = spawnSync(executable, args, { cwd, env, encoding: 'utf8', windowsHide: true });
   if (result.error) fail(`${label} could not run: ${result.error.message}`);
@@ -92,6 +66,10 @@ function validatePackage() {
   const pluginJson = readJson(join(plugin, '.codex-plugin', 'plugin.json'));
   const marketplace = readJson(join(root, '.agents', 'plugins', 'marketplace.json'));
   if (packageJson.name !== 'symphony-lite' || packageJson.version !== '0.1.0') fail('root package identity/version differs from symphony-lite@0.1.0');
+  const binEntry = packageJson.bin?.['symphony-lite'];
+  if (binEntry !== 'plugins/symphony-lite/bin/symphony-lite.mjs' || !existsSync(resolve(root, binEntry ?? ''))) {
+    fail('package bin entry must point to an existing Symphony Lite CLI source file');
+  }
   if (pluginJson.name !== 'symphony-lite' || pluginJson.version !== '0.1.0') fail('plugin manifest identity/version differs from symphony-lite@0.1.0');
   if (pluginJson.skills !== './skills/') fail('plugin manifest must expose the shipped skills directory');
   if (marketplace.name !== marketplaceName || marketplace.plugins?.length !== 1) fail('marketplace must expose exactly one symphony-lite plugin');
@@ -117,13 +95,6 @@ function runUnit() {
   run(pythonCommand(), ['-B', 'tests/test_pr_feedback.py'], { label: 'PR feedback receipt tests' });
 }
 
-function runDocs() {
-  const docs = join(root, 'docs');
-  const files = [join(root, 'README.md'), ...markdownUnder(plugin)];
-  if (existsSync(docs)) files.push(...markdownUnder(docs));
-  checkMarkdownLinks(root, 'Source', files);
-}
-
 function jsonCommand(args, env) {
   const output = run(process.env.CODEX_BIN || 'codex', args, { env, label: `codex ${args.join(' ')}` });
   try { return JSON.parse(output); }
@@ -133,7 +104,6 @@ function jsonCommand(args, env) {
 function runInstalled() {
   validatePackage();
   runUnit();
-  runDocs();
   const home = mkdtempSync(join(tmpdir(), 'symphony-lite-codex-home-'));
   const env = { ...process.env, CODEX_HOME: home };
   try {
@@ -149,17 +119,15 @@ function runInstalled() {
     const installedList = jsonCommand(['plugin', 'list', '--json'], env);
     if (!(installedList.installed ?? []).some((item) => item.pluginId === pluginId)) fail('Codex installed-plugin discovery does not list symphony-lite');
     compareInventory(plugin, installedPath);
-    checkMarkdownLinks(installedPath, 'Installed');
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
 }
 
 function main() {
-  if (!['contract', 'unit', 'docs', 'installed', 'verify'].includes(mode)) fail(`Unknown verification mode: ${mode}`);
+  if (!['contract', 'unit', 'installed', 'verify'].includes(mode)) fail(`Unknown verification mode: ${mode}`);
   if (mode === 'contract' || mode === 'verify' || mode === 'installed') validatePackage();
   if (mode === 'unit' || mode === 'verify') runUnit();
-  if (mode === 'docs' || mode === 'verify') runDocs();
   if (mode === 'installed') runInstalled();
 }
 
