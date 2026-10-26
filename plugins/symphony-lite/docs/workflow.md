@@ -7,29 +7,21 @@ the target repository, and start it there.
 
 ## Prepare the target repository
 
-Install the Codex plugin from the local marketplace, then install the CLI
-separately:
+Install the Codex plugin and foreground CLI separately. Follow the
+[README first-use steps](../../../README.md#try-it) for Windows or POSIX/WSL
+commands. Start a fresh Codex session after plugin installation to make the
+setup skill available. In the target repository, explicitly ask Codex to use
+`$symphony-lite:setup-repo-workflow`. Review the generated `symphony-lite.json`
+and its `authorized: true` gate. It must be based on genuine scope authority
+and name existing checks. Plugin installation, CLI installation, and setup do
+not launch the runtime. See [configuration](configuration.md) for the file
+shape.
 
-```powershell
-codex plugin marketplace add 'C:\path\to\symphony-lite'
-codex plugin add symphony-lite@symphony-lite
-npm install -g 'C:\path\to\symphony-lite'
-# Or, when the GitHub repository is available:
-npm install -g github:OnePersonLabs/symphony-lite
-```
-
-Windows and WSL have separate Node installations and PATHs; install the CLI in
-the environment where it will run. Then, in the target repository, explicitly
-ask Codex to use `$symphony-lite:setup-repo-workflow`. Review the generated
-`symphony-lite.json` and its `authorized: true` gate. It must be based on real
-scope authority and name existing checks. Setup and plugin installation do not
-launch the runtime. See [configuration](configuration.md) for the file shape.
-
-Before running, confirm `origin` is the configured GitHub repository,
-`gh auth status` succeeds in the same environment, Codex App Server is available,
-the configured base branch exists remotely, and checks are valid from a clean
-worktree. The runtime checks repository and authentication preflight before it
-starts issue work.
+Before running, confirm `origin` names the configured GitHub repository and
+that the base branch exists remotely. In the same environment, confirm `gh auth status`
+succeeds and Codex App Server is available. Run each configured check
+from a clean worktree. Runtime preflight also checks the repository and GitHub
+authentication.
 
 ## Start and follow the work
 
@@ -39,19 +31,19 @@ From the configured repository root, run:
 symphony-lite
 ```
 
-The process stays in the foreground. It scans at the configured poll interval;
-press Enter in its terminal for an immediate scan. It admits open issues carrying
-the configured ready label, excludes issues with open dependency blockers,
-orders the remaining candidates by configured priority labels, and admits up to
-`agents` primary issues. Each issue keeps its slot through PR review and landing.
+The process stays in the foreground and scans at the configured poll interval.
+Press Enter in its terminal for an immediate scan. It admits open issues with
+the configured ready label and excludes issues with open dependency blockers.
+It orders the candidates by configured priority labels and admits up to
+`agents` primary issues. Each issue keeps its slot through review and landing.
 
-For each issue, Symphony Lite creates a branch and an external Git worktree,
-runs optional `prepare` commands, posts a status comment, and starts or resumes
-the original Codex builder thread. The builder changes source, commits, runs the
+For each issue, the coordinator creates a branch and Git worktree. It runs
+optional `prepare` commands and posts a status comment. It then starts or resumes
+the original Codex builder thread. The builder changes source, commits, runs
 configured checks, and reports whether issue acceptance is complete. It cannot
 push, create or merge PRs, or write GitHub issue status. The coordinator checks
-the committed work, pushes the branch, creates the PR, records feedback progress,
-and routes new review or failed-check evidence back to that same builder.
+the committed work, pushes the branch, and creates a PR. It records feedback
+progress and routes review or failed-check evidence to the same builder.
 
 The coordinator waits for required checks and approvals. Once they pass, it can
 arm GitHub auto-merge using `mergeMethod`. It closes the issue only after it
@@ -75,10 +67,10 @@ symphony-lite resume 42 --thread THREAD_ID
 gracefully stops admission, interrupts active turns, and preserves recovery
 state. `cancel ISSUE` disables automatic redispatch for that owned issue and
 retains its branch and worktree. `resume ISSUE` is an explicit request to
-continue a stopped or blocked issue. If startup stopped before saving a thread
-ID, the runtime lists Codex threads for that issue's exact saved worktree and
-adopts the sole candidate only. If none or several match, it blocks and asks you
-to inspect the candidates, then choose one with
+continue a stopped or blocked issue. If startup stopped before it saved a thread
+ID, the runtime lists Codex threads for the worktree saved for the issue. It
+adopts only the sole candidate. If none or multiple match, it blocks and asks
+you to inspect the candidates. Select one with
 `symphony-lite resume ISSUE --thread THREAD_ID`. A selected thread must belong
 to that exact worktree and have no active turn. If the issue already has a saved
 thread ID, `--thread` cannot replace it. Inspect status and the worktree before
@@ -109,18 +101,17 @@ runtime places new worktrees outside the source checkout under a sibling
 state file, lock information, original thread identity, branch, and worktree
 when diagnosing an interruption.
 
-After restart, inspect `symphony-lite status` before taking manual action. The
-runtime retains the original thread and may resume it after confirming no old
-builder process remains. If state is blocked or stopped, inspect the issue,
-branch, and worktree before using `resume ISSUE`. An unknown or unresolved
-launch must remain blocked until its ownership is understood; do not start a
-second builder in the same issue directory or infer that a turn was delivered.
-If a check modified the worktree or left files uncommitted, have the original
-builder reconcile that work before delivery.
+After restart, inspect `symphony-lite status` before manual action. The runtime
+can resume the original thread after it confirms no old builder process remains.
+If state is blocked or stopped, inspect the issue, branch, and worktree before
+using `resume ISSUE`. Keep an unknown launch blocked until you understand its
+ownership. Do not start a second builder in the same issue directory or assume
+a turn was delivered. If a check modified the worktree or left files uncommitted,
+have the original builder reconcile that work before delivery.
 
-Review and failed-check feedback is saved with the issue until a repair build
-succeeds. If the process stops during repair, inspect the saved pending feedback
-and resume the same issue and thread; do not discard the evidence or start a new
+The runtime saves review and failed-check feedback with the issue until a repair
+build succeeds. If the process stops during repair, inspect the pending feedback
+and resume the same issue and thread. Keep the evidence; do not start a new
 builder to get a clean prompt.
 
 `maxTurns`, when configured, caps the total persisted Codex turns for a bounded
@@ -130,8 +121,10 @@ not erase prior usage.
 
 ## Current limits
 
-The runtime supports a GitHub issue-to-PR delivery path. It is not a service,
-background scheduler, or production dispatcher when installed. It does not
-establish that a target repository's permissions, checks, acceptance criteria,
-credentials, or policies are safe or correct. Complete qualification in the
-intended environment before relying on it for real issue delivery.
+The runtime supports a GitHub issue-to-PR delivery path. It is a foreground
+process, not a service or background scheduler. Installation does not start the
+worker. It does not establish that a target repository has suitable permissions,
+checks, acceptance criteria, credentials, or policies. Complete qualification
+in the intended environment before relying on it for real issue delivery. See
+[current qualification status](../../../README.md#qualification) and
+[qualification issue #1](https://github.com/OnePersonLabs/symphony-lite/issues/1).

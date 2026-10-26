@@ -1,28 +1,57 @@
 # Symphony Lite
 
-Symphony Lite is a foreground Codex worker pool for carrying authorized GitHub
-issues through pull-request delivery. It selects open issues with the configured
-ready label, creates isolated worktrees, starts or resumes Codex sessions, runs
-the repository's configured checks, opens PRs, routes new review or failed-check
-evidence back to the original builder, and reconciles merge and issue status.
+Symphony Lite runs authorized GitHub issues through a foreground Codex worker
+pool. It selects issues with a ready label and starts isolated builders. It runs
+configured checks, opens pull requests, handles review and failed-check feedback,
+and follows each issue through merge.
 
 ## Try it
 
-1. Install the `symphony-lite` plugin from this repository's local marketplace
-   using Codex's plugin UI or CLI. With the CLI, run:
+Use Node.js 24 or newer, Git, GitHub CLI (`gh`), and Codex with its local App
+Server. Authenticate `gh` for the target repository. Confirm `gh auth status`
+succeeds in the environment where the worker will run.
+
+1. Use the Codex plugin UI or CLI to install the plugin from the local
+   marketplace in this checkout:
 
    ```powershell
    codex plugin marketplace add 'C:\path\to\symphony-lite'
    codex plugin add symphony-lite@symphony-lite
    ```
 
-2. Install the foreground CLI separately:
+   If Codex runs in WSL, use the WSL path to the checkout:
+
+   ```sh
+   codex plugin marketplace add /path/to/symphony-lite
+   codex plugin add symphony-lite@symphony-lite
+   ```
+
+   This makes the local plugin available to Codex. It does not publish the
+   plugin to a marketplace. Install it in the Codex environment that will run
+   the workflow. Start a fresh Codex session there so it can discover the setup
+   skill.
+
+2. Install the foreground CLI separately from the plugin. On Windows, install
+   from the checkout or the known GitHub source:
 
    ```powershell
    npm install -g 'C:\path\to\symphony-lite'
-   # Or, when the GitHub repository is available:
+   # Or install the GitHub source directly:
    npm install -g github:OnePersonLabs/symphony-lite
    ```
+
+   In WSL or another POSIX shell, use its Node/npm installation and paths:
+
+   ```sh
+   npm install -g /path/to/symphony-lite
+   # Or install the GitHub source directly:
+   npm install -g github:OnePersonLabs/symphony-lite
+   ```
+
+   Windows and WSL have separate Node installations and PATH values. Install
+   the CLI in each environment where you will run it. These commands install
+   the CLI from source. They do not publish an npm registry package or start
+   the worker.
 
 3. From the target repository, explicitly ask Codex to use
    `$symphony-lite:setup-repo-workflow` to inspect the workflow and prepare
@@ -46,17 +75,26 @@ settings and required authorization boundary.
 
 ## Important limits
 
-Symphony Lite is foreground software. It runs only while its process is active;
-it does not install a service, scheduler, or unattended startup task. The
+Symphony Lite runs in the foreground while its process is active. It does not
+install a service, scheduler, or unattended startup task. The
 deterministic checks and package installation do not establish live runtime
 qualification. Confirm the current qualification state before relying on it.
-Configuring and installing the plugin do not establish that a project's checks,
-permissions, credentials, or delivery policy are suitable.
+Configuration and plugin installation do not establish whether a target
+repository has suitable checks, permissions, credentials, or delivery policy.
 
 The runtime uses a GitHub ready label, open-issue state, dependency blockers,
-configured checks, review decisions, and PR merge state. It does not replace a
-project's source of product meaning or acceptance evidence. Keep those in the
-project's existing records.
+configured checks, review decisions, and PR merge state. It does not replace
+project records for product meaning or acceptance evidence. Keep those records
+with the project.
+
+## Qualification
+
+Live delivery has been exercised in three bounded Windows scenarios. A bounded
+WSL live attempt stopped before implementation because the configured model was
+not supported with the current ChatGPT account. See [qualification issue #1](https://github.com/OnePersonLabs/symphony-lite/issues/1)
+for the environment-specific evidence and remaining gate. Windows and WSL
+deterministic and installed-package checks do not establish full live
+qualification across both environments.
 
 ## Contributor checks
 
@@ -74,7 +112,7 @@ plugin tree with source. It does not run the worker or start an issue.
 run model evaluations or the installed-package checkpoint.
 
 For maintainers, the
-[2026-10-20 runtime selection evidence](docs/runtime-selection-2026-10-20.md)
+[2026-10-20 runtime selection evidence](https://github.com/OnePersonLabs/symphony-lite/blob/main/docs/runtime-selection-2026-10-20.md)
 preserves the pinned comparison and requirements that informed the implementation.
 
 Skills and their activation metadata ship inside

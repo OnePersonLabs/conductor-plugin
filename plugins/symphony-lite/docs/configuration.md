@@ -73,9 +73,12 @@ and explicit scope authority. Do not add a fake check to satisfy validation.
 
 ## Before running
 
-Confirm `origin` names the configured repository, `baseBranch` exists on that
-remote, `gh auth status` works in the intended environment, and each configured
-command is valid from a clean worktree. Review which issues carry the ready label
-and who has authorized them. Run `symphony-lite` as a separate foreground
-operation only after those checks. Installation or a valid configuration never
-starts the runtime.
+Confirm `origin` names the configured repository and that `baseBranch` exists
+on the remote. Check that `gh auth status` works in the intended environment.
+Check each configured command from a clean worktree. Ensure Node.js 24+, Git,
+the GitHub CLI, and Codex App Server are available there. Review which issues
+carry the ready label and who authorized them. Run `symphony-lite` as a separate
+foreground operation only after those checks. Plugin installation, CLI
+installation, and a valid configuration never start the runtime. See the
+[README first-use steps](../../../README.md#try-it) for separate plugin and CLI
+installation instructions, including WSL.
