@@ -239,3 +239,17 @@ test('interrupted preparation adopts the already-owned worktree only on explicit
   await c.resume(1); await until(() => c.state.jobs[0].phase === 'waiting');
   assert.equal(c.state.jobs[0].worktree, worktree); assert.equal(world.starts, 1);
 });
+
+test('an armed PR that becomes CLEAN is reconciled to actual delivery without another builder turn', async t => {
+  const { world, github, remote, coordinator } = await fixture(t);
+  world.issues = [issue(1)];
+  const c = coordinator(); await c.start(); await until(() => c.state.jobs[0]?.phase === 'waiting');
+  const job = c.state.jobs[0], pull = world.pulls.get(job.pr);
+  pull.statusCheckRollup = []; await c.wake(); assert.equal(job.mergeArmed, true);
+  github.merge = async () => {
+    await git(remote, 'update-ref', 'refs/heads/main', pull.headRefOid);
+    pull.state = 'MERGED'; pull.mergeCommit = { oid: pull.headRefOid };
+  };
+  pull.mergeStateStatus = 'CLEAN'; await c.wake(); await c.wake();
+  assert.equal(job.phase, 'complete'); assert.deepEqual(world.closed, [1]); assert.equal(world.turns, 1);
+});

@@ -256,7 +256,9 @@ export class Coordinator extends EventEmitter {
       this.launch(job, await this.github.issue(job.issue), job.repairReason, job.pendingFeedback); return;
     }
     if (checks.failed.length || checks.pending || pull.isDraft || pull.reviewDecision === 'CHANGES_REQUESTED') return;
-    if (job.mergeArmed && pull.autoMergeRequest) return;
+    // GitHub can retain an armed request after all gates turn green. Reconcile a
+    // CLEAN request through the normal protected merge command instead of waiting forever.
+    if (job.mergeArmed && pull.autoMergeRequest && pull.mergeStateStatus !== 'CLEAN') return;
     const approvals = await this.github.approvals(job.pr);
     if (approvals.changesRequested || approvals.approved < this.config.requiredApprovals) return;
     // Only one PR may have native auto-merge armed. Waiting issues retain their slots.
