@@ -89,12 +89,18 @@ with the project.
 
 ## Qualification
 
-Live delivery has been exercised in three bounded Windows scenarios. A bounded
-WSL live attempt stopped before implementation because the configured model was
-not supported with the current ChatGPT account. See [qualification issue #1](https://github.com/OnePersonLabs/symphony-lite/issues/1)
-for the environment-specific evidence and remaining gate. Windows and WSL
-deterministic and installed-package checks do not establish full live
-qualification across both environments.
+Live delivery completed on three Windows issues and one WSL issue. The Windows
+trial exercised ordinary delivery, two concurrent isolated builders,
+original-thread review repair, and interruption/resumption. WSL delivery
+succeeded after updating native Codex from 0.155.1 to 0.164.0 and resuming the
+original thread. The initial eight-turn trial and one authorized retry used
+nine total turn attempts, with at most two simultaneous builders.
+
+See [qualification issue #1](https://github.com/OnePersonLabs/symphony-lite/issues/1)
+for platform-specific evidence, including manual restoration of the missing
+temporary WSL workspace before retry. These scenarios do not establish every
+runtime behavior on both platforms or suitability for a particular production
+repository. The trial coordinators are stopped; no production work was started.
 
 ## Contributor checks
 
