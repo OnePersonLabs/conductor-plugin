@@ -105,6 +105,23 @@ export class CodexClient extends EventEmitter {
     return requireResultObject(result, 'thread/resume', 'thread');
   }
 
+  async readThread({ threadId } = {}) {
+    this._assertConnected();
+    requireString(threadId, 'threadId');
+    return requireResultObject(await this._request('thread/read', { threadId, includeTurns: true }), 'thread/read', 'thread');
+  }
+
+  async listThreads({ cwd = this.cwd } = {}) {
+    this._assertConnected();
+    const threads = []; let cursor;
+    do {
+      const page = await this._request('thread/list', { cwd: resolve(cwd), cursor, limit: 100, sourceKinds: ['cli','vscode','exec','appServer','unknown'] });
+      if (!Array.isArray(page.data)) throw new Error('Codex thread/list did not return a data array.');
+      threads.push(...page.data); cursor = page.nextCursor;
+    } while (cursor);
+    return threads;
+  }
+
   async startTurn({ threadId, cwd = this.cwd, prompt, skillPath, outputSchema } = {}) {
     this._assertConnected();
     requireString(threadId, 'threadId');
