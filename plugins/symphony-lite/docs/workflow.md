@@ -23,6 +23,58 @@ succeeds and Codex App Server is available. Run each configured check
 from a clean worktree. Runtime preflight also checks the repository and GitHub
 authentication.
 
+## Example: an export reports success after a failed write
+
+Reuse the issue that owns the export bug. Define acceptance before marking it
+ready: a failed write reports failure with the original error; success appears
+only after the write completes; checks cover both paths. Record any blocking
+dependency on that issue. A distinct confirmed bug belongs in its own linked
+issue, rather than expanding this repair without authorization.
+
+GitHub holds actionable status. The existing specification or Conceptor record
+holds product meaning and evidence. Reuse an existing project checkpoint when
+needed; the coordinator's recovery state does not become another backlog.
+
+These prompts are for the operator's interactive Codex session:
+
+```text
+$symphony-lite:setup-repo-workflow Inspect this repository's tracker, base,
+existing checks, worktree preparation, review requirements and delivery policy.
+Prepare symphony-lite.json for the approved export repair. Leave execution stopped.
+```
+
+```text
+$symphony-lite:github-workflow Reuse the issue for the failed-export success
+message. Record the three acceptance cases, dependencies and scope authority.
+Mark it ready only when those requirements are established.
+```
+
+```text
+$symphony-lite:github-workflow Record the blocker on issue #42: the failed-write
+case still reports success. Include the reproduction, observed result, evidence,
+and next decision. Keep the issue open while acceptance is incomplete.
+```
+
+```text
+$symphony-lite:github-workflow Reconcile issue #42, its PR and saved coordinator
+state after interruption. Identify the original builder and remaining work
+before resuming. At delivery, verify checks and actual landing before closure.
+```
+
+The builder repairs the failure, verifies both paths and makes coherent commits.
+The coordinator handles publication, review repair and landing as described below.
+For interactive work outside the foreground runtime, follow the repository's
+[selected delivery lane](../skills/github-workflow/references/delivery.md).
+
+OnePersonLabs is optional. Its `$onepersonlabs:debug` skill can investigate the
+write failure; `$onepersonlabs:research-solutions` can resolve a dependency question.
+Use `$onepersonlabs:adversarial-review` when independent review is justified and
+`$onepersonlabs:human-collaboration` when a person must resolve a product question.
+Update affected reader instructions with `$onepersonlabs:write-docs`. Use
+`$onepersonlabs:handoff` or `$onepersonlabs:session-reader` when recovery needs
+conversation context. Long-command and local-plugin refresh tools remain with
+OnePersonLabs; they do not own Symphony Lite's issue admission or delivery.
+
 ## Start and follow the work
 
 From the configured repository root, run:
