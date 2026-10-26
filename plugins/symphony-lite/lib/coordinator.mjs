@@ -256,7 +256,9 @@ export class Coordinator extends EventEmitter {
       this.launch(job, await this.github.issue(job.issue), job.repairReason, job.pendingFeedback); return;
     }
     if (checks.failed.length || checks.pending || pull.isDraft || pull.reviewDecision === 'CHANGES_REQUESTED') return;
-    if (job.mergeArmed && pull.autoMergeRequest) return;
+    // GitHub can retain an armed request after all gates turn green. Reconcile a
+    // CLEAN request through the normal protected merge command instead of waiting forever.
+    if (job.mergeArmed && pull.autoMergeRequest && pull.mergeStateStatus !== 'CLEAN') return;
     const approvals = await this.github.approvals(job.pr);
     if (approvals.changesRequested || approvals.approved < this.config.requiredApprovals) return;
     // Only one PR may have native auto-merge armed. Waiting issues retain their slots.
@@ -280,10 +282,11 @@ export class Coordinator extends EventEmitter {
   }
   async disarm(job) {
     const before = await this.github.pull(job.pr);
-    if (before.state === 'MERGED') throw new Error('PR already landed; reconcile delivery before cancelling or repairing.');
+    if (before.state === 'MERGED') throw Object.assign(new Error('PR already landed; reconcile delivery before cancelling or repairing.'), { code: 'ALREADY_MERGED' });
     if (before.autoMergeRequest) await this.github.disableAutoMerge(job.pr);
     const after = await this.github.pull(job.pr);
-    if (after.state === 'MERGED' || after.autoMergeRequest) throw new Error('Merge outcome is not safely disarmed; retain ownership and reconcile again.');
+    if (after.state === 'MERGED') throw Object.assign(new Error('PR landed while cancellation was disarming auto-merge.'), { code: 'ALREADY_MERGED' });
+    if (after.autoMergeRequest) throw new Error('Merge outcome is not safely disarmed; retain ownership and reconcile again.');
     job.mergeArmed = false; await this.save();
   }
   async answer(key, value) {
@@ -305,7 +308,15 @@ export class Coordinator extends EventEmitter {
     if (job.phase === 'cancelled') return;
     job.intent = 'cancel';
     job.phase = 'cancelling'; await this.save();
-    await this.deliveryAction(async () => { if (job.pr) await this.disarm(job); });
+    try {
+      await this.deliveryAction(async () => { if (job.pr) await this.disarm(job); });
+    } catch (error) {
+      if (error.code !== 'ALREADY_MERGED') throw error;
+      job.intent = null; job.phase = 'waiting';
+      job.summary = 'Cancellation arrived after the PR landed; delivery reconciliation will verify the accepted base.';
+      await this.save(); this.wake();
+      throw new Error(`Issue #${issue} cannot be cancelled because PR #${job.pr} already landed; delivery reconciliation is continuing.`);
+    }
     job.cancelConfirmed = true; await this.save();
     const client = this.clients.get(issue);
     if (client) await this.haltClient(job, client);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline';
-import { watch } from 'node:fs';
+import { watch, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { inspectRepository } from '../lib/worktrees.mjs';
@@ -115,6 +115,6 @@ async function main() {
   } catch (error) { cleanup(); throw error; }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(resolve(process.argv[1]))).href) {
   main().catch(error => { console.error(`symphony-lite: ${error.message}`); process.exitCode = 1; });
 }
