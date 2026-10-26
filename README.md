@@ -65,15 +65,13 @@ From this checkout, run:
 ```powershell
 npm run test:contract
 npm run test:unit
-npm run test:docs
 ```
 
 `npm run test:installed` additionally installs the local marketplace package in
 a temporary Codex home, confirms Codex discovered it, compares the installed
-plugin tree with source, and checks the installed documentation links. It does
-not run the worker or start an issue. `npm run verify` runs the deterministic
-contract, unit, and documentation checks; it does not run model evaluations or
-the installed-package checkpoint.
+plugin tree with source. It does not run the worker or start an issue.
+`npm run verify` runs the deterministic contract and unit checks; it does not
+run model evaluations or the installed-package checkpoint.
 
 For maintainers, the
 [2026-10-20 runtime selection evidence](docs/runtime-selection-2026-10-20.md)
