@@ -8,7 +8,7 @@ the target repository, and start it there.
 ## Prepare the target repository
 
 Install the Codex plugin and foreground CLI separately. Follow the
-[README first-use steps](../../../README.md#try-it) for Windows or POSIX/WSL
+[README first-use steps](https://github.com/OnePersonLabs/symphony-lite#try-it) for Windows or POSIX/WSL
 commands. Start a fresh Codex session after plugin installation to make the
 setup skill available. In the target repository, explicitly ask Codex to use
 `$symphony-lite:setup-repo-workflow`. Review the generated `symphony-lite.json`
@@ -40,10 +40,14 @@ It orders the candidates by configured priority labels and admits up to
 For each issue, the coordinator creates a branch and Git worktree. It runs
 optional `prepare` commands and posts a status comment. It then starts or resumes
 the original Codex builder thread. The builder changes source, commits, runs
-configured checks, and reports whether issue acceptance is complete. It cannot
-push, create or merge PRs, or write GitHub issue status. The coordinator checks
+configured checks, and reports whether issue acceptance is complete. Its instructions
+reserve push, PR creation and merge, and GitHub issue writes for the coordinator. The coordinator checks
 the committed work, pushes the branch, and creates a PR. It records feedback
 progress and routes review or failed-check evidence to the same builder.
+
+The coordinator enforces admission, slot ownership, verification and landing
+order. The builder's role boundary is an instruction, not a credential or
+sandbox restriction. Builders inherit the operator's Codex permissions.
 
 The coordinator waits for required checks and approvals. Once they pass, it can
 arm GitHub auto-merge using `mergeMethod`. It closes the issue only after it
@@ -126,5 +130,5 @@ process, not a service or background scheduler. Installation does not start the
 worker. It does not establish that a target repository has suitable permissions,
 checks, acceptance criteria, credentials, or policies. Complete qualification
 in the intended environment before relying on it for real issue delivery. See
-[current qualification status](../../../README.md#qualification) and
+[current qualification status](https://github.com/OnePersonLabs/symphony-lite#qualification) and
 [qualification issue #1](https://github.com/OnePersonLabs/symphony-lite/issues/1).

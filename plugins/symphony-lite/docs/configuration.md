@@ -80,5 +80,5 @@ the GitHub CLI, and Codex App Server are available there. Review which issues
 carry the ready label and who authorized them. Run `symphony-lite` as a separate
 foreground operation only after those checks. Plugin installation, CLI
 installation, and a valid configuration never start the runtime. See the
-[README first-use steps](../../../README.md#try-it) for separate plugin and CLI
+[README first-use steps](https://github.com/OnePersonLabs/symphony-lite#try-it) for separate plugin and CLI
 installation instructions, including WSL.
