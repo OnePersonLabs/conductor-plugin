@@ -70,10 +70,21 @@ export class DirectorEvents {
   async pending() { return structuredClone(this.state.events.filter(item => !item.acknowledgedAt)); }
 
   async cancelWake(batch) {
+    if (batch.queueCancellationConfirmed) return true;
     batch.cancellationRequired = true;
     await this.save();
     try {
       const removed = await this.host.cancelQueuedWakeup(batch.queueItemId);
+      if (removed) batch.queueCancellationConfirmed = true;
+      if (!removed && !batch.nativeConsumed) {
+        // Queue absence also means consumed. Settlement is not a lifecycle
+        // receipt: the turn may still be running while it acknowledges work.
+        this.state.recoveryRequired = {
+          native: true, status: 'lifecycle-receipt-missing', batchId: batch.id,
+          queueItemId: batch.queueItemId, turnId: this.state.nativeActivity?.turnId ?? null,
+          error: 'The Desktop wake left the queue without a matching lifecycle receipt. Automatic wakeups are suspended; inspect the native chat and hook execution before manually resuming.',
+        };
+      }
       delete batch.cancellationRequired;
       const recovery = this.state.recoveryRequired;
       if (recovery?.status === 'queue-cancellation-failed' && recovery.queueItemId === batch.queueItemId) {
@@ -182,8 +193,8 @@ export class DirectorEvents {
   async retry(batchId, { confirmedNotQueued = false } = {}) {
     const batch = this.state.batches.find(item => item.id === batchId);
     if (batch?.cancellationRequired && batch.queueItemId) {
-      await this.cancelWake(batch);
-      batch.status = 'reconciled-not-queued';
+      const removed = await this.cancelWake(batch);
+      if (removed) batch.status = 'reconciled-not-queued';
       await this.save();
       return this.flush();
     }

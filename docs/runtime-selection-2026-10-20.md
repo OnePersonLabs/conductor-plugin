@@ -75,8 +75,10 @@ jobs. Repeat after a full Desktop restart; opening a new chat alone was
 insufficient in this trial.
 
 **2026-10-27 resumed trial after Desktop restart:** the saved native chat
-restarted observation and settled revision 4 with admission paused. Activity
-still remained `unknown`. The Desktop binary (0.165.0-alpha.1.2), queried in a
+restarted observation and settled revision 4 with admission paused. The first
+status read remained `unknown`, but later inspection found the matching manual
+turn's active/idle receipts (revision 2). The earlier missing-receipt conclusion
+was premature. The Desktop binary (0.165.0-alpha.1.2), queried in a
 fresh read-only app-server, listed all five Conductor hooks as trusted and
 enabled. Another installed hook recorded the trial's actual `Stop` event, but
 Conductor's temporary, metadata-only lifecycle probe produced no receipt.
@@ -90,6 +92,24 @@ idle detection. Two live turns were used in this resumed trial. The observer
 was stopped, no issue jobs ran, and the temporary probe was removed. Resolve
 the missing Conductor lifecycle receipts before declaring automatic wakeup
 qualified; do not synthesize an idle receipt or repeat restart as a proven fix.
+
+**2026-10-27 follow-up diagnosis:** a human `wakeup` produced a second matching
+active/idle pair. In the subsequent three-turn bounded trial, one delegated
+diagnostic turn and two automatic native queue turns ran with admission paused.
+Both automatic turns handled their batches and settled revisions 7 and 8.
+Conductor activity nevertheless remained at the earlier manual turn's revision
+4, while the existing OnePersonLabs hook recorded the automatic turn's Stop.
+The Conductor probe recorded no invocation, including before JSON parsing.
+This isolates the remaining investigation to Conductor hook selection or launch;
+it does not establish an upstream cause. Native queue delivery is demonstrated,
+but automatic busy/idle tracking is not qualified. The observer was stopped
+with zero jobs and the temporary instrumentation was removed.
+
+Conductor now suspends subsequent automatic wakes when queue deletion reports
+that a settled message is absent and there is no matching native consumption
+receipt. Acknowledgement cannot release this hold by reusing older idle state.
+A matching native receipt or a new explicit native turn can recover it. The
+safety change has deterministic coverage; it has not had another live turn.
 
 The comparison did not find a released candidate that established all of these
 behaviors together:

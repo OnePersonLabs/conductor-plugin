@@ -9,6 +9,26 @@ function harness({ execute = async () => ({ code: 0, stdout: 'queued' }), state 
   return { events, state, saves: () => saves };
 }
 
+test('settlement without native consumption cannot reuse an old idle receipt', async () => {
+  let starts = 0;
+  const host = {
+    status: async () => ({ type: 'idle' }),
+    startRunner: async () => ({ queued: true, id: `queue-${++starts}` }),
+    cancelQueuedWakeup: async () => false,
+  };
+  const { events, state } = harness({ host });
+  state.nativeActivity = { state: 'idle', turnId: 'older-manual-turn' };
+  await events.emit({ kind: 'check-requested' });
+  await events.flush();
+  await events.settle(state.checkRevision);
+  assert.equal(state.recoveryRequired.status, 'lifecycle-receipt-missing');
+  await events.emit({ kind: 'tracker-changed' });
+  assert.equal((await events.flush()).status, 'recovery-required');
+  const restored = harness({ state: structuredClone(state), host });
+  assert.equal((await restored.events.flush()).status, 'recovery-required');
+  assert.equal(starts, 1);
+});
+
 test('consumption resolves an uncertain submission without replaying it', async () => {
   let calls = 0;
   const { events } = harness({ execute: async () => {

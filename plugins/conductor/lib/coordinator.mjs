@@ -149,6 +149,10 @@ export class Coordinator extends EventEmitter {
         const batch = this.state.director.batches.find(item => item.id === activity.wakeupMarker);
         if (batch && ['submitting','uncertain','queued'].includes(batch.status)) {
           batch.status = 'queued'; batch.turnId = activity.turnId; batch.nativeConsumed = true;
+          if (recovery?.status === 'lifecycle-receipt-missing' && recovery.batchId === batch.id) {
+            recovery.resolvedAt = new Date().toISOString();
+            recovery.outcome = 'Matching native lifecycle receipt arrived.';
+          }
         }
       }
       await this.save();

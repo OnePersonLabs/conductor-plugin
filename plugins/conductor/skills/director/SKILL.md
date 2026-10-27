@@ -178,9 +178,12 @@ without a model call when unchanged.
 Desktop lifecycle hooks report `UserPromptSubmit`, `Stop` and `Interrupt` to
 the local service. Signals for the bound director update its actual busy state.
 If hook status is missing or unknown, the service suppresses automatic wakeups;
-never synthesize idle. Trust the plugin hooks when Desktop requests review of
-them, then restart or open a fresh Desktop session after hook changes so they
-load.
+never synthesize idle. If recovery reports `lifecycle-receipt-missing`, inspect
+the native chat and hook execution before manually resuming; event settlement
+does not prove that the native turn ended. Automatic wakes remain suspended
+until recovery. Trust the plugin hooks when Desktop requests review of them,
+then restart Desktop after hook changes so they load. Restart alone has not
+resolved the missing queued-turn receipts in the live trial.
 When Desktop is open, service wakeups are delivered through its native session
 queue only after the director is idle. If Desktop is closed, the wake remains
 queued for that session and is consumed when Desktop is available. The

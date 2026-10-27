@@ -89,6 +89,28 @@ test('a manual Desktop turn cancels an obsolete unconsumed wake after handling i
   await f.activity.record({ threadId: THREAD, turnId: 'manual', event: 'Stop' });
   await f.events.flush();
   assert.equal(f.calls(), 1);
+  assert.equal(f.state.recoveryRequired, undefined);
+});
+
+test('a delayed matching native receipt releases missing-lifecycle recovery', async t => {
+  const f = await fixture(t);
+  await f.activity.record({ threadId: THREAD, turnId: 'manual', event: 'UserPromptSubmit' });
+  await f.activity.record({ threadId: THREAD, turnId: 'manual', event: 'Stop' });
+  await f.c.refreshDirectorActivity();
+  await f.events.emit({ kind: 'ready' });
+  await f.events.flush();
+  const batch = f.state.batches[0];
+  f.queue.length = 0;
+  await f.events.settle(f.state.checkRevision);
+  assert.equal((await f.events.flush()).status, 'recovery-required');
+  await f.activity.record({ threadId: THREAD, turnId: 'native-wake', event: 'UserPromptSubmit', wakeupMarker: batch.id });
+  await f.c.refreshDirectorActivity();
+  assert.equal(batch.nativeConsumed, true);
+  assert.ok(f.state.recoveryRequired.resolvedAt);
+  assert.equal((await f.events.flush()).status, 'busy');
+  await f.activity.record({ threadId: THREAD, turnId: 'native-wake', event: 'Stop' });
+  await f.c.refreshDirectorActivity();
+  assert.equal((await f.events.flush()).status, 'idle');
 });
 
 test('native receipt resolves an uncertain consumed wake; interruption waits for a new native turn', async t => {

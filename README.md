@@ -56,7 +56,11 @@ processing.
 Review and trust the Conductor lifecycle hooks when Desktop prompts you to do
 so. After installing or refreshing hook definitions, fully restart Desktop
 so its host reloads them. If lifecycle status is unknown, automatic wakeups
-are suppressed instead of assuming the director is idle.
+are suppressed instead of assuming the director is idle. The October 27 live
+trial verified queue delivery but found missing Conductor lifecycle receipts
+for queued turns. Full Desktop automatic wakeup qualification remains open.
+If status reports `lifecycle-receipt-missing`, inspect the native chat and hook
+execution before manually resuming; settlement alone does not prove turn completion.
 
 Use the director chat for issue triage, decisions and execution. Say `wakeup`
 there at any time to make Conductor check for work. From a terminal, wake an
