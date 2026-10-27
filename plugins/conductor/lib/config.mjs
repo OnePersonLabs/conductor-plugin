@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { DEFAULT_LABELS } from './workflow.mjs';
 
 export function duration(value) {
   const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/.exec(String(value));
@@ -40,7 +41,22 @@ export async function loadConfig(root, overrides = {}) {
   let raw;
   try { raw = JSON.parse(await readFile(join(root, 'conductor.json'), 'utf8')); }
   catch (error) { throw new Error(`Cannot load conductor.json: ${error.message}. Use $conductor:setup-repo-workflow for explicit setup.`); }
-  return validateConfig({ ...raw, ...overrides });
+  const merged = { ...raw, ...overrides };
+  if (merged.version !== 2) throw new Error('This repository uses a legacy Conductor configuration. Run `conductor migrate` to preview the issue-state migration, then apply it explicitly before starting the director. No work was admitted.');
+  return validateDirectorConfig(merged);
+}
+
+export function validateDirectorConfig(raw) {
+  if (raw.version !== 2) throw new Error('Conductor director configuration must set version: 2.');
+  const base = validateConfig({ ...raw, authorized: raw.authorized, readyLabel: raw.labels?.ready ?? DEFAULT_LABELS.ready, pollInterval: raw.pollInterval ?? '30m' });
+  const labels = { ...DEFAULT_LABELS, ...(raw.labels ?? {}) };
+  if (Object.values(labels).some(value => typeof value !== 'string' || !value.trim())) throw new Error('labels must map each workflow state to a nonempty string.');
+  if (new Set([labels.triage, labels.proposal, labels.ready, labels.hold, labels.needsInput].map(value => value.trim().toLowerCase())).size !== 5) throw new Error('triage, proposal, ready, hold and needsInput labels must be distinct.');
+  for (const [key, fallback] of [['directorModel', 'gpt-6.1-sol'], ['plannerModel', 'gpt-6-astra']]) {
+    if (raw[key] !== undefined && (typeof raw[key] !== 'string' || !raw[key].trim())) throw new Error(`${key} must be a nonempty model name.`);
+    base[key] = raw[key] ?? fallback;
+  }
+  return { ...base, version: 2, labels, pollMs: duration(raw.pollInterval ?? '30m'), admissionPaused: raw.admissionPaused === true };
 }
 
 export function orderedIssues(issues, priorityLabels) {

@@ -167,7 +167,7 @@ test('PR merged during disarm returns to delivery reconciliation instead of rema
   assert.equal(github.closed, true);
 });
 
-test('queued control survives a crash and remains pending when acknowledgement loses ownership', async t => {
+test('queued control survives a crash as a stale receipt and an expired owner cannot acknowledge it', async t => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'conductor-controls-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const prior = new Store(dir), recovered = new Store(dir);
@@ -177,15 +177,19 @@ test('queued control survives a crash and remains pending when acknowledgement l
   await prior.release(); // Simulate a crash after reading but before acknowledging.
 
   await recovered.acquire();
-  const pending = await recovered.drain();
-  assert.equal(pending[0].id, request.id);
-  await recovered.release(); // Simulate ownership expiring before command acknowledgement.
-  await assert.rejects(recovered.acknowledge(request), /ownership ended/);
-  await recovered.acquire();
-  assert.equal((await recovered.drain())[0].id, request.id);
-  await recovered.acknowledge(request);
   assert.deepEqual(await recovered.drain(), []);
-  assert.equal((await recovered.results())[0].id, request.id);
+  const receipt = (await recovered.results())[0];
+  assert.equal(receipt.id, request.id);
+  assert.match(receipt.error, /previous Conductor owner/);
+  const current = await recovered.send('cancel', 12);
+  assert.equal((await recovered.drain())[0].id, current.id);
+  await recovered.release(); // Simulate ownership expiring before command acknowledgement.
+  await assert.rejects(recovered.acknowledge(current), /ownership ended/);
+  await recovered.acquire();
+  assert.equal((await recovered.drain())[0].id, current.id);
+  await recovered.acknowledge(current);
+  assert.deepEqual(await recovered.drain(), []);
+  assert.equal((await recovered.results())[0].id, current.id);
   await recovered.release();
 });
 

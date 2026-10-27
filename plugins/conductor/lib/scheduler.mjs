@@ -1,7 +1,7 @@
 import { orderedIssues } from './config.mjs';
 
 export const TERMINAL = new Set(['complete', 'cancelled']);
-export function occupied(jobs) { return jobs.filter(job => !TERMINAL.has(job.phase)).length; }
+export function occupied(jobs) { return jobs.filter(job => !TERMINAL.has(job.phase) && job.phase !== 'paused').length; }
 export function admission(issues, jobs, config) {
   const known = new Set(jobs.map(job => job.issue));
   return orderedIssues(issues, config.priorityLabels).filter(issue => !known.has(issue.number)).slice(0, Math.max(0, config.agents - occupied(jobs)));

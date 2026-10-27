@@ -77,6 +77,8 @@ function validatePackage() {
   if (entry.name !== marketplaceName || entry.source?.source !== 'local' || entry.source.path !== './plugins/conductor') fail('marketplace plugin identity/source path is incorrect');
 
   const expected = new Map([
+    ['director', true],
+    ['planner', false],
     ['github-workflow', true],
     ['setup-repo-workflow', false],
   ]);

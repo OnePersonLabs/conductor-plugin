@@ -1,0 +1,6 @@
+interface:
+  display_name: "Conductor Planner"
+  short_description: "Develop substantial plans for the director"
+  default_prompt: "Use $conductor:planner only when the Conductor director delegates a bounded planning question."
+policy:
+  allow_implicit_invocation: false

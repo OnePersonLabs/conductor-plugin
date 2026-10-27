@@ -1,14 +1,14 @@
 {
   "name": "conductor",
   "version": "0.1.0",
-  "description": "Foreground Codex workers for authorized GitHub issue-to-PR delivery.",
+  "description": "A conversational director and event-driven GitHub issue-to-PR workflow.",
   "license": "MIT",
   "repository": "https://github.com/OnePersonLabs/conductor-plugin",
   "keywords": ["github", "codex", "workflow", "issue-tracking", "pull-requests"],
   "skills": "./skills/",
   "interface": {
     "displayName": "Conductor",
-    "shortDescription": "Run an explicitly authorized foreground GitHub issue workflow",
-    "longDescription": "Selects eligible GitHub issues under an explicitly configured repository policy, starts or resumes Codex builders in separate worktrees, runs configured checks, opens pull requests, routes review and check failures to the original builder, and reconciles landing. Installation alone never starts production work."
+    "shortDescription": "Direct issue work and coordinate verified delivery in chat",
+    "longDescription": "Triage, discuss proposals, manage holds, resolve decisions, and prepare authorized work through a conversational director. A local event-driven service coordinates isolated builders, configured checks, independent review, original-thread repairs, and verified landing. Issue labels and native dependencies determine execution eligibility. Installation and repository setup never start production work."
   }
 }

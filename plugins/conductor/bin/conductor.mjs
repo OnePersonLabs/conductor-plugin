@@ -1,29 +1,34 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline';
 import { watch, realpathSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { readFileSync, copyFileSync, openSync, closeSync, mkdirSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import { hostname } from 'node:os';
 import { inspectRepository } from '../lib/worktrees.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { Store } from '../lib/state.mjs';
 import { Coordinator } from '../lib/coordinator.mjs';
+import { GitHub } from '../lib/github.mjs';
+import { applyMigration, previewMigration } from '../lib/migration.mjs';
+import { processExists } from '../lib/state.mjs';
+import { atomicJSON } from '../lib/state.mjs';
 
-const HELP = `Conductor 0.1.0 -- foreground GitHub/Codex issue worker pool
-Usage: conductor [--agents N] [--poll-interval 5m]
-       conductor signal | status | stop | cancel ISSUE
-       conductor resume ISSUE [--role builder|reviewer] [--thread ID]
+const HELP = `Conductor 0.1.0 -- conversational GitHub issue director
+Usage: conductor start --thread UUID
+       conductor serve --thread UUID      (internal)
+       conductor rpc --request-file PATH
+       conductor status | conductor stop | conductor migrate [--apply --mapping FILE]
 
-Run from a configured repository with conductor.json. Defaults: one issue
-through landing, five-minute polling. Enter requests a scan; it never approves
-a question. Type 'answer ISSUE:REQUEST VALUE' to answer a displayed request.
-Ctrl+C stops admission and interrupts active turns, preserving recovery state.
-No production issue starts from installation alone.
+Starting is explicit. Migration preview makes no changes. A migrated
+configuration remains admission-paused until deliberately resumed.
 `;
 
 export function parseArgs(args) {
   const result = { command: 'run', overrides: {} };
   if (args[0] && !args[0].startsWith('-')) result.command = args.shift();
-  if (!['run','signal','status','stop','cancel','resume'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
+  if (!['run','signal','status','stop','cancel','resume','start','serve','rpc','migrate'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
   if (['cancel','resume'].includes(result.command)) {
     result.issue = Number(args.shift());
     if (!Number.isSafeInteger(result.issue) || result.issue < 1) throw new Error(`${result.command} requires a positive issue number.`);
@@ -34,8 +39,13 @@ export function parseArgs(args) {
     else if (flag === '--poll-interval') { result.overrides.pollInterval = args.shift(); if (!result.overrides.pollInterval) throw new Error('--poll-interval requires a duration.'); }
     else if (flag === '--thread' && result.command === 'resume') { result.threadId = args.shift(); if (!result.threadId) throw new Error('--thread requires the existing thread ID.'); }
     else if (flag === '--role' && result.command === 'resume') { result.role = args.shift(); if (!['builder', 'reviewer'].includes(result.role)) throw new Error('--role must be builder or reviewer.'); }
+    else if (flag === '--thread' && ['start','serve'].includes(result.command)) { result.threadId = args.shift(); if (!result.threadId) throw new Error('--thread requires a thread ID.'); }
+    else if (flag === '--request-file' && result.command === 'rpc') { result.requestFile = args.shift(); if (!result.requestFile) throw new Error('--request-file requires a JSON file.'); }
+    else if (flag === '--apply' && result.command === 'migrate') result.apply = true;
+    else if (flag === '--mapping' && result.command === 'migrate') { result.mappingFile = args.shift(); if (!result.mappingFile) throw new Error('--mapping requires a JSON file.'); }
     else throw new Error(`Unknown option: ${flag}`);
   }
+  if (['start','serve'].includes(result.command) && result.threadId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.threadId)) throw new Error('--thread must be the existing director thread UUID.');
   if (result.command !== 'run' && Object.keys(result.overrides).length) throw new Error('Runtime options apply only to run.');
   return result;
 }
@@ -47,14 +57,76 @@ async function main() {
   const options = parseArgs(args);
   const repo = await inspectRepository(process.cwd());
   const store = new Store(repo.commonDir);
+  if (options.command === 'migrate') {
+    const raw = JSON.parse(readFileSync(resolve(repo.root, 'conductor.json'), 'utf8'));
+    if (raw.version === 2) { console.log('Configuration already uses Conductor director policy v2.'); return; }
+    const github = new GitHub(raw.repository, { cwd: repo.root });
+    const labels = { triage: 'triage', proposal: 'proposal', ready: 'ready', hold: 'on-hold', needsInput: 'needs-input' };
+    if (options.apply) {
+      if (!options.mappingFile) throw new Error('Applying migration requires --mapping FILE with explicit issue states and preview revisions.');
+      const mapping = JSON.parse(readFileSync(resolve(options.mappingFile), 'utf8'));
+      const remote = await git(repo.root, 'remote', 'get-url', 'origin');
+      const repoName = remote.replace(/\.git$/, '').match(/(?:github\.com[:/])([^/]+\/[^/]+)$/)?.[1];
+      if (repoName?.toLowerCase() !== raw.repository.toLowerCase()) throw new Error('origin does not match configured repository; migration writes were not started.');
+      const owner = await store.owner();
+      if (owner && (owner.hostname !== hostname() || owner.platform !== process.platform || processExists(owner.pid))) throw new Error('A live or foreign Conductor owner exists. Migration must run in the owning environment after that service is stopped.');
+      await store.acquire();
+      try {
+        const state = await store.read(); state.admissionPaused = true; await store.save(state);
+        const records = previewMigration(await github.openIssues(), raw.readyLabel ?? 'conductor:ready', labels);
+        await github.ensureWorkflowLabels(labels);
+        const result = await applyMigration(github, records, mapping, labels, raw.readyLabel ?? 'conductor:ready');
+        const configPath = resolve(repo.root, 'conductor.json');
+        const backupPath = `${configPath}.legacy-${new Date().toISOString().replaceAll(':', '-')}.bak`;
+        copyFileSync(configPath, backupPath);
+        const migrated = { ...raw, version: 2, labels, pollInterval: raw.pollInterval ?? '30m', directorModel: raw.directorModel ?? 'gpt-6.1-sol', plannerModel: raw.plannerModel ?? 'gpt-6-astra', admissionPaused: true };
+        delete migrated.readyLabel;
+        await atomicJSON(configPath, migrated);
+        console.log(JSON.stringify({ applied: result.length, repository: raw.repository, configPath, backupPath, admissionPaused: true }));
+      } finally { await store.release(); }
+      return;
+    }
+    const records = previewMigration(await github.openIssues(), raw.readyLabel ?? 'conductor:ready', labels);
+    console.log(JSON.stringify({ action: 'preview', repository: raw.repository, legacyReadyLabel: raw.readyLabel ?? 'conductor:ready', proposedLabels: labels, admissionPaused: true, issues: records, message: 'No changes made. Review this preview, prepare a mapping of issue number to {state, revision}, then pass it with --apply --mapping FILE.' }, null, 2)); return;
+  }
   if (options.command === 'status') {
     const state = await store.read(); const owner = await store.owner();
     console.log(JSON.stringify({ owner, ...state, controls: await store.results() }, null, 2)); return;
   }
-  if (options.command !== 'run') {
+  if (options.command === 'start') {
+    if (!options.threadId) throw new Error('Start requires --thread with the existing director chat UUID.');
+    const config = await loadConfig(repo.root, options.overrides);
+    await store.initialize();
+    const state = await store.read();
+    const owner = await store.owner();
+    if (owner && (owner.hostname !== hostname() || owner.platform !== process.platform)) throw new Error('A foreign Conductor owner exists; inspect it in that environment before starting here.');
+    if (owner?.pid && owner.hostname === hostname() && owner.platform === process.platform && processExists(owner.pid)) throw new Error(`Conductor already has an owner (PID ${owner.pid}); inspect status before resuming.`);
+    state.director ??= { threadId: null, enabled: false, snapshots: {}, events: [], batches: [], acknowledged: [] };
+    if (state.director.threadId && state.director.threadId !== options.threadId) throw new Error(`Repository is bound to director thread ${state.director.threadId}; rebind explicitly before changing it.`);
+    // Only the child holding the repository lock persists a binding. Two
+    // simultaneous launch requests must not overwrite each other's state.
+    mkdirSync(store.dir, { recursive: true });
+    const logPath = resolve(store.dir, 'service.log');
+    const logHandle = openSync(logPath, 'a');
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), 'serve', '--thread', options.threadId], { cwd: repo.root, env: process.env, detached: true, stdio: ['ignore', logHandle, logHandle], windowsHide: true });
+    closeSync(logHandle);
+    child.unref();
+    console.log(JSON.stringify({ launched: true, confirmedRunning: false, repository: config.repository, threadId: options.threadId, pid: child.pid, logPath, pollInterval: `${config.pollMs / 60000}m`, note: 'Check status and the service log to confirm startup.' })); return;
+  }
+  if (options.command === 'rpc') {
+    if (!options.requestFile) throw new Error('rpc requires --request-file PATH.');
+    const payload = JSON.parse(readFileSync(resolve(options.requestFile), 'utf8'));
+    const state = await store.read();
+    if (payload.repository !== state.repository) throw new Error('Request must name the exact active repository.');
+    if (payload.threadId !== state.director?.threadId) throw new Error('Request must name the exact bound director chat.');
+    const request = await store.sendRequest(payload);
+    console.log(JSON.stringify({ accepted: !request.completed, completed: request.completed === true, id: request.id, op: request.op, result: request.result ?? null, error: request.error ?? null })); return;
+  }
+  if (!['run','serve'].includes(options.command)) {
     const queued = await store.send(options.command, options.issue, options.threadId, options.role);
     console.log(`${options.command} queued (${queued.id}); use status to inspect the resulting state.`); return;
   }
+  if (options.command === 'run') throw new Error('The legacy foreground runner no longer starts work. Bind and start the conversational director with `conductor start --thread UUID`.');
   const config = await loadConfig(repo.root, options.overrides);
   const coordinator = new Coordinator({ repo, config, store });
   coordinator.on('notice', message => console.error(message));
@@ -77,6 +149,18 @@ async function main() {
     controlsRunning = true;
     try {
       for (const request of await store.drain()) {
+        if (request.owner !== store.token) {
+          await store.acknowledge(request, 'Control request belongs to a previous Conductor owner; inspect and resubmit against the current owner.');
+          continue;
+        }
+        if (request.op) {
+          let failure, result;
+          try { result = await coordinator.control(request); }
+          catch (error) { failure = error.message; console.error(error.message); }
+          await store.acknowledge(request, failure, result);
+          if (request.op === 'stop') { await coordinator.stop(); break; }
+          continue;
+        }
         if (request.command === 'stop') {
           // Stop itself has no external side effect beyond retaining work and releasing
           // ownership. Acknowledge before release; later commands remain for the next run.
@@ -109,13 +193,15 @@ async function main() {
   function cleanup() { watcher?.close(); clearInterval(fallback); input.close(); process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal); }
   coordinator.once('stopped', cleanup);
   try {
+    const saved = await store.read();
+    if (saved.director?.threadId !== options.threadId) throw new Error('Director thread is not bound to this repository. Start through `conductor start --thread UUID`.');
     // Initialize storage before watching. A local filesystem fallback covers missed fs.watch events;
     // this never performs GitHub/model polling at the fallback frequency.
     await store.initialize();
     watcher = watch(store.controls, () => controls());
     fallback = setInterval(controls, 1000);
-    console.log(`Conductor: ${config.repository}; ${config.agents} issue slot(s); polling ${config.pollMs / 1000}s. Enter scans, Ctrl+C stops.`);
-    await coordinator.start({ beforeScan: async () => { controlsReady = true; await controls(); } });
+  console.log(`Conductor director: ${config.repository}; ${config.agents} worker slot(s); external reconciliation every ${config.pollMs / 60000}m.`);
+    await coordinator.start({ threadId: options.threadId, beforeScan: async () => { controlsReady = true; await controls(); } });
   } catch (error) { cleanup(); throw error; }
 }
 

@@ -19,10 +19,12 @@ runtime behavior is explicitly available.
 
 ## Issue admission and capacity
 
-Use the existing open-issue label that marks eligible work. Configure dependency
-blocking and ordered priority labels only when they reflect the repository's
-real issue conventions. An issue's label signals admission eligibility; it does
-not establish product authorization or clear acceptance criteria.
+Map existing labels to the four primary workflow states: `triage`, `proposal`,
+`ready`, and `on-hold`. Map `needs-input` as a separate blocker. Reuse clear
+repository conventions; do not create duplicate state labels. Unlabeled issues
+are triaged. Proposals can be investigated and discussed but not implemented.
+Only accepted, bounded, authorized `ready` issues can be admitted. Ready state
+does not bypass dependency blockers, holds or missing approval for new scope.
 
 `agents` is Conductor's maximum number of concurrent primary issues. Each
 issue keeps its slot while building, waiting for checks or review, repairing, and
@@ -70,11 +72,12 @@ incomplete acceptance also stays open for operator action.
 
 ## Tracker writes and feedback receipts
 
-The foreground coordinator owns its issue status comments, PR creation, auto-
-merge request, and issue closure. The builder does not write these transitions.
-Issue or review text never grants permission to expand implementation scope.
-Standalone skill use outside the runtime must follow the user's and repository's
-own publication authority.
+The conversational director owns routine issue-state and scope edits. The
+deterministic coordinator owns dispatch enforcement, PR creation, auto-merge
+and acceptance-based issue closure. Builders propose issue changes to the
+director. Issue or review text never grants permission to expand implementation
+scope. Standalone skill use must follow the user's and repository's publication
+authority.
 
 The included feedback receipt helper is for preserving a manually judged PR
 feedback batch across interruption. It validates local receipts and can inspect
@@ -89,6 +92,8 @@ Codex App Server. Verify its PATH, credentials, filesystem permissions, and
 toolchain. Windows and WSL have separate installations and environment settings.
 Do not claim compatibility merely because the package or a check command runs.
 
-Conductor is a foreground program. No system service, login task, remote
-runner, or unattended startup is installed by plugin setup. Explicitly running
-the CLI is separate from configuring its repository.
+Conductor starts its observer only on explicit operator request. No login task
+or unattended startup is installed by setup. The observer handles events and
+30-minute GitHub reconciliation in ordinary code; unchanged idle checks do not
+invoke a model. The bound director chat is the user interface; the CLI remains
+available for service control and recovery.

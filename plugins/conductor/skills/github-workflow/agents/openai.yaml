@@ -1,6 +1,6 @@
 interface:
   display_name: "GitHub Workflow"
-  short_description: "Reconcile authorized GitHub issue and delivery state"
-  default_prompt: "Use $conductor:github-workflow to reconcile this repository's authorized GitHub issue work, delivery status, and recovery state."
+  short_description: "Manage issue state and verified delivery"
+  default_prompt: "Use $conductor:github-workflow to manage issue states, dependencies, PR feedback, verified delivery, and recovery under this repository's workflow policy."
 policy:
   allow_implicit_invocation: true

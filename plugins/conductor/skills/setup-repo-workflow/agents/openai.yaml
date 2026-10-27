@@ -1,6 +1,6 @@
 interface:
   display_name: "Set up repository workflow"
-  short_description: "Configure native issue and review workflow"
-  default_prompt: "Use $conductor:setup-repo-workflow to inspect and explicitly configure this repository's issue-to-PR workflow."
+  short_description: "Configure or migrate Conductor's director workflow"
+  default_prompt: "Use $conductor:setup-repo-workflow only when asked to inspect, prepare, or migrate this repository's Conductor director and delivery configuration."
 policy:
   allow_implicit_invocation: false

@@ -10,6 +10,7 @@ import { git, run } from './process.mjs';
 import { createWorktree, copyWorktreeIncludes, refreshBranch } from './worktrees.mjs';
 import { processExists } from './state.mjs';
 import { WakeLoop, admission } from './scheduler.mjs';
+import { Director } from './director.mjs';
 import { builderPrompt, createRequestRevision, parseResult, parseReviewResult, reviewPrompt, resultSchema, reviewResultSchema } from './prompts.mjs';
 
 const skillPath = fileURLToPath(new URL('../skills/github-workflow/SKILL.md', import.meta.url));
@@ -33,16 +34,22 @@ export class Coordinator extends EventEmitter {
   constructor({ repo, config, store, github, Client = CodexClient, execute = run, workspace = { createWorktree, copyWorktreeIncludes, refreshBranch } }) {
     super(); Object.assign(this, { repo, config, store, Client, execute, workspace });
     this.github = github ?? new GitHub(config.repository, { cwd: repo.root });
-    this.clients = new Map(); this.tasks = new Map(); this.requests = new Map();
+    this.clients = new Map(); this.tasks = new Map(); this.requests = new Map(); this.preparations = new Map();
     this.stopping = false; this.scanError = null;
     this.delivery = Promise.resolve(); this.ready = false;
-    this.loop = new WakeLoop(() => this.scan(), error => { this.scanError = error.message; this.emit('notice', `Reconciliation failed: ${error.message}`); });
+    this.loop = new WakeLoop(() => this.scan(), error => {
+      this.scanError = error.message; this.emit('notice', `Reconciliation failed: ${error.message}`);
+      if (this.director) this.director.events.observe('service-error', error.message, { kind: 'service-error' })
+        .then(() => this.director.events.flush()).catch(failure => this.emit('notice', failure.message));
+    });
   }
   async save() { await this.store.save(this.state); this.emit('status', this.state); }
-  async start({ beforeScan } = {}) {
+  async start({ beforeScan, threadId } = {}) {
     await this.store.acquire();
     try {
       this.state = await this.store.read();
+      if (this.config.version === 2) this.director = new Director(this, threadId);
+      if (this.director) await this.director.events.start();
       if (this.state.repository && this.state.repository !== this.config.repository) throw new Error('Recovery state belongs to another GitHub repository. Resolve configuration before proceeding.');
       const environment = { platform: process.platform, host: hostname(), codexHome: resolve(process.env.CODEX_HOME ?? join(homedir(), '.codex')) };
       if (this.state.environment && JSON.stringify(this.state.environment) !== JSON.stringify(environment) && this.state.jobs.some(job => !['complete','cancelled'].includes(job.phase))) throw new Error('Unfinished builders belong to a different OS or Codex home. Resume in that environment; no replacement builder was started.');
@@ -50,7 +57,8 @@ export class Coordinator extends EventEmitter {
       this.state.repository = this.config.repository; this.state.root = this.repo.root;
       this.state.running = true; this.state.pid = process.pid; this.state.pollMs = this.config.pollMs; this.state.agents = this.config.agents;
       for (const job of this.state.jobs) {
-        job.intent = job.phase === 'cancelling' ? 'cancel' : null;
+        job.intent = job.phase === 'cancelling' ? 'cancel' : job.phase === 'paused' || job.intent === 'pause' ? 'pause' : null;
+        if (this.director && job.phase === 'stopped') { job.phase = 'paused'; job.intent = 'pause'; }
         if (activePhases.has(job.phase)) {
           job.recoveryPhase = job.phase;
           job.builderThreadId ??= job.threadId ?? null;
@@ -58,7 +66,7 @@ export class Coordinator extends EventEmitter {
           const savedThread = job.activeRole === 'reviewer' ? job.reviewerThreadId : job.builderThreadId;
           if (!savedThread || (job.childPid && processExists(job.childPid))) {
             job.phase = 'uncertain'; job.summary = `Previous ${job.activeRole} launch/process ownership is uncertain; resolve it before starting another session.`;
-          } else { job.phase = 'stopped'; job.turnId = null; job.childPid = null; job.nextRole ??= job.activeRole; }
+          } else { job.phase = this.director ? 'paused' : 'stopped'; job.intent = this.director ? 'pause' : null; job.turnId = null; job.childPid = null; job.nextRole ??= job.activeRole; }
         }
       }
       await this.save();
@@ -79,6 +87,19 @@ export class Coordinator extends EventEmitter {
     await access(skillPath);
   }
   wake() { return this.ready ? this.loop.wake() : Promise.resolve(); }
+  async control(request) {
+    if (!this.director) throw new Error('Migrate to version 2 and bind a director first.');
+    const result = await this.director.control(request);
+    if (request.op !== 'stop') await this.director.events.flush();
+    return result;
+  }
+  async guard(job, options) {
+    if (this.director) {
+      try { await this.director.assertEligible(job.issue, job.eligibilityRevision, options); }
+      catch (error) { job.intent = 'pause'; job.phase = 'paused'; job.summary = error.message; await this.save(); throw error; }
+    }
+    if (this.stopping || job.intent) throw new Error('Execution stopped or held before delivery.');
+  }
   deliveryAction(action) {
     const task = this.delivery.catch(() => {}).then(action);
     this.delivery = task; return task;
@@ -93,10 +114,15 @@ export class Coordinator extends EventEmitter {
   async scan() {
     if (this.stopping) return;
     this.scanError = null;
-    const base = await this.base();
+    if (this.director) {
+      await this.director.observe();
+      if (this.state.director.snapshots['service-error']) await this.director.events.observe('service-error', null, {kind:'service-recovered'});
+    }
+    const base = !this.director || this.state.jobs.some(j => !['paused','blocked','uncertain','complete','cancelled'].includes(j.phase)) ? await this.base() : null;
     for (const job of this.state.jobs) {
       if (this.stopping) return;
       try {
+        if (this.director && !['complete','cancelled','cancelling'].includes(job.phase) && !await this.director.checkJob(job)) continue;
         if (job.phase === 'cancelling') await this.cancel(job.issue);
         else if (job.phase === 'stopped' || job.phase === 'repair') {
           const issue = await this.github.issue(job.issue);
@@ -125,6 +151,7 @@ export class Coordinator extends EventEmitter {
             if (head !== pull.headRefOid) {
               const ahead = await run('git', ['merge-base', '--is-ancestor', pull.headRefOid, head], { cwd: job.worktree, allowFailure: true });
               if (ahead.code !== 0) throw new Error('PR head differs from the local issue branch; reconcile publication before review.');
+              if (this.director) await this.guard(job);
               await git(job.worktree, 'push', 'origin', job.branch);
               if ((await this.github.pull(job.pr)).headRefOid !== head) throw new Error('Could not confirm the issue branch push before review.');
             }
@@ -138,6 +165,9 @@ export class Coordinator extends EventEmitter {
       } catch (error) { job.lastError = error.message; await this.save(); this.emit('notice', `Issue #${job.issue}: ${error.message}`); }
     }
     if (this.stopping) return;
+    // Version 2 never admits from a polling tick: the director supplies a fresh
+    // revision-bound dispatch command. Legacy fixtures retain their old lane.
+    if (this.director) { this.state.lastScan = new Date().toISOString(); await this.save(); return; }
     const ready = await this.github.ready(this.config.readyLabel);
     // Filter dependencies before the capacity slice so blocked candidates do not starve ready work.
     const eligible = [];
@@ -146,20 +176,32 @@ export class Coordinator extends EventEmitter {
       if (!(await this.github.blockers(issue.number)).length) eligible.push(issue);
     }
     for (const issue of admission(eligible, this.state.jobs, this.config)) {
-      if (this.stopping) break;
+      await this.dispatchIssue(issue, base);
+    }
+    this.state.lastScan = new Date().toISOString(); await this.save();
+  }
+  async dispatchIssue(issue, base, eligibilityRevision) {
+      if (this.stopping) return;
       const branch = `conductor/issue-${issue.number}`;
-      if (await this.github.pullForBranch(branch)) { this.emit('notice', `Issue #${issue.number} already has a PR on ${branch}; recover its owner before adoption.`); continue; }
+      if (await this.github.pullForBranch(branch)) throw new Error(`Issue #${issue.number} already has a PR on ${branch}; recover its owner before adoption.`);
       // Ordinary worktrees stay outside all source checkouts; their explicit paths survive restart.
       const path = join(dirname(dirname(this.repo.commonDir)), '.conductor-worktrees', digest(this.repo.commonDir).slice(0, 16), `issue-${issue.number}`);
       const job = { issue: issue.number, sourceIdentity: issue.node_id ?? `${this.config.repository}#${issue.number}`, requestRevision: createRequestRevision(issue), branch, worktree: path, baseBranch: this.config.baseBranch, phase: 'preparing', activeRole: 'builder', nextRole: 'builder', builderThreadId: null, reviewerThreadId: null, threadId: null, turnId: null, childPid: null, acceptanceComplete: false, createdAt: new Date().toISOString() };
+      if (eligibilityRevision) job.eligibilityRevision = eligibilityRevision;
       this.state.jobs.push(job); await this.save();
+      const prepareAndLaunch = async () => {
       try {
+        if (this.director) await this.guard(job);
         await this.prepare(job, base);
-        if (this.stopping || job.intent) { job.phase = job.intent === 'cancel' ? 'cancelled' : 'stopped'; await this.save(); }
+        if (this.stopping || job.intent) { job.phase = job.intent === 'pause' ? 'paused' : job.intent === 'cancel' ? 'cancelled' : 'stopped'; await this.save(); }
         else this.launch(job, issue, 'Start the authorized issue. Read its acceptance and relevant project instructions before changing source.', [], 'builder');
-      } catch (error) { if (job.intent !== 'cancel') job.phase = 'blocked'; job.summary = `Workspace preparation failed: ${error.message}`; await this.save(); await this.github.progress(job); }
-    }
-    this.state.lastScan = new Date().toISOString(); await this.save();
+      } catch (error) { if (job.intent !== 'cancel') job.phase = job.intent === 'pause' ? 'paused' : 'blocked'; job.summary = `Workspace preparation failed: ${error.message}`; await this.save(); await this.github.progress(job); }
+      };
+      if (this.director) {
+        const pending = prepareAndLaunch().catch(error => this.emit('notice', error.message)).finally(() => { this.preparations.delete(job.issue); if (!this.stopping) this.wake(); });
+        this.preparations.set(job.issue, pending);
+      } else await prepareAndLaunch();
+      return { issue: job.issue, phase: job.phase, branch: job.branch };
   }
   async prepare(job, base) {
     if (!job.worktreeCreated) {
@@ -191,12 +233,13 @@ export class Coordinator extends EventEmitter {
     const task = this.build(job, issue, reason, feedback, role).catch(async error => {
       const threadId = role === 'reviewer' ? job.reviewerThreadId : job.builderThreadId ?? job.threadId;
       job.activeRole = role; job.nextRole = role;
-      job.phase = job.intent === 'cancel' ? job.cancelConfirmed ? 'cancelled' : 'cancelling' : this.stopping ? 'stopped' : ['starting','launching'].includes(job.phase) || !threadId ? 'uncertain' : 'blocked'; job.summary = error.message; job.lastError = error.message;
+      job.phase = job.intent === 'pause' ? 'paused' : job.intent === 'cancel' ? job.cancelConfirmed ? 'cancelled' : 'cancelling' : this.stopping ? 'stopped' : ['starting','launching'].includes(job.phase) || !threadId ? 'uncertain' : 'blocked'; job.summary = error.message; job.lastError = error.message;
       await this.save(); await this.github.progress(job).catch(e => this.emit('notice', e.message));
     }).finally(() => { this.tasks.delete(job.issue); if (!this.stopping) this.wake(); });
     this.tasks.set(job.issue, task);
   }
   async build(job, issue, reason, feedback, role = 'builder') {
+    if (this.director) await this.guard(job);
     if (role === 'reviewer' && job.reviewPublicationStatus === 'pending') {
       await this.publishReviewResult(job);
       return;
@@ -221,6 +264,7 @@ export class Coordinator extends EventEmitter {
       const key = `${job.issue}:${request.id}`;
       this.requests.set(key, { ...request, issue: job.issue, client });
       this.emit('request', { key, issue: job.issue, role, ...request });
+      if (this.director) this.director.events.emit({ kind: 'worker-question', key, issue: job.issue, method: request.method }).then(() => this.director.events.flush()).catch(error => this.emit('notice', error.message));
     });
     client.on('exit', ({ code }) => terminalReject(new Error(`Codex process exited (${code}) before a terminal turn result.`)));
     client.on('error', terminalReject);
@@ -254,6 +298,7 @@ export class Coordinator extends EventEmitter {
         const pull = await this.github.pull(job.pr);
         if (head !== pull.headRefOid || head !== job.checkHead || base !== job.checkBase || await git(job.worktree, 'status', '--porcelain', '--untracked-files=all')) throw new Error('Verified base/head changed or worktree is dirty before review; reconcile and re-verify before starting the reviewer.');
       }
+      if (this.director) await this.guard(job);
       job.phase = 'launching'; job.turnCount = (job.turnCount ?? 0) + 1; await this.save();
       const turn = role === 'reviewer'
         ? await client.startTurn({ threadId, cwd: job.worktree, prompt: reviewPrompt({ config: this.config, job, issue, base, head, previous: job.reviewFindings ?? [] }), outputSchema: reviewResultSchema })
@@ -288,8 +333,10 @@ export class Coordinator extends EventEmitter {
       try { await this.verify(job); }
       catch (error) { await this.repair(job, error); return; }
       if (this.stopping || job.intent) return;
+      if (this.director) await this.guard(job);
       await git(job.worktree, 'push', '-u', 'origin', job.branch);
       if (this.stopping || job.intent) return;
+      if (this.director) await this.guard(job);
       const pull = await this.github.createPull(job, issue); job.pr = pull.number;
       // Do not swallow feedback arriving while the builder was active: only evidence sent
       // to that turn is acknowledged by reconcilePull before launching it.
@@ -299,6 +346,7 @@ export class Coordinator extends EventEmitter {
     } finally {
       await client.close(); this.clients.delete(job.issue); job.childPid = null; job.turnId = null;
       if (job.intent === 'cancel') job.phase = job.cancelConfirmed ? 'cancelled' : 'cancelling';
+      else if (job.intent === 'pause') job.phase = 'paused';
       else if (this.stopping && activePhases.has(job.phase)) { job.phase = 'stopped'; job.nextRole = role; }
       for (const [key, request] of this.requests) if (request.issue === job.issue) this.requests.delete(key);
       await this.save();
@@ -313,6 +361,7 @@ export class Coordinator extends EventEmitter {
     job.lastError = error.message; await this.save(); await this.github.progress(job);
   }
   async publishReviewResult(job) {
+    if (this.director) await this.guard(job);
     const result = job.reviewResult;
     if (!result || !['clear', 'findings'].includes(result.status) || !Number.isSafeInteger(job.reviewAttempt) || !job.reviewHead) throw new Error('Saved review publication intent is incomplete; no PR comment was sent.');
     if (!await this.revalidateReviewRequest(job)) return;
@@ -414,6 +463,7 @@ export class Coordinator extends EventEmitter {
         job.summary = `PR #${job.pr} landed for an older issue revision. The issue remains open for reconciliation; no follow-up implementation was started on the merged branch.`;
         await this.save(); await this.github.progress(job); return;
       }
+      if (this.director) await this.guard(job, { allowCompleted: true });
       await this.github.closeIssue(job.issue, `Delivered by PR #${job.pr}; accepted base contains ${pull.mergeCommit.oid}.\n\n${job.summary}`);
       job.phase = 'complete'; job.mergedCommit = pull.mergeCommit.oid; await this.save(); await this.github.progress(job); return;
     }
@@ -475,6 +525,7 @@ export class Coordinator extends EventEmitter {
     if (this.stopping || job.intent || fresh.state !== 'OPEN' || fresh.isDraft || freshChecks.pending || freshChecks.failed.length || fresh.reviewDecision === 'CHANGES_REQUESTED' || freshApprovals.changesRequested || freshApprovals.approved < this.config.requiredApprovals) return;
     job.mergeArmed = true; await this.save();
     if (this.stopping || job.intent) return;
+    if (this.director) await this.guard(job);
     await this.github.merge(job.pr, fresh.headRefOid, this.config.mergeMethod);
   }
   async disarm(job) {
@@ -581,6 +632,7 @@ export class Coordinator extends EventEmitter {
         if (client) await this.haltClient(job, client);
       }
       await this.loop.close();
+      await Promise.allSettled([...this.preparations.values()]);
       await Promise.allSettled([...this.tasks.values()]);
       this.state.running = false; await this.save(); await this.store.release(); this.emit('stopped');
     })();

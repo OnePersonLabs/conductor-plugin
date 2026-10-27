@@ -1,90 +1,122 @@
-# Configure a repository
+# Configure a Conductor repository
 
-Conductor reads `conductor.json` from the target Git repository root.
-Use `$conductor:setup-repo-workflow` only after the user explicitly asks for
-repository setup. The setup skill inspects existing policy and prepares a
-configuration; it does not launch the runtime.
+Conductor reads `conductor.json` from the target Git repository root. Use
+`$conductor:setup-repo-workflow` only when asked to prepare or migrate this
+configuration. Setup inspects repository policy and prepares the file; it does
+not start issue processing.
 
-## Required settings
+## Repository and execution settings
 
 ```json
 {
+  "version": 2,
   "repository": "owner/repository",
   "baseBranch": "main",
   "authorized": true,
+  "labels": {
+    "triage": "triage",
+    "proposal": "proposal",
+    "ready": "ready",
+    "hold": "on-hold",
+    "needsInput": "needs-input"
+  },
+  "priorityLabels": [],
+  "agents": 1,
+  "pollInterval": "30m",
+  "directorModel": "gpt-6.1-sol",
+  "plannerModel": "gpt-6-astra",
   "checks": [
     { "command": "npm", "args": ["test"] }
   ]
 }
 ```
 
-Replace the example with the actual GitHub repository, remote base, and existing
-checks. `authorized` must be the boolean `true` only if matching ready issues
-have genuine implementation and PR-delivery authority. It is a safety gate,
-not a blanket permission grant.
+This illustrates the configuration shape. Select actual labels, checks, review
+requirements, concurrency, model roles and delivery settings from the target
+repository's conventions and explicit authority. `authorized` must be the
+boolean `true` only when the configured workflow has genuine implementation and
+PR-delivery authority. It is an execution gate, not blanket permission for new
+product scope.
 
-Each `checks` and `prepare` item has a `command` string and an `args` array of
-strings. The runtime runs the executable with those arguments in the issue
-worktree; it does not evaluate a shell command string. At least one check is
-required. `prepare` is optional and defaults to an empty list.
+`directorModel` is the setup preference for the invoking chat, not a runtime
+model switch. Select Sol in that chat. `plannerModel` instructs the director's
+native subagent delegation; the service does not create a second planner runner.
+The director verifies host model availability and reports unsupported models.
 
-## Optional settings and defaults
+`labels` maps the primary issue states to labels already used or intentionally
+created in the repository. The default names are `triage`, `proposal`, `ready`
+and `on-hold`; `needs-input` is a separate modifier. An issue should carry one
+primary state. Preserve labels for type, area and priority. Do not add a second
+ready label such as `conductor:ready`.
 
-| Setting | Default | Use |
-| --- | --- | --- |
-| `readyLabel` | `conductor:ready` | Selects open issues eligible for admission. |
-| `priorityLabels` | `[]` | Ordered label names; earlier labels rank first, then older issues. |
-| `agents` | `1` | Maximum concurrent primary issue builders. Waiting for review still occupies a slot. |
-| `pollInterval` | `5m` | Interval for GitHub reconciliation; `ms`, `s`, `m`, or `h` values are accepted. |
-| `requiredApprovals` | `0` | Number of current PR approvals required before auto-merge can be armed. |
-| `mergeMethod` | `merge` | One of `merge`, `squash`, or `rebase`. |
-| `maxTurns` | omitted | Optional total Codex-turn limit for a bounded run. |
-| `implementationInstructions` | `""` | Project-specific instructions appended to each builder request. |
-| `reviewEnabled` | `true` | Require an independent Conductor review before merge. Set `false` for an explicit project opt-out. |
-| `reviewInstructions` | `""` | Additional project-specific criteria appended to each review request. |
+An unlabeled issue is surfaced for triage. A `proposal` can be investigated and
+discussed but does not dispatch implementation. An `on-hold` issue remains
+suspended until explicitly released. A `ready` issue can dispatch after current
+scope and dependency checks pass. Closing a prerequisite triggers re-evaluation;
+it does not bypass proposal, hold or human-input requirements.
 
-`agents` limits separate primary issues; it is not a subagent count. Open
-dependency blockers are excluded before capacity is assigned. The runtime does
-not add helper capacity or authorize work beyond the configured ready-issue
-scope.
+## Verification and delivery settings
 
-## Complete example
+Each `checks` and optional `prepare` entry has a `command` string and an `args`
+array of strings. Conductor runs the executable with those arguments inside the
+issue worktree; it does not evaluate a shell command string. At least one
+existing check is required. Never add a synthetic check merely to satisfy
+validation.
+
+Retain project-specific review and delivery controls where configured:
+
+| Setting | Purpose |
+| --- | --- |
+| `priorityLabels` | Orders ready issues; earlier labels rank first. |
+| `agents` | Caps concurrent primary issue jobs. |
+| `requiredApprovals` | Sets the number of current PR approvals required before auto-merge. |
+| `mergeMethod` | Selects `merge`, `squash` or `rebase`. |
+| `maxTurns` | Optional cap for a bounded run. |
+| `implementationInstructions` | Project instructions supplied to builders. |
+| `reviewEnabled` | Requires independent Conductor review by default. |
+| `reviewInstructions` | Additional review criteria. |
+
+## Before starting
+
+Confirm `origin` matches `repository`, the configured base branch exists, and
+`gh auth status` succeeds in the intended environment. Check configured
+commands from a clean worktree. Ensure Git, GitHub CLI, Node.js 24+ and Codex
+App Server are available.
+
+The source exposes explicit director/service startup and recovery controls; a
+configuration file alone does not start a watcher or authorize a production
+dispatch. Follow [workflow and recovery](workflow.md) for the current commands
+and migration path. Windows and WSL maintain separate GitHub, Node and Codex
+environments; recover work in the environment that owns it.
+
+Legacy configurations using `readyLabel` require explicit migration while
+admission is stopped. Migration inventories current issues and jobs, maps
+verified prepared issues to `ready`, leaves other unlabeled issues in triage,
+and preserves saved worker sessions and delivery receipts. Do not remove the
+legacy label or enable processing until the resulting classification has been
+reviewed.
+
+Run `conductor migrate` from the configured checkout to print a preview. It
+makes no changes. Prepare a JSON mapping from each issue number to its chosen
+state and the exact preview revision, for example:
 
 ```json
 {
-  "repository": "owner/repository",
-  "baseBranch": "main",
-  "authorized": true,
-  "readyLabel": "conductor:ready",
-  "priorityLabels": ["priority:high", "priority:normal"],
-  "agents": 1,
-  "pollInterval": "5m",
-  "checks": [
-    { "command": "npm", "args": ["run", "test:unit"] },
-    { "command": "npm", "args": ["run", "test:contract"] }
-  ],
-  "prepare": [],
-  "requiredApprovals": 1,
-  "mergeMethod": "squash",
-  "maxTurns": 8,
-  "implementationInstructions": "When .conceptor/ exists in the selected root, invoke $conceptor:apply-change.",
-  "reviewEnabled": true,
-  "reviewInstructions": "Check the public API compatibility policy."
+  "42": { "state": "ready", "revision": "<revision from preview>" },
+  "43": { "state": "triage", "revision": "<revision from preview>" }
 }
 ```
 
-This is an example shape, not a recommended policy. Set labels, concurrent
-issues, checks, approvals, merge method, and turn cap from repository evidence
-and explicit scope authority. Do not add a fake check to satisfy validation.
+Review the preview and mapping, then explicitly apply them:
 
-## Before running
+```powershell
+conductor migrate --apply --mapping .\conductor-migration.json
+```
 
-Confirm `origin` names the configured repository and that `baseBranch` exists
-on the remote. Check that `gh auth status` works in the intended environment.
-Check each configured command from a clean worktree. Ensure Node.js 24+, Git,
-the GitHub CLI, and Codex App Server are available there. Review which issues
-carry the ready label and who authorized them. Run `conductor` as a separate
-foreground operation only after those checks. Plugin installation, CLI
-installation, and a valid configuration never start the runtime. See the
-[README first-use steps](https://github.com/OnePersonLabs/conductor-plugin#try-it) for separate plugin and CLI
-installation instructions, including WSL.
+The command rechecks revisions, changes issue labels, saves a dated legacy
+configuration backup beside `conductor.json`, and writes a version 2
+configuration with admission paused. Review the resulting issue states and
+configuration. Start the director service, inspect its status and explicitly
+activate admission with a control request before any new implementation begins.
+If an issue changed after preview, regenerate the preview and reconcile the new
+contents instead of reusing the stale mapping.

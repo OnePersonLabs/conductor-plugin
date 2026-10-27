@@ -6,6 +6,35 @@ runtime qualification report, or evidence that the current implementation has
 passed its live campaign. Recheck candidate releases and source before relying
 on the comparison for a new decision.
 
+**2026-10-27 follow-up:** OpenAI Symphony's current draft specification and
+source were inspected at commit
+[`be10a1b79df723d6d7612b5651c8522704dafb2e`](https://github.com/openai/symphony/tree/be10a1b79df723d6d7612b5651c8522704dafb2e).
+Its useful boundary is a deterministic issue scheduler/workspace manager and
+reconciler driven by a repository-owned workflow contract. The inspected
+Linear workflow uses active states (`Todo`, `In Progress`, `Rework`, and
+`Merging`) and leaves `Backlog` dormant; the GitHub adapter uses open issues,
+excludes PR records and does not fetch blockers. This demonstrates that
+workflow states are a viable admission policy, but not conversational issue
+triage or a general dependency implementation.
+
+Conductor's design applies the scheduler/policy separation to a different user
+interaction: the director mediates triage, proposals, decisions and explicit
+holds in chat; a deterministic local service owns dispatch, worker lifecycle,
+dependencies, recovery and delivery. The adopted primary states are `triage`,
+`proposal`, `ready` and `on-hold`; `needs-input` is a blocker modifier. This is
+an adaptation, not a claim that Symphony implements the director or GitHub
+hold inheritance. No Symphony implementation source is copied. Symphony's
+latest release observed during this follow-up was v0.0.3 (2026-09-15); the
+commit inspected above is newer development source and must not be described
+as released behavior.
+
+The same-thread wakeup candidate is supported by the installed `codex queue`
+command and the current official [Codex developer command reference](https://learn.chatgpt.com/docs/developer-commands).
+The CLI accepts a message for an existing session. That documents the queue
+interface; it does not by itself qualify desktop wake delivery, busy-thread
+queueing, restart behavior or quota effects. Those remain live acceptance
+questions for a separately authorized campaign.
+
 ## Requirements identified
 
 The comparison did not find a released candidate that established all of these

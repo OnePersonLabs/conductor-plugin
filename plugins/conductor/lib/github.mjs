@@ -14,8 +14,77 @@ export class GitHub {
   async ready(label) {
     return (await this.pages(`repos/${this.repository}/issues?state=open&labels=${encodeURIComponent(label)}&per_page=100`)).filter(x => !x.pull_request);
   }
+  async openIssues() {
+    return (await this.pages(`repos/${this.repository}/issues?state=open&per_page=100`)).filter(x => !x.pull_request);
+  }
   async issue(number) { return this.api(`repos/${this.repository}/issues/${number}`); }
   async blockers(number) { return (await this.pages(`repos/${this.repository}/issues/${number}/dependencies/blocked_by?per_page=100`)).filter(x => x.state === 'open'); }
+  async dependencies(number) { return this.pages(`repos/${this.repository}/issues/${number}/dependencies/blocked_by?per_page=100`); }
+  async children(number) { return this.pages(`repos/${this.repository}/issues/${number}/sub_issues?per_page=100`); }
+  async parents(number) {
+    const found = [], seen = new Set([number]);
+    let current = number;
+    while (true) {
+      let parent;
+      try { parent = await this.api(`repos/${this.repository}/issues/${current}/parent`); }
+      catch (error) {
+        // GitHub represents both a top-level issue and an inaccessible parent as 404.
+        // The current issue is already readable; treat this as a root boundary and retain
+        // the native parent reference for review if GitHub exposes it in the future.
+        if (/HTTP 404|Not Found/i.test(error.result?.stderr ?? error.message)) return found;
+        throw error;
+      }
+      parent = parent?.parent ?? parent;
+      if (!parent || !Number.isSafeInteger(parent.number)) return found;
+      if (seen.has(parent.number)) throw new Error(`Native issue parent cycle detected while resolving #${number}.`);
+      seen.add(parent.number); found.push(parent); current = parent.number;
+    }
+  }
+  async comments(number) { return this.pages(`repos/${this.repository}/issues/${number}/comments?per_page=100`); }
+  async setWorkflowState(number, state, labels) {
+    const primary = ['triage', 'proposal', 'ready', 'hold'];
+    if (!primary.includes(state)) throw new Error(`Unknown primary workflow state: ${state}`);
+    const desired = labels[state];
+    const existing = await this.issue(number);
+    const names = (existing.labels ?? []).map(x => typeof x === 'string' ? x : x.name).filter(Boolean);
+    const previous = primary.map(key => labels[key]).filter(name => name !== desired && names.some(value => value.toLowerCase() === name.toLowerCase()));
+    // Add before removing. If a later removal fails, conflict detection keeps the issue out of dispatch.
+    if (!names.some(value => value.toLowerCase() === desired.toLowerCase())) await this.gh(['issue', 'edit', String(number), '--repo', this.repository, '--add-label', desired]);
+    for (const label of previous) await this.gh(['issue', 'edit', String(number), '--repo', this.repository, '--remove-label', label]);
+    const verified = await this.issue(number);
+    const actual = (verified.labels ?? []).map(x => typeof x === 'string' ? x : x.name).filter(Boolean).map(x => x.toLowerCase());
+    if (!actual.includes(desired.toLowerCase()) || primary.some(key => labels[key] !== desired && actual.includes(labels[key].toLowerCase()))) {
+      throw new Error(`Workflow state change for issue #${number} could not be verified; reconcile its labels before dispatch.`);
+    }
+    return verified;
+  }
+  async ensureWorkflowLabels(labels) {
+    const entries = [
+      ['triage', 'Issue needs classification and next-action triage.', 'd4c5f9'],
+      ['proposal', 'Candidate direction awaiting a decision; implementation is not authorized.', 'fbca04'],
+      ['ready', 'Accepted and authorized work eligible for execution when prerequisites permit.', '0e8a16'],
+      ['hold', 'Execution is paused until explicitly released.', 'b60205'],
+      ['needsInput', 'A specific human response is required before this issue can advance.', 'bfd4f2'],
+    ];
+    const names = entries.map(([key]) => labels[key]);
+    if (new Set(names.map(name => name.toLowerCase())).size !== names.length || names.some(name => typeof name !== 'string' || !name.trim())) {
+      throw new Error('Workflow labels must be five distinct nonempty names.');
+    }
+    const list = async () => new Set((await this.gh(['label', 'list', '--repo', this.repository, '--limit', '1000', '--json', 'name']).then(JSON.parse)).map(item => item.name.toLowerCase()));
+    const existing = await list();
+    const created = [];
+    for (const [key, description, color] of entries) {
+      const name = labels[key];
+      if (existing.has(name.toLowerCase())) continue;
+      try { await this.gh(['label', 'create', name, '--repo', this.repository, '--description', description, '--color', color]); }
+      catch (error) { if (!(await list()).has(name.toLowerCase())) throw error; }
+      created.push(name);
+    }
+    const verified = await list();
+    const missing = names.filter(name => !verified.has(name.toLowerCase()));
+    if (missing.length) throw new Error(`Workflow label creation could not be verified: ${missing.join(', ')}.`);
+    return { created, labels: names };
+  }
   async pullForBranch(branch) {
     const head = `${this.repository.split('/')[0]}:${branch}`;
     const pulls = await this.pages(`repos/${this.repository}/pulls?state=all&head=${encodeURIComponent(head)}&per_page=100`);
