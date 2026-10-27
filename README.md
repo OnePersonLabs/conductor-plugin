@@ -31,8 +31,9 @@ codex plugin add conductor@conductor
 npm install -g 'C:\path\to\conductor-plugin'
 ```
 
-Start a fresh Codex session after plugin installation so it can load the new
-director skill. In WSL, install through that environment's own paths, Node/npm
+Fully restart Codex Desktop after plugin installation so its host reloads the
+director skill and hooks. A new chat alone may retain the host's old plugin cache.
+In WSL, install through that environment's own paths, Node/npm
 and authenticated GitHub CLI. Windows and WSL have separate local runtimes.
 
 From the target repository, ask Codex to use `$conductor:setup-repo-workflow`.
@@ -53,8 +54,8 @@ Merely installing the plugin or preparing configuration does not enable
 processing.
 
 Review and trust the Conductor lifecycle hooks when Desktop prompts you to do
-so. After installing or refreshing hook definitions, restart or open a fresh
-Desktop session so they load. If lifecycle status is unknown, automatic wakeups
+so. After installing or refreshing hook definitions, fully restart Desktop
+so its host reloads them. If lifecycle status is unknown, automatic wakeups
 are suppressed instead of assuming the director is idle.
 
 Use the director chat for issue triage, decisions and execution. Say `wakeup`

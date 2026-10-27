@@ -64,6 +64,16 @@ clients, but its sessions are not the selected Desktop director surface.
 
 ## Requirements identified
 
+**2026-10-27 bounded Windows Desktop trial:** publication and Windows/WSL
+installation completed, with five Conductor hooks trusted in each home. A
+fresh app-server listed those five hooks; the already-running shared daemon
+listed none. A new native Desktop chat enabled the admission-paused observer
+and settled revision 2, but no native lifecycle receipt appeared and activity
+remained `unknown`. Automatic wakeup was therefore suppressed. This does not
+qualify queued delivery. The trial observer was explicitly stopped with zero
+jobs. Repeat after a full Desktop restart; opening a new chat alone was
+insufficient in this trial.
+
 The comparison did not find a released candidate that established all of these
 behaviors together:
 

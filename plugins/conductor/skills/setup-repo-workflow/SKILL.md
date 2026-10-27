@@ -86,8 +86,8 @@ the director is active, idle, or interrupted. Unknown host activity suppresses
 automatic wakeups; never synthesize an idle status. Issue changes while it is
 active remain pending for that turn; signals wake it only when positively
 known to be idle. Trust the plugin hooks when Desktop requests review of them,
-and restart or open a fresh Desktop session after hook-definition changes so
-the lifecycle handlers load.
+and fully restart Desktop after hook-definition changes so its host reloads
+the lifecycle handlers. A new chat alone may retain the old host plugin cache.
 
 ## Verify and hand off
 
