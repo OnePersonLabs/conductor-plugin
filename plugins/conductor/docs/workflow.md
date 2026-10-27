@@ -31,9 +31,17 @@ only after the write completes; checks cover both paths. Record any blocking
 dependency on that issue. A distinct confirmed bug belongs in its own linked
 issue, rather than expanding this repair without authorization.
 
-GitHub holds actionable status. The existing specification or Conceptor record
-holds product meaning and evidence. Reuse an existing project checkpoint when
-needed; the coordinator's recovery state does not become another backlog.
+GitHub holds issue acceptance, remaining work, dependencies, and delivery status.
+The existing specification or Conceptor record holds enduring product meaning
+and evidence. Recover from the issue and actual Git/source state without a second
+repository checkpoint. The coordinator's machine recovery state remains separate.
+
+Use a checklist for small steps in one issue, native sub-issues for work needing
+separate ownership or acceptance, and native dependencies for prerequisites.
+GitHub displays child progress; a duplicate child checklist is unnecessary.
+Parent acceptance still requires the connected result. Existing milestones can
+group releases or phases; a Projects board is optional. See the
+[workflow skill](../skills/github-workflow/SKILL.md#represent-the-work-once).
 
 These prompts are for the operator's interactive Codex session:
 
@@ -71,8 +79,8 @@ write failure; `$onepersonlabs:research-solutions` can resolve a dependency ques
 Use `$onepersonlabs:adversarial-review` when independent review is justified and
 `$onepersonlabs:human-collaboration` when a person must resolve a product question.
 Update affected reader instructions with `$onepersonlabs:write-docs`. Use
-`$onepersonlabs:handoff` or `$onepersonlabs:session-reader` when recovery needs
-conversation context. Long-command and local-plugin refresh tools remain with
+`$onepersonlabs:session-reader` when recovery needs conversation context, and
+record remaining work in the issue. Long-command and local-plugin refresh tools remain with
 OnePersonLabs; they do not own Conductor's issue admission or delivery.
 
 ## Start and follow the work

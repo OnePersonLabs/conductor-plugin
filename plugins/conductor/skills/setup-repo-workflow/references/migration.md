@@ -56,8 +56,8 @@ especially effects difficult to reverse, notice promptly or attribute to the
 choice. Do not repeat obvious consequences or generic caution. An empty concerns
 list is preferable to warnings the person will learn to skim.
 
-Record settled choices and the source-to-destination mapping in the existing
-issue or checkpoint. Reuse prior authorization and keep unresolved decisions
+Record settled choices and any necessary migration context in the owning
+issue. Reuse prior authorization and keep unresolved decisions
 distinct from approved work. A recommendation is not the user's decision.
 
 ## Block unresolved conflicts
@@ -75,10 +75,11 @@ an accepted exception remains an exception rather than a conflict-free result.
 
 ## Complete the transition
 
-Prepare and verify a complete source-to-consumer cutover. Move actionable work
-to the selected tracker, accepted meaning/evidence to its owner and active work/
-recovery to one concise checkpoint. Reconcile existing remote issues before
-creation. Keep future work broad and preserve complete acceptance obligations.
+Prepare and verify a complete source-to-consumer cutover. Move actionable work,
+dependencies, and handoff status to the selected tracker and accepted meaning/
+evidence to its owner. Keep machine recovery with the existing runtime; do not
+create a repository checkpoint for task state. Reconcile existing remote issues
+before creation. Keep future work broad and preserve complete acceptance obligations.
 
 Migrate callers, native configuration and persistent data where required. Remove
 superseded instructions, duplicate backlogs, orphan routers, obsolete commands
