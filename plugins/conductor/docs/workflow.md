@@ -1,6 +1,6 @@
-# Run and recover Symphony Lite
+# Run and recover Conductor
 
-Symphony Lite is a foreground process. The Codex plugin provides the two
+Conductor is a foreground process. The Codex plugin provides the two
 workflow skills; it does not install the CLI command, start a process, or
 authorize production issue execution. Install the runtime separately, configure
 the target repository, and start it there.
@@ -8,10 +8,10 @@ the target repository, and start it there.
 ## Prepare the target repository
 
 Install the Codex plugin and foreground CLI separately. Follow the
-[README first-use steps](https://github.com/OnePersonLabs/symphony-lite#try-it) for Windows or POSIX/WSL
+[README first-use steps](https://github.com/OnePersonLabs/conductor-plugin#try-it) for Windows or POSIX/WSL
 commands. Start a fresh Codex session after plugin installation to make the
 setup skill available. In the target repository, explicitly ask Codex to use
-`$symphony-lite:setup-repo-workflow`. Review the generated `symphony-lite.json`
+`$conductor:setup-repo-workflow`. Review the generated `conductor.json`
 and its `authorized: true` gate. It must be based on genuine scope authority
 and name existing checks. Plugin installation, CLI installation, and setup do
 not launch the runtime. See [configuration](configuration.md) for the file
@@ -38,25 +38,25 @@ needed; the coordinator's recovery state does not become another backlog.
 These prompts are for the operator's interactive Codex session:
 
 ```text
-$symphony-lite:setup-repo-workflow Inspect this repository's tracker, base,
+$conductor:setup-repo-workflow Inspect this repository's tracker, base,
 existing checks, worktree preparation, review requirements and delivery policy.
-Prepare symphony-lite.json for the approved export repair. Leave execution stopped.
+Prepare conductor.json for the approved export repair. Leave execution stopped.
 ```
 
 ```text
-$symphony-lite:github-workflow Reuse the issue for the failed-export success
+$conductor:github-workflow Reuse the issue for the failed-export success
 message. Record the three acceptance cases, dependencies and scope authority.
 Mark it ready only when those requirements are established.
 ```
 
 ```text
-$symphony-lite:github-workflow Record the blocker on issue #42: the failed-write
+$conductor:github-workflow Record the blocker on issue #42: the failed-write
 case still reports success. Include the reproduction, observed result, evidence,
 and next decision. Keep the issue open while acceptance is incomplete.
 ```
 
 ```text
-$symphony-lite:github-workflow Reconcile issue #42, its PR and saved coordinator
+$conductor:github-workflow Reconcile issue #42, its PR and saved coordinator
 state after interruption. Identify the original builder and remaining work
 before resuming. At delivery, verify checks and actual landing before closure.
 ```
@@ -73,14 +73,14 @@ Use `$onepersonlabs:adversarial-review` when independent review is justified and
 Update affected reader instructions with `$onepersonlabs:write-docs`. Use
 `$onepersonlabs:handoff` or `$onepersonlabs:session-reader` when recovery needs
 conversation context. Long-command and local-plugin refresh tools remain with
-OnePersonLabs; they do not own Symphony Lite's issue admission or delivery.
+OnePersonLabs; they do not own Conductor's issue admission or delivery.
 
 ## Start and follow the work
 
 From the configured repository root, run:
 
 ```powershell
-symphony-lite
+conductor
 ```
 
 The process stays in the foreground and scans at the configured poll interval.
@@ -104,7 +104,7 @@ sandbox restriction. Builders inherit the operator's Codex permissions.
 With the default `reviewEnabled: true`, the coordinator then starts an independent
 reviewer session in the same worktree, sequentially in the issue's existing slot.
 The reviewer inspects the exact checked base/head and issue acceptance. Its thread
-starts read-only with approvals disabled. Symphony reads the effective Codex
+starts read-only with approvals disabled. Conductor reads the effective Codex
 configuration and disables configured MCP servers, Apps and plugins for that
 review thread. If it cannot read the configuration or establish isolation, review
 blocks rather than falling back to the builder's permissive tools. The reviewer
@@ -120,18 +120,18 @@ that need external information or a decision return as blocked.
 Findings are published as a readable PR review; locations on changed lines become
 inline comments. Findings may cite relevant existing source outside the diff and
 remain readable in the review body. The original builder repairs findings and
-failed checks. Symphony then resumes the same reviewer to reconsider them. Review
+failed checks. Conductor then resumes the same reviewer to reconsider them. Review
 clearance is tied to the reviewed base, head, issue content revision, and review
 instructions, so any change to those inputs requires another review. Both roles
 count against `maxTurns`. Set `reviewEnabled: false`
 only when the project explicitly opts out.
 
-Before merge, Symphony fetches the configured base and compares it with the
+Before merge, Conductor fetches the configured base and compares it with the
 issue branch. If the base advanced, it merges the new base into the issue branch,
 runs checks again, and sends the integrated result through review. Conflicts and
 integration failures go to the original builder. Different issues can build in
 parallel, while landing is serialized so only one PR completes against a given
-accepted base at a time. Symphony rechecks the base and reviewed head immediately
+accepted base at a time. Conductor rechecks the base and reviewed head immediately
 before requesting merge. Human branch races and GitHub merge-queue policy remain
 outside this runtime's guarantee.
 
@@ -145,14 +145,14 @@ acceptance. A closed unmerged PR remains blocked for operator reconciliation.
 Use a second terminal at the same checkout:
 
 ```powershell
-symphony-lite status
-symphony-lite signal
-symphony-lite stop
-symphony-lite cancel 42
-symphony-lite resume 42
-symphony-lite resume 42 --role reviewer
-symphony-lite resume 42 --thread THREAD_ID
-symphony-lite resume 42 --role reviewer --thread REVIEWER_THREAD_ID
+conductor status
+conductor signal
+conductor stop
+conductor cancel 42
+conductor resume 42
+conductor resume 42 --role reviewer
+conductor resume 42 --thread THREAD_ID
+conductor resume 42 --role reviewer --thread REVIEWER_THREAD_ID
 ```
 
 `status` reads saved state. `signal` asks the active process to scan now. `stop`
@@ -163,7 +163,7 @@ continue a stopped or blocked issue. If startup stopped before it saved a thread
 ID, the runtime lists Codex threads for the worktree saved for the issue. It
 adopts only the sole candidate. If none or multiple match, it blocks and asks
 you to inspect the candidates. Select the role and thread with
-`symphony-lite resume ISSUE --role builder|reviewer --thread THREAD_ID`. A selected
+`conductor resume ISSUE --role builder|reviewer --thread THREAD_ID`. A selected
 thread must belong to that exact worktree and have no active turn. `status` shows
 the active role and both saved thread IDs. If the issue already has a saved thread
 ID, `--thread` cannot replace it. Inspect status and the worktree before resuming;
@@ -188,14 +188,14 @@ Enter only requests a scan; it never answers a question or approves a command.
 
 ## Find and preserve recovery state
 
-Machine state is stored under `symphony-lite/` in the Git common directory,
+Machine state is stored under `conductor/` in the Git common directory,
 outside tracked project files. Each saved job records its own worktree path; the
 runtime places new worktrees outside the source checkout under a sibling
-`.symphony-lite-worktrees/<repository-hash>/issue-ISSUE` directory. Preserve the
+`.conductor-worktrees/<repository-hash>/issue-ISSUE` directory. Preserve the
 state file, lock information, original thread identity, branch, and worktree
 when diagnosing an interruption.
 
-After restart, inspect `symphony-lite status` before manual action. The runtime
+After restart, inspect `conductor status` before manual action. The runtime
 can resume the original thread after it confirms no old builder process remains.
 If state is blocked or stopped, inspect the issue, branch, and worktree before
 using `resume ISSUE`. Keep an unknown launch blocked until you understand its
@@ -222,5 +222,5 @@ process, not a service or background scheduler. Installation does not start the
 worker. It does not establish that a target repository has suitable permissions,
 checks, acceptance criteria, credentials, or policies. Complete qualification
 in the intended environment before relying on it for real issue delivery. See
-[current qualification status](https://github.com/OnePersonLabs/symphony-lite#qualification) and
-[qualification issue #1](https://github.com/OnePersonLabs/symphony-lite/issues/1).
+[current qualification status](https://github.com/OnePersonLabs/conductor-plugin#qualification) and
+[qualification issue #1](https://github.com/OnePersonLabs/conductor-plugin/issues/1).

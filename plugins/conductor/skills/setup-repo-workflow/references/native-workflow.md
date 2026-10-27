@@ -1,4 +1,4 @@
-# Repository choices for Symphony Lite
+# Repository choices for Conductor
 
 Use this reference during explicit setup. Inspect existing policy, issue
 conventions, protections, and checks before proposing configuration. Preserve
@@ -6,7 +6,7 @@ the project's owners of product meaning and acceptance evidence.
 
 ## Supported delivery lane
 
-Symphony Lite supports a GitHub issue-to-PR path. Each admitted issue receives a
+Conductor supports a GitHub issue-to-PR path. Each admitted issue receives a
 branch and separate worktree. Its original Codex builder handles implementation
 and PR repairs; the coordinator verifies configured checks, publishes the branch,
 opens and monitors the PR, and reconciles landing. It does not deliver direct
@@ -24,7 +24,7 @@ blocking and ordered priority labels only when they reflect the repository's
 real issue conventions. An issue's label signals admission eligibility; it does
 not establish product authorization or clear acceptance criteria.
 
-`agents` is Symphony Lite's maximum number of concurrent primary issues. Each
+`agents` is Conductor's maximum number of concurrent primary issues. Each
 issue keeps its slot while building, waiting for checks or review, repairing, and
 awaiting merge. It is not a Codex helper-subagent limit. Do not infer a
 project-wide helper cap from it; follow the repository's existing Codex policy
@@ -44,7 +44,7 @@ commands only for reproducible worktree setup that the project already needs.
 Do not put credentials, private environment files, or destructive setup commands
 in this configuration.
 
-Symphony Lite refreshes the PR branch against its selected base before checks.
+Conductor refreshes the PR branch against its selected base before checks.
 Base conflicts return to the original builder. Checks run in that worktree and
 must leave its source unchanged. `AGENTS.override.md` files are copied into new
 worktrees by the runtime; inspect whether repository-specific overrides remain
@@ -89,6 +89,6 @@ Codex App Server. Verify its PATH, credentials, filesystem permissions, and
 toolchain. Windows and WSL have separate installations and environment settings.
 Do not claim compatibility merely because the package or a check command runs.
 
-Symphony Lite is a foreground program. No system service, login task, remote
+Conductor is a foreground program. No system service, login task, remote
 runner, or unattended startup is installed by plugin setup. Explicitly running
 the CLI is separate from configuring its repository.

@@ -1,14 +1,14 @@
 {
-  "name": "symphony-lite",
+  "name": "conductor",
   "interface": {
-    "displayName": "Symphony Lite"
+    "displayName": "Conductor"
   },
   "plugins": [
     {
-      "name": "symphony-lite",
+      "name": "conductor",
       "source": {
         "source": "local",
-        "path": "./plugins/symphony-lite"
+        "path": "./plugins/conductor"
       },
       "policy": {
         "installation": "AVAILABLE",

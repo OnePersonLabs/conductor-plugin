@@ -10,7 +10,7 @@ import {
   inspectRepository,
   refreshBranch,
   removeWorktree,
-} from '../plugins/symphony-lite/lib/worktrees.mjs';
+} from '../plugins/conductor/lib/worktrees.mjs';
 
 async function run(command, args, cwd, options = {}) {
   const result = await new Promise((resolve, reject) => {
@@ -36,7 +36,7 @@ async function git(root, ...args) {
 }
 
 async function fixture(t) {
-  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'symphony-lite-worktrees-test-'));
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'conductor-worktrees-test-'));
   const root = path.join(temp, 'source repo');
   await fs.mkdir(root);
   await git(root, 'init', '-b', 'main');
@@ -235,7 +235,7 @@ test('refuses removal of dirty or unowned worktrees', async (t) => {
   const { root, worktreePath } = await fixture(t);
   await fs.mkdir(path.dirname(worktreePath), { recursive: true });
   await git(root, 'worktree', 'add', worktreePath, '-b', 'issue/dirty', 'main');
-  await assert.rejects(removeWorktree({ repoRoot: root, worktreePath }), /without Symphony Lite ownership/);
+  await assert.rejects(removeWorktree({ repoRoot: root, worktreePath }), /without Conductor ownership/);
   const ownedPath = path.join(path.dirname(worktreePath), 'owned');
   await createWorktree({ repoRoot: root, path: ownedPath, branch: 'issue/dirty-owned', baseRef: 'main' });
   await fs.writeFile(path.join(ownedPath, 'local.txt'), 'preserve me\n');

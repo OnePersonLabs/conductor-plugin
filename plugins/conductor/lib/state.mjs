@@ -15,7 +15,7 @@ export async function atomicJSON(path, value) {
 }
 
 export class Store {
-  constructor(commonDir) { this.dir = join(commonDir, 'symphony-lite'); this.controls = join(this.dir, 'commands'); this.lockPath = join(this.dir, 'coordinator.lock'); this.token = randomUUID(); this.pending = Promise.resolve(); }
+  constructor(commonDir) { this.dir = join(commonDir, 'conductor'); this.controls = join(this.dir, 'commands'); this.lockPath = join(this.dir, 'coordinator.lock'); this.token = randomUUID(); this.pending = Promise.resolve(); }
   async initialize() { await mkdir(this.controls, { recursive: true }); }
   async read() {
     try {
@@ -53,7 +53,7 @@ export class Store {
   async send(command, issue, threadId, role) {
     const owner = await this.owner();
     if (!owner) throw new Error('No coordinator is running for this repository.');
-    if (owner.hostname === hostname() && owner.platform === process.platform && !processExists(owner.pid)) throw new Error('The recorded coordinator has stopped. Start symphony-lite to reconcile recovery state.');
+    if (owner.hostname === hostname() && owner.platform === process.platform && !processExists(owner.pid)) throw new Error('The recorded coordinator has stopped. Start conductor to reconcile recovery state.');
     const request = { id: randomUUID(), owner: owner.token, command, issue, threadId, role, at: new Date().toISOString() };
     await atomicJSON(join(this.controls, `${request.id}.json`), request);
     return request;

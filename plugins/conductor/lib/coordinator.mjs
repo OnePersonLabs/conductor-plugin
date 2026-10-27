@@ -147,10 +147,10 @@ export class Coordinator extends EventEmitter {
     }
     for (const issue of admission(eligible, this.state.jobs, this.config)) {
       if (this.stopping) break;
-      const branch = `symphony/issue-${issue.number}`;
+      const branch = `conductor/issue-${issue.number}`;
       if (await this.github.pullForBranch(branch)) { this.emit('notice', `Issue #${issue.number} already has a PR on ${branch}; recover its owner before adoption.`); continue; }
       // Ordinary worktrees stay outside all source checkouts; their explicit paths survive restart.
-      const path = join(dirname(dirname(this.repo.commonDir)), '.symphony-lite-worktrees', digest(this.repo.commonDir).slice(0, 16), `issue-${issue.number}`);
+      const path = join(dirname(dirname(this.repo.commonDir)), '.conductor-worktrees', digest(this.repo.commonDir).slice(0, 16), `issue-${issue.number}`);
       const job = { issue: issue.number, sourceIdentity: issue.node_id ?? `${this.config.repository}#${issue.number}`, requestRevision: createRequestRevision(issue), branch, worktree: path, baseBranch: this.config.baseBranch, phase: 'preparing', activeRole: 'builder', nextRole: 'builder', builderThreadId: null, reviewerThreadId: null, threadId: null, turnId: null, childPid: null, acceptanceComplete: false, createdAt: new Date().toISOString() };
       this.state.jobs.push(job); await this.save();
       try {
@@ -555,7 +555,7 @@ export class Coordinator extends EventEmitter {
       try {
         await access(job.worktree);
         const marker = await git(job.worktree, 'rev-parse', '--absolute-git-dir');
-        if ((await readFile(join(marker, 'symphony-lite-owned-worktree'), 'utf8')).trim() !== this.repo.root) throw new Error('Worktree ownership does not match.');
+        if ((await readFile(join(marker, 'conductor-owned-worktree'), 'utf8')).trim() !== this.repo.root) throw new Error('Worktree ownership does not match.');
         if (await git(job.worktree, 'branch', '--show-current') !== job.branch) throw new Error('Worktree branch does not match its issue owner.');
         job.worktreeCreated = true;
       } catch (error) { if (error.code !== 'ENOENT') throw error; if (job.worktreeCreated) throw new Error('The recorded worktree or ownership marker is missing; preserve state and reconcile it.'); }

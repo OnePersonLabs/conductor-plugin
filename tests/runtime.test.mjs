@@ -6,25 +6,25 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
-import { git, run } from '../plugins/symphony-lite/lib/process.mjs';
-import { validateConfig, duration } from '../plugins/symphony-lite/lib/config.mjs';
-import { admission, WakeLoop } from '../plugins/symphony-lite/lib/scheduler.mjs';
-import { Store, atomicJSON } from '../plugins/symphony-lite/lib/state.mjs';
-import { GitHub, checkState } from '../plugins/symphony-lite/lib/github.mjs';
-import { Coordinator, reviewerIsolationConfig } from '../plugins/symphony-lite/lib/coordinator.mjs';
-import { createRequestRevision, parseReviewResult } from '../plugins/symphony-lite/lib/prompts.mjs';
-import { inspectRepository, createWorktree } from '../plugins/symphony-lite/lib/worktrees.mjs';
-import { parseArgs } from '../plugins/symphony-lite/bin/symphony-lite.mjs';
+import { git, run } from '../plugins/conductor/lib/process.mjs';
+import { validateConfig, duration } from '../plugins/conductor/lib/config.mjs';
+import { admission, WakeLoop } from '../plugins/conductor/lib/scheduler.mjs';
+import { Store, atomicJSON } from '../plugins/conductor/lib/state.mjs';
+import { GitHub, checkState } from '../plugins/conductor/lib/github.mjs';
+import { Coordinator, reviewerIsolationConfig } from '../plugins/conductor/lib/coordinator.mjs';
+import { createRequestRevision, parseReviewResult } from '../plugins/conductor/lib/prompts.mjs';
+import { inspectRepository, createWorktree } from '../plugins/conductor/lib/worktrees.mjs';
+import { parseArgs } from '../plugins/conductor/bin/conductor.mjs';
 
-const issue = (number, labels = ['symphony:ready']) => ({ number, title: `Task ${number}`, body: `Write task ${number}`, state: 'open', labels, created_at: '2026-01-01' });
+const issue = (number, labels = ['conductor:ready']) => ({ number, title: `Task ${number}`, body: `Write task ${number}`, state: 'open', labels, created_at: '2026-01-01' });
 const config = () => validateConfig({ repository: 'example/project', baseBranch: 'main', authorized: true, reviewEnabled: false, checks: [{ command: process.execPath, args: ['check.mjs'] }] });
 
 test('npm-style linked CLI executes its entry point through spaces and Unicode', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'symphony-cli-'));
+  const dir = await mkdtemp(join(tmpdir(), 'conductor-cli-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const alias = join(dir, 'linked package café');
-  await symlink(fileURLToPath(new URL('../plugins/symphony-lite', import.meta.url)), alias, process.platform === 'win32' ? 'junction' : 'dir');
-  const result = await run(process.execPath, [join(alias, 'bin/symphony-lite.mjs'), '--version'], { cwd: dir });
+  await symlink(fileURLToPath(new URL('../plugins/conductor', import.meta.url)), alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const result = await run(process.execPath, [join(alias, 'bin/conductor.mjs'), '--version'], { cwd: dir });
   assert.equal(result.stdout.trim(), '0.1.0');
 });
 async function until(predicate, message = 'condition', timeout = 15000) {
@@ -88,7 +88,7 @@ test('timer, signal and Enter share one coalescing wake operation', async () => 
 });
 
 test('physical repository lock and queued controls survive process restart without duplicate ownership', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'symphony-store-'));
+  const dir = await mkdtemp(join(tmpdir(), 'conductor-store-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const a = new Store(dir), b = new Store(dir);
   await a.acquire(); await assert.rejects(() => b.acquire(), /owns this repository/);
@@ -110,8 +110,8 @@ test('feedback ignores stale heads and coordinator records; all failed checks bl
     { id: 8, state: 'COMMENTED', commit_id: 'current', body: 'Bot summary feedback', user: { type: 'Bot' } },
     { id: 9, state: 'COMMENTED', commit_id: 'current', body: '  ', user: { type: 'Bot' } },
   ] : path.includes('/pulls/') ? [{ id: 3, commit_id: 'old', body: 'old inline', user: {} }] : [
-    { id: 4, body: '<!-- symphony-lite:1 -->\nwaiting', user: {} },
-    { id: 7, body: '<!-- symphony-lite:review:7:1:current -->\nalready processed', user: { type: 'Bot' } },
+    { id: 4, body: '<!-- conductor:1 -->\nwaiting', user: {} },
+    { id: 7, body: '<!-- conductor:review:7:1:current -->\nalready processed', user: { type: 'Bot' } },
     { id: 5, body: 'New evidence', user: {}, updated_at: 'now' },
   ];
   const feedback = await api.feedback(7, 'current');
@@ -158,7 +158,7 @@ test('saved review result is superseded when mutable request revision advanced a
   const job = {
     issue: 1, pr: 11, phase: 'blocked', requestRevision: createRequestRevision(world.issues[0]), reviewResultRevision: oldRevision, reviewPublicationStatus: 'pending',
     reviewAttempt: 2, reviewHead: 'saved-head', reviewResult: { status: 'findings', summary: 'Old request result.', findings: [] },
-    worktree: world.root, branch: 'symphony/issue-1',
+    worktree: world.root, branch: 'conductor/issue-1',
   };
   c.state = { version: 1, repository: 'example/project', jobs: [job] };
   c.save = async () => {};
@@ -174,7 +174,7 @@ test('saved review result is superseded when mutable request revision advanced a
 });
 
 async function fixture(t, { agents = 1, hold = false, maxTurns, reviewEnabled = false } = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'symphony-runtime-'));
+  const dir = await mkdtemp(join(tmpdir(), 'conductor-runtime-'));
   const root = join(dir, 'source'), remote = join(dir, 'remote.git');
   await mkdir(root); await git(dir, 'init', '--bare', '--initial-branch=main', remote);
   await git(root, 'init', '--initial-branch=main');
@@ -475,7 +475,7 @@ test('cancel interrupts a pending launch, preserves source, and suppresses redis
   const { world, coordinator } = await fixture(t, { hold: 'launch' });
   const c = coordinator(); await c.start(); await until(() => world.clients[0]?.launchReject);
   const job = c.state.jobs[0]; await c.cancel(1);
-  assert.equal(job.phase, 'cancelled'); assert.equal(await git(job.worktree, 'branch', '--show-current'), 'symphony/issue-1');
+  assert.equal(job.phase, 'cancelled'); assert.equal(await git(job.worktree, 'branch', '--show-current'), 'conductor/issue-1');
   world.issues = [issue(1)]; await c.wake(); assert.equal(world.starts, 1);
 });
 
@@ -515,9 +515,9 @@ test('interrupted preparation adopts the already-owned worktree only on explicit
   const { root, repo, world, coordinator } = await fixture(t);
   world.issues = [issue(1)];
   const worktree = join(root, '..', 'interrupted-worktree');
-  await createWorktree({ repoRoot: root, path: worktree, branch: 'symphony/issue-1', baseRef: 'HEAD' });
+  await createWorktree({ repoRoot: root, path: worktree, branch: 'conductor/issue-1', baseRef: 'HEAD' });
   const store = new Store(repo.commonDir); await store.initialize();
-  await store.save({ version: 1, jobs: [{ issue: 1, branch: 'symphony/issue-1', baseBranch: 'main', worktree, phase: 'preparing', threadId: null }] });
+  await store.save({ version: 1, jobs: [{ issue: 1, branch: 'conductor/issue-1', baseBranch: 'main', worktree, phase: 'preparing', threadId: null }] });
   const c = coordinator(); await c.start();
   assert.equal(c.state.jobs[0].phase, 'uncertain'); assert.equal(world.turns, 0);
   await c.resume(1); await until(() => c.state.jobs[0].phase === 'waiting');

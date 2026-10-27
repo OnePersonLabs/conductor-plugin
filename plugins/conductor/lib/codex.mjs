@@ -4,8 +4,8 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 
 const CLIENT_INFO = Object.freeze({
-  name: 'symphony-lite',
-  title: 'Symphony Lite',
+  name: 'conductor',
+  title: 'Conductor',
   version: '0.1.0',
 });
 

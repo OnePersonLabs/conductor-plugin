@@ -33,13 +33,13 @@ export function validateConfig(raw) {
     if (raw[key] !== undefined && typeof raw[key] !== 'string') throw new Error(`${key} must be a string.`);
   }
   if (raw.reviewEnabled !== undefined && typeof raw.reviewEnabled !== 'boolean') throw new Error('reviewEnabled must be a boolean.');
-  return { ...raw, agents, implementationInstructions: raw.implementationInstructions ?? '', reviewEnabled: raw.reviewEnabled ?? true, reviewInstructions: raw.reviewInstructions ?? '', readyLabel: raw.readyLabel ?? 'symphony:ready', priorityLabels: raw.priorityLabels ?? [], pollMs: duration(raw.pollInterval ?? '5m'), requiredApprovals, mergeMethod, prepare: raw.prepare ?? [] };
+  return { ...raw, agents, implementationInstructions: raw.implementationInstructions ?? '', reviewEnabled: raw.reviewEnabled ?? true, reviewInstructions: raw.reviewInstructions ?? '', readyLabel: raw.readyLabel ?? 'conductor:ready', priorityLabels: raw.priorityLabels ?? [], pollMs: duration(raw.pollInterval ?? '5m'), requiredApprovals, mergeMethod, prepare: raw.prepare ?? [] };
 }
 
 export async function loadConfig(root, overrides = {}) {
   let raw;
-  try { raw = JSON.parse(await readFile(join(root, 'symphony-lite.json'), 'utf8')); }
-  catch (error) { throw new Error(`Cannot load symphony-lite.json: ${error.message}. Use $symphony-lite:setup-repo-workflow for explicit setup.`); }
+  try { raw = JSON.parse(await readFile(join(root, 'conductor.json'), 'utf8')); }
+  catch (error) { throw new Error(`Cannot load conductor.json: ${error.message}. Use $conductor:setup-repo-workflow for explicit setup.`); }
   return validateConfig({ ...raw, ...overrides });
 }
 

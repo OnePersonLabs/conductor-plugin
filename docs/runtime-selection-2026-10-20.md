@@ -1,7 +1,7 @@
 # Runtime selection evidence
 
 **Evidence date:** 2026-10-20. This is a pinned, source-based comparison that
-informed Symphony Lite's requirements. It is not a current market survey, a
+informed Conductor's requirements. It is not a current market survey, a
 runtime qualification report, or evidence that the current implementation has
 passed its live campaign. Recheck candidate releases and source before relying
 on the comparison for a new decision.
@@ -45,6 +45,6 @@ from their own code, test receipts, and bounded evidence.
 The adopted PR feedback receipt helper derives from
 EveryInc/compound-engineering-plugin's `ce-resolve-pr-feedback` at
 `8673dfb96ad62c5e0cb6bc50fce312e7a66487a0`. Its attribution and MIT terms are in
-[`plugins/symphony-lite/THIRD_PARTY_NOTICES.md`](../plugins/symphony-lite/THIRD_PARTY_NOTICES.md).
+[`plugins/conductor/THIRD_PARTY_NOTICES.md`](../plugins/conductor/THIRD_PARTY_NOTICES.md).
 No Itervox, Agent Orchestrator, GitHub Agentic Workflows, or OpenAI Symphony
 runtime source was copied as part of this research transfer.

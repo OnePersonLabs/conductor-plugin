@@ -1,8 +1,8 @@
-# Symphony Lite
+# Conductor
 
-Symphony Lite runs authorized GitHub issues through a foreground Codex worker
+Conductor runs authorized GitHub issues through a foreground Codex worker
 pool. It selects issues with a ready label and starts isolated builders. By
-default, a separate read-only reviewer checks each PR before merge. Symphony
+default, a separate read-only reviewer checks each PR before merge. Conductor
 runs configured checks, publishes review findings, routes repairs to the original
 builder, and follows each issue through merge.
 
@@ -16,15 +16,15 @@ succeeds in the environment where the worker will run.
    marketplace in this checkout:
 
    ```powershell
-   codex plugin marketplace add 'C:\path\to\symphony-lite'
-   codex plugin add symphony-lite@symphony-lite
+   codex plugin marketplace add 'C:\path\to\conductor-plugin'
+   codex plugin add conductor@conductor
    ```
 
    If Codex runs in WSL, use the WSL path to the checkout:
 
    ```sh
-   codex plugin marketplace add /path/to/symphony-lite
-   codex plugin add symphony-lite@symphony-lite
+   codex plugin marketplace add /path/to/conductor-plugin
+   codex plugin add conductor@conductor
    ```
 
    This makes the local plugin available to Codex. It does not publish the
@@ -36,17 +36,17 @@ succeeds in the environment where the worker will run.
    from the checkout or the known GitHub source:
 
    ```powershell
-   npm install -g 'C:\path\to\symphony-lite'
+   npm install -g 'C:\path\to\conductor-plugin'
    # Or install the GitHub source directly:
-   npm install -g github:OnePersonLabs/symphony-lite
+   npm install -g github:OnePersonLabs/conductor-plugin
    ```
 
    In WSL or another POSIX shell, use its Node/npm installation and paths:
 
    ```sh
-   npm install -g /path/to/symphony-lite
+   npm install -g /path/to/conductor-plugin
    # Or install the GitHub source directly:
-   npm install -g github:OnePersonLabs/symphony-lite
+   npm install -g github:OnePersonLabs/conductor-plugin
    ```
 
    Windows and WSL have separate Node installations and PATH values. Install
@@ -55,28 +55,28 @@ succeeds in the environment where the worker will run.
    the worker.
 
 3. From the target repository, explicitly ask Codex to use
-   `$symphony-lite:setup-repo-workflow` to inspect the workflow and prepare
-   `symphony-lite.json`. Setup must confirm the actual issue scope authority,
+   `$conductor:setup-repo-workflow` to inspect the workflow and prepare
+   `conductor.json`. Setup must confirm the actual issue scope authority,
    repository, base branch, existing checks, and PR requirements. The runtime
    requires `authorized: true`, a base branch, and at least one configured check
    before it can run.
 4. Review and approve that file only when ready issues are genuinely authorized
    for execution. It is the project configuration and can authorize GitHub
    writes by the foreground coordinator.
-5. In a terminal at the configured repository root, run `symphony-lite`. This
+5. In a terminal at the configured repository root, run `conductor`. This
    starts the foreground process. Installation and setup do not start it.
 
 When an issue meets the configured admission rules, the coordinator posts a
 status comment and starts a builder in a separate worktree. Review the terminal
 and issue before allowing this on a repository with real work. Read
-[workflow and recovery](plugins/symphony-lite/docs/workflow.md)
+[workflow and recovery](plugins/conductor/docs/workflow.md)
 for status, operator controls, and interrupted work. Read
-[repository configuration](plugins/symphony-lite/docs/configuration.md) for the
+[repository configuration](plugins/conductor/docs/configuration.md) for the
 settings and required authorization boundary.
 
 ## Important limits
 
-Symphony Lite runs in the foreground while its process is active. It does not
+Conductor runs in the foreground while its process is active. It does not
 install a service, scheduler, or unattended startup task. The
 deterministic checks and package installation do not establish live runtime
 qualification. Confirm the current qualification state before relying on it.
@@ -90,18 +90,10 @@ with the project.
 
 ## Qualification
 
-Live delivery completed on three Windows issues and one WSL issue. The Windows
-trial exercised ordinary delivery, two concurrent isolated builders,
-original-thread review repair, and interruption/resumption. WSL delivery
-succeeded after updating native Codex from 0.155.1 to 0.164.0 and resuming the
-original thread. The initial eight-turn trial and one authorized retry used
-nine total turn attempts, with at most two simultaneous builders.
-
-See [qualification issue #1](https://github.com/OnePersonLabs/symphony-lite/issues/1)
-for platform-specific evidence, including manual restoration of the missing
-temporary WSL workspace before retry. These scenarios do not establish every
-runtime behavior on both platforms or suitability for a particular production
-repository. The trial coordinators are stopped; no production work was started.
+Bounded Windows and WSL delivery checks completed, including parallel builders,
+original-thread repair, and interruption/resumption. These checks do not qualify
+every runtime behavior or a production repository. The disposable trial is
+complete; no production workers are running.
 
 ## Contributor checks
 
@@ -119,12 +111,12 @@ plugin tree with source. It does not run the worker or start an issue.
 run model evaluations or the installed-package checkpoint.
 
 For maintainers, the
-[2026-10-20 runtime selection evidence](https://github.com/OnePersonLabs/symphony-lite/blob/main/docs/runtime-selection-2026-10-20.md)
+[2026-10-20 runtime selection evidence](https://github.com/OnePersonLabs/conductor-plugin/blob/main/docs/runtime-selection-2026-10-20.md)
 preserves the pinned comparison and requirements that informed the implementation.
 
 Skills and their activation metadata ship inside
-[`plugins/symphony-lite`](plugins/symphony-lite/). See the
-[GitHub workflow skill](plugins/symphony-lite/skills/github-workflow/SKILL.md)
+[`plugins/conductor`](plugins/conductor/). See the
+[GitHub workflow skill](plugins/conductor/skills/github-workflow/SKILL.md)
 for issue and delivery policy and the
-[setup skill](plugins/symphony-lite/skills/setup-repo-workflow/SKILL.md) for
+[setup skill](plugins/conductor/skills/setup-repo-workflow/SKILL.md) for
 explicit repository configuration.

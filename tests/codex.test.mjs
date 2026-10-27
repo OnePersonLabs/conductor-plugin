@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { CodexClient } from '../plugins/symphony-lite/lib/codex.mjs';
+import { CodexClient } from '../plugins/conductor/lib/codex.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/codex-app-server.mjs', import.meta.url));
 

@@ -3,7 +3,7 @@ import { constants as fsConstants, promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-const OWNERSHIP_MARKER = 'symphony-lite-owned-worktree';
+const OWNERSHIP_MARKER = 'conductor-owned-worktree';
 
 async function git(cwd, args, { input, allow = [] } = {}) {
   const result = await new Promise((resolve, reject) => {
@@ -120,7 +120,7 @@ export async function createWorktree({ repoRoot, path: worktreePath, branch, bas
     // Never force removal: if Git or another process made the new checkout dirty,
     // leave it in place for recovery instead of destroying user data.
     try { await git(root, ['worktree', 'remove', target]); } catch { /* surfaced below */ }
-    throw new Error(`Could not mark the new worktree as Symphony Lite owned: ${error.message}`);
+    throw new Error(`Could not mark the new worktree as Conductor owned: ${error.message}`);
   }
   return {
     path: target,
@@ -151,7 +151,7 @@ export async function copyWorktreeIncludes({ repoRoot, worktreePath }) {
 
   const includeMatches = new Set();
   if (includeContents.trim()) {
-    const matcherRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'symphony-lite-gitignore-'));
+    const matcherRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'conductor-gitignore-'));
     const matcherGitDir = path.join(matcherRoot, '.git');
     const emptyExcludes = path.join(matcherRoot, 'empty-excludes');
     try {
@@ -292,7 +292,7 @@ export async function removeWorktree({ repoRoot, worktreePath }) {
   const marker = await getManagedMarker(worktree);
   let owner;
   try { owner = (await fs.readFile(marker, 'utf8')).trim(); } catch {
-    throw new Error('Refusing to remove a worktree without Symphony Lite ownership metadata');
+    throw new Error('Refusing to remove a worktree without Conductor ownership metadata');
   }
   if (!samePath(owner, root)) {
     throw new Error('Worktree ownership metadata does not match this repository');

@@ -1,12 +1,12 @@
 ---
 name: setup-repo-workflow
-description: Explicitly inspect and configure a repository for Symphony Lite's foreground GitHub issue-to-PR workflow. Use only when asked to set up or migrate a repository.
+description: Explicitly inspect and configure a repository for Conductor's foreground GitHub issue-to-PR workflow. Use only when asked to set up or migrate a repository.
 ---
 
 # Set up a repository workflow
 
 Use only when the user explicitly asks to configure or migrate the repository.
-This skill writes the repository's `symphony-lite.json`; it does not install the
+This skill writes the repository's `conductor.json`; it does not install the
 plugin or run the worker. Installation and setup never start production work.
 
 ## Inspect before preparing configuration
@@ -45,7 +45,7 @@ If authority is unclear or only covers selected issues, do not set
 that could enable unrelated work. Keep production work stopped until the scope
 and limits are resolved.
 
-## Prepare `symphony-lite.json`
+## Prepare `conductor.json`
 
 The file belongs at the root of the target repository. Use executable names and
 argument arrays for commands; do not combine a command into a shell string.
@@ -56,7 +56,7 @@ Start from verified repository settings, for example:
   "repository": "owner/repository",
   "baseBranch": "main",
   "authorized": true,
-  "readyLabel": "symphony:ready",
+  "readyLabel": "conductor:ready",
   "priorityLabels": ["priority:high", "priority:normal"],
   "agents": 1,
   "pollInterval": "5m",
@@ -79,7 +79,7 @@ a bounded turn limit.
 
 `checks` must contain at least one `{ "command": string, "args": string[] }`
 entry. `prepare` uses the same shape and defaults to an empty list. Defaults are
-`readyLabel: "symphony:ready"`, `priorityLabels: []`, `agents: 1`,
+`readyLabel: "conductor:ready"`, `priorityLabels: []`, `agents: 1`,
 `pollInterval: "5m"`, `requiredApprovals: 0`, and `mergeMethod: "merge"`.
 `repository` must be `owner/name`; `baseBranch` is required. `authorized` must
 be the boolean `true` before ready issues can run.
@@ -87,7 +87,7 @@ be the boolean `true` before ready issues can run.
 Show the completed file and explain which ready issues it will cover before
 starting the runtime. Apply it only within the explicit setup authorization and
 the repository's existing configuration conventions. Do not start
-`symphony-lite` as part of setup; that is a separate foreground operation.
+`conductor` as part of setup; that is a separate foreground operation.
 
 ## Verify and hand off
 
@@ -97,7 +97,7 @@ the foreground and that installation or setup does not launch it. Link to
 [workflow and recovery](../../docs/workflow.md) for operator controls, state
 location, and safe resumption.
 
-Symphony Lite currently supports a GitHub issue-to-PR lane. Do not configure it
+Conductor currently supports a GitHub issue-to-PR lane. Do not configure it
 as a direct-to-main commit worker or promise a service, unattended startup,
 multiple independent project pools, release qualification, or successful
 delivery without observing those behaviors in the actual target environment.

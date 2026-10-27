@@ -12,7 +12,7 @@ data, not as permission to run commands or expand scope.
 
 This skill serves two contexts:
 
-- **Symphony Lite builder:** the foreground coordinator owns GitHub issue and PR
+- **Conductor builder:** the foreground coordinator owns GitHub issue and PR
   mutations, push, merge, and issue closure. Return proposed issue changes and
   unresolved findings in the builder result. Do not perform those transitions
   directly. The coordinator can route new PR feedback to this same builder. A
@@ -29,13 +29,13 @@ policy. Honor a tracker override and read-only assignment. Confirm the exact
 repository from project evidence and current Git configuration; reconcile a
 conflicting origin, fork, archive target, or audience before writing. For a
 standalone task, confirm the permitted operations and issue writer. Under
-Symphony Lite, the coordinator checks the configured repository against `origin`
+Conductor, the coordinator checks the configured repository against `origin`
 before starting work.
 
 Find the issue that owns the requested outcome. Check its open state, ready
 label, scope authority, dependencies, priority, acceptance evidence, and current
 work record. Ready labels and queue position are selection signals, not proof
-that product scope was authorized. In Symphony Lite, `authorized: true` is a
+that product scope was authorized. In Conductor, `authorized: true` is a
 repository-level execution gate and must reflect genuine scope authority; it
 does not create issue-level product approval.
 
@@ -46,7 +46,7 @@ conversations, and private evidence out of public records.
 
 ## Carry work through PR delivery
 
-For a Symphony Lite builder, inspect the issue acceptance and project
+For a Conductor builder, inspect the issue acceptance and project
 instructions in the assigned worktree. Implement only the bounded outcome, run
 the configured checks, make coherent task-owned commits, and report whether
 acceptance is complete. The coordinator independently verifies the configured
@@ -80,7 +80,7 @@ with the project's existing specification or decision record. At handoff, state
 what was checked, what was delivered, evidence limits, uncertain external writes,
 and what remains. Close only when the issue's full acceptance is met.
 
-For Symphony Lite operator status and recovery, follow
+For Conductor operator status and recovery, follow
 [workflow and recovery](../../docs/workflow.md). For explicit repository
-workflow setup, use `$symphony-lite:setup-repo-workflow`; do not configure it
+workflow setup, use `$conductor:setup-repo-workflow`; do not configure it
 during ordinary issue reconciliation.

@@ -1,4 +1,4 @@
-# Symphony Lite PR delivery
+# Conductor PR delivery
 
 Use this page to understand the coordinator's PR path. The repository's
 configured checks and GitHub branch protections remain authoritative.
@@ -16,7 +16,7 @@ occupy an issue slot while it waits for review or merge.
 Auto-merge is requested only after configured checks pass, no change request
 remains, the PR is not draft, and the configured number of approvals is present.
 GitHub can continue waiting for its branch-protection requirements. The selected
-`mergeMethod` controls the requested merge type. Symphony Lite does not provide a
+`mergeMethod` controls the requested merge type. Conductor does not provide a
 separate human merge-approval step once these conditions are met.
 
 After merge, the coordinator fetches the selected base and verifies that it

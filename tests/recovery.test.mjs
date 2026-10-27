@@ -4,21 +4,21 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { Coordinator } from '../plugins/symphony-lite/lib/coordinator.mjs';
-import { validateConfig } from '../plugins/symphony-lite/lib/config.mjs';
-import { Store } from '../plugins/symphony-lite/lib/state.mjs';
-import { git } from '../plugins/symphony-lite/lib/process.mjs';
-import { inspectRepository } from '../plugins/symphony-lite/lib/worktrees.mjs';
-import { createRequestRevision } from '../plugins/symphony-lite/lib/prompts.mjs';
+import { Coordinator } from '../plugins/conductor/lib/coordinator.mjs';
+import { validateConfig } from '../plugins/conductor/lib/config.mjs';
+import { Store } from '../plugins/conductor/lib/state.mjs';
+import { git } from '../plugins/conductor/lib/process.mjs';
+import { inspectRepository } from '../plugins/conductor/lib/worktrees.mjs';
+import { createRequestRevision } from '../plugins/conductor/lib/prompts.mjs';
 
-const issue = number => ({ number, title: `Task ${number}`, body: 'Finish the accepted task.', state: 'open', labels: ['symphony:ready'] });
+const issue = number => ({ number, title: `Task ${number}`, body: 'Finish the accepted task.', state: 'open', labels: ['conductor:ready'] });
 const config = () => validateConfig({
   repository: 'example/project', baseBranch: 'main', authorized: true, reviewEnabled: false,
   checks: [{ command: process.execPath, args: ['check.mjs'] }],
 });
 
 async function repository(t) {
-  const temp = await mkdtemp(path.join(os.tmpdir(), 'symphony-recovery-'));
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'conductor-recovery-'));
   const root = path.join(temp, 'source repo');
   const remote = path.join(temp, 'remote.git');
   await mkdir(root);
@@ -70,7 +70,7 @@ test('failed repair launch retains exact pending PR feedback through explicit re
   c.state = { version: 1, repository: 'example/project', jobs: [] };
   c.wake = async () => {};
   const job = {
-    issue: 7, branch: 'symphony/issue-7', worktree: repo.root, phase: 'waiting',
+    issue: 7, branch: 'conductor/issue-7', worktree: repo.root, phase: 'waiting',
     threadId: 'original-thread', prepared: true, pr: 17, acceptanceComplete: true,
     checkBase: base, checkHead: 'same-head', feedbackSeen: [], pendingFeedback: [],
   };
@@ -116,7 +116,7 @@ test('cancel intent wins over an in-flight PR reconciliation before auto-merge c
   c.state = { version: 1, repository: 'example/project', jobs: [] };
   c.wake = async () => {};
   const job = {
-    issue: 8, branch: 'symphony/issue-8', worktree: repo.root, phase: 'waiting',
+    issue: 8, branch: 'conductor/issue-8', worktree: repo.root, phase: 'waiting',
     threadId: 'thread-8', prepared: true, pr: 18, acceptanceComplete: true,
     checkBase: base, checkHead: pull.headRefOid, feedbackSeen: [],
   };
@@ -152,7 +152,7 @@ test('PR merged during disarm returns to delivery reconciliation instead of rema
   c.state = { version: 1, repository: 'example/project', jobs: [] };
   c.wake = async () => {};
   const job = {
-    issue: 9, branch: 'symphony/issue-9', worktree: repo.root, phase: 'waiting',
+    issue: 9, branch: 'conductor/issue-9', worktree: repo.root, phase: 'waiting',
     threadId: 'thread-9', prepared: true, pr: 19, acceptanceComplete: true,
     requestRevision: createRequestRevision(issue(9)), checkBase: head, checkHead: head, mergeArmed: true, feedbackSeen: [],
   };
@@ -168,7 +168,7 @@ test('PR merged during disarm returns to delivery reconciliation instead of rema
 });
 
 test('queued control survives a crash and remains pending when acknowledgement loses ownership', async t => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'symphony-controls-'));
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'conductor-controls-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const prior = new Store(dir), recovered = new Store(dir);
   await prior.acquire();
@@ -217,7 +217,7 @@ test('uncertain thread recovery is scoped to the exact worktree and requires exp
   const c = coordinator({ repo, github, Client });
   c.state = { version: 1, repository: 'example/project', jobs: [] };
   c.wake = async () => {};
-  const job = { issue: 22, branch: 'symphony/issue-22', worktree: repo.root, phase: 'uncertain', prepared: true, threadId: null };
+  const job = { issue: 22, branch: 'conductor/issue-22', worktree: repo.root, phase: 'uncertain', prepared: true, threadId: null };
   c.state.jobs.push(job);
 
   await assert.rejects(c.resume(22), /is uncertain/);

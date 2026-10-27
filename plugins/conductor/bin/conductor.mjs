@@ -8,12 +8,12 @@ import { loadConfig } from '../lib/config.mjs';
 import { Store } from '../lib/state.mjs';
 import { Coordinator } from '../lib/coordinator.mjs';
 
-const HELP = `Symphony Lite 0.1.0 -- foreground GitHub/Codex issue worker pool
-Usage: symphony-lite [--agents N] [--poll-interval 5m]
-       symphony-lite signal | status | stop | cancel ISSUE
-       symphony-lite resume ISSUE [--role builder|reviewer] [--thread ID]
+const HELP = `Conductor 0.1.0 -- foreground GitHub/Codex issue worker pool
+Usage: conductor [--agents N] [--poll-interval 5m]
+       conductor signal | status | stop | cancel ISSUE
+       conductor resume ISSUE [--role builder|reviewer] [--thread ID]
 
-Run from a configured repository with symphony-lite.json. Defaults: one issue
+Run from a configured repository with conductor.json. Defaults: one issue
 through landing, five-minute polling. Enter requests a scan; it never approves
 a question. Type 'answer ISSUE:REQUEST VALUE' to answer a displayed request.
 Ctrl+C stops admission and interrupts active turns, preserving recovery state.
@@ -114,11 +114,11 @@ async function main() {
     await store.initialize();
     watcher = watch(store.controls, () => controls());
     fallback = setInterval(controls, 1000);
-    console.log(`Symphony Lite: ${config.repository}; ${config.agents} issue slot(s); polling ${config.pollMs / 1000}s. Enter scans, Ctrl+C stops.`);
+    console.log(`Conductor: ${config.repository}; ${config.agents} issue slot(s); polling ${config.pollMs / 1000}s. Enter scans, Ctrl+C stops.`);
     await coordinator.start({ beforeScan: async () => { controlsReady = true; await controls(); } });
   } catch (error) { cleanup(); throw error; }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(resolve(process.argv[1]))).href) {
-  main().catch(error => { console.error(`symphony-lite: ${error.message}`); process.exitCode = 1; });
+  main().catch(error => { console.error(`conductor: ${error.message}`); process.exitCode = 1; });
 }

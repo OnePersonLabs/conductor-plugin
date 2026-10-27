@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "plugins/symphony-lite/skills/github-workflow/scripts/pending-feedback.py"
+SCRIPT = ROOT / "plugins/conductor/skills/github-workflow/scripts/pending-feedback.py"
 spec = importlib.util.spec_from_file_location("pending_feedback", SCRIPT)
 pending_feedback = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pending_feedback)

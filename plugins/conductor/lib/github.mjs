@@ -33,7 +33,7 @@ export class GitHub {
     ]);
     // Bot-authored reviews are real review input. Exclude only this coordinator's
     // marked publications, which are receipts of work it already processed.
-    const human = items => items.filter(x => !x.body?.startsWith('<!-- symphony-lite:'));
+    const human = items => items.filter(x => !x.body?.startsWith('<!-- conductor:'));
     const items = [
       ...human(reviews).filter(x => ['CHANGES_REQUESTED', 'COMMENTED'].includes(x.state) && x.body?.trim() && (!head || x.commit_id === head)).map(x => ({ kind: 'review', id: x.id, body: x.body, head: x.commit_id, updated: x.submitted_at })),
       ...human(comments).filter(x => (!head || x.commit_id === head) && x.position !== null).map(x => ({ kind: 'comment', id: x.id, body: x.body, head: x.commit_id, updated: x.updated_at })),
@@ -45,7 +45,7 @@ export class GitHub {
     const existing = await this.pullForBranch(job.branch);
     if (existing) return existing;
     // No closing keyword: the coordinator reconciles acceptance after actual landing.
-    const body = `Addresses #${issue.number}.\n\n${job.summary ?? 'Implementation and verification by Symphony Lite.'}\n\nSymphony Lite retains the original builder for repairs. Issue closure follows verified landing and acceptance.`;
+    const body = `Addresses #${issue.number}.\n\n${job.summary ?? 'Implementation and verification by Conductor.'}\n\nConductor retains the original builder for repairs. Issue closure follows verified landing and acceptance.`;
     try { await this.gh(['pr', 'create', '--repo', this.repository, '--base', job.baseBranch, '--head', job.branch, '--title', issue.title, '--body', body]); }
     catch (error) { const found = await this.pullForBranch(job.branch); if (!found) throw error; return found; }
     const found = await this.pullForBranch(job.branch);
@@ -61,16 +61,16 @@ export class GitHub {
     return { approved: [...latest.values()].filter(x => x === 'APPROVED').length, changesRequested: [...latest.values()].includes('CHANGES_REQUESTED') };
   }
   async findReviewReceipt(number, { attempt, head }) {
-    const marker = `<!-- symphony-lite:review:${number}:${attempt}:${head} -->`;
+    const marker = `<!-- conductor:review:${number}:${attempt}:${head} -->`;
     const reviewsPath = `repos/${this.repository}/pulls/${number}/reviews`;
     const review = (await this.pages(`${reviewsPath}?per_page=100`)).find(item => item.body?.includes(marker));
     if (!review) return null;
-    if (review.commit_id !== head) throw new Error('A Symphony review receipt exists on a different head; preserve it and reconcile before publishing again.');
+    if (review.commit_id !== head) throw new Error('A Conductor review receipt exists on a different head; preserve it and reconcile before publishing again.');
     const comments = await this.pages(`repos/${this.repository}/pulls/${number}/comments?per_page=100`);
     return { reviewId: review.id, commentIds: comments.filter(comment => comment.pull_request_review_id === review.id).map(comment => comment.id), marker, head };
   }
   async submitReview(number, { attempt, head, result }) {
-    const marker = `<!-- symphony-lite:review:${number}:${attempt}:${head} -->`;
+    const marker = `<!-- conductor:review:${number}:${attempt}:${head} -->`;
     const rendered = result.findings.map(item => `- [${item.priority}] \`${item.location.path}:${item.location.startLine}\`: ${item.title}\n\n  ${item.body}`).join('\n');
     const body = `${marker}\n${result.status === 'clear' ? 'Independent review completed with no actionable findings.' : 'Independent review found issues to address.'}\n\n${result.summary}${rendered ? `\n\nFindings:\n${rendered}` : ''}`;
     const reviewsPath = `repos/${this.repository}/pulls/${number}/reviews`;
@@ -92,16 +92,16 @@ export class GitHub {
         if (!prior) throw new Error(`PR review publication is uncertain or was rejected; reconcile its marker before retrying. ${error.message}`);
       }
       prior ??= await this.findReviewReceipt(number, { attempt, head });
-      if (!prior) throw new Error('PR review submission returned without a verifiable Symphony receipt.');
+      if (!prior) throw new Error('PR review submission returned without a verifiable Conductor receipt.');
     }
     return prior;
   }
   async progress(job) {
-    const marker = `<!-- symphony-lite:${job.issue} -->`;
+    const marker = `<!-- conductor:${job.issue} -->`;
     const comments = await this.pages(`repos/${this.repository}/issues/${job.issue}/comments?per_page=100`);
     const existing = comments.filter(x => x.body?.startsWith(marker));
-    if (existing.length > 1) throw new Error(`Multiple Symphony Lite ownership records for issue ${job.issue}; reconcile them.`);
-    const body = `${marker}\nSymphony Lite: **${job.phase}**\n\nBranch: \`${job.branch}\`${job.pr ? `; PR #${job.pr}` : ''}.\n\n${job.summary ?? 'Original builder owns this issue through delivery.'}`;
+    if (existing.length > 1) throw new Error(`Multiple Conductor ownership records for issue ${job.issue}; reconcile them.`);
+    const body = `${marker}\nConductor: **${job.phase}**\n\nBranch: \`${job.branch}\`${job.pr ? `; PR #${job.pr}` : ''}.\n\n${job.summary ?? 'Original builder owns this issue through delivery.'}`;
     if (existing[0]?.body === body) return;
     const path = existing[0] ? `repos/${this.repository}/issues/comments/${existing[0].id}` : `repos/${this.repository}/issues/${job.issue}/comments`;
     try { await this.api(path, { method: existing[0] ? 'PATCH' : 'POST', fields: { body } }); }

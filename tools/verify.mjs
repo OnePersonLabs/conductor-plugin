@@ -6,8 +6,8 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const plugin = join(root, 'plugins', 'symphony-lite');
-const marketplaceName = 'symphony-lite';
+const plugin = join(root, 'plugins', 'conductor');
+const marketplaceName = 'conductor';
 const pluginId = `${marketplaceName}@${marketplaceName}`;
 const mode = process.argv[2] ?? 'verify';
 
@@ -65,16 +65,16 @@ function validatePackage() {
   const packageJson = readJson(join(root, 'package.json'));
   const pluginJson = readJson(join(plugin, '.codex-plugin', 'plugin.json'));
   const marketplace = readJson(join(root, '.agents', 'plugins', 'marketplace.json'));
-  if (packageJson.name !== 'symphony-lite' || packageJson.version !== '0.1.0') fail('root package identity/version differs from symphony-lite@0.1.0');
-  const binEntry = packageJson.bin?.['symphony-lite'];
-  if (binEntry !== 'plugins/symphony-lite/bin/symphony-lite.mjs' || !existsSync(resolve(root, binEntry ?? ''))) {
-    fail('package bin entry must point to an existing Symphony Lite CLI source file');
+  if (packageJson.name !== 'conductor' || packageJson.version !== '0.1.0') fail('root package identity/version differs from conductor@0.1.0');
+  const binEntry = packageJson.bin?.['conductor'];
+  if (binEntry !== 'plugins/conductor/bin/conductor.mjs' || !existsSync(resolve(root, binEntry ?? ''))) {
+    fail('package bin entry must point to an existing Conductor CLI source file');
   }
-  if (pluginJson.name !== 'symphony-lite' || pluginJson.version !== '0.1.0') fail('plugin manifest identity/version differs from symphony-lite@0.1.0');
+  if (pluginJson.name !== 'conductor' || pluginJson.version !== '0.1.0') fail('plugin manifest identity/version differs from conductor@0.1.0');
   if (pluginJson.skills !== './skills/') fail('plugin manifest must expose the shipped skills directory');
-  if (marketplace.name !== marketplaceName || marketplace.plugins?.length !== 1) fail('marketplace must expose exactly one symphony-lite plugin');
+  if (marketplace.name !== marketplaceName || marketplace.plugins?.length !== 1) fail('marketplace must expose exactly one conductor plugin');
   const entry = marketplace.plugins[0];
-  if (entry.name !== marketplaceName || entry.source?.source !== 'local' || entry.source.path !== './plugins/symphony-lite') fail('marketplace plugin identity/source path is incorrect');
+  if (entry.name !== marketplaceName || entry.source?.source !== 'local' || entry.source.path !== './plugins/conductor') fail('marketplace plugin identity/source path is incorrect');
 
   const expected = new Map([
     ['github-workflow', true],
@@ -84,7 +84,7 @@ function validatePackage() {
     const skill = join(plugin, 'skills', name);
     if (!existsSync(join(skill, 'SKILL.md')) || !existsSync(join(skill, 'agents', 'openai.yaml'))) fail(`${name}: SKILL.md or activation metadata missing`);
     const metadata = readFileSync(join(skill, 'agents', 'openai.yaml'), 'utf8');
-    if (!metadata.includes(`$symphony-lite:${name}`)) fail(`${name}: activation prompt does not use the symphony-lite namespace`);
+    if (!metadata.includes(`$conductor:${name}`)) fail(`${name}: activation prompt does not use the conductor namespace`);
     if (!metadata.includes(`allow_implicit_invocation: ${implicit}`)) fail(`${name}: unexpected implicit invocation policy`);
   }
 }
@@ -104,7 +104,7 @@ function jsonCommand(args, env) {
 function runInstalled() {
   validatePackage();
   runUnit();
-  const home = mkdtempSync(join(tmpdir(), 'symphony-lite-codex-home-'));
+  const home = mkdtempSync(join(tmpdir(), 'conductor-codex-home-'));
   const env = { ...process.env, CODEX_HOME: home };
   try {
     const initial = jsonCommand(['plugin', 'list', '--json'], env);
@@ -112,12 +112,12 @@ function runInstalled() {
     jsonCommand(['plugin', 'marketplace', 'add', root, '--json'], env);
     const available = jsonCommand(['plugin', 'list', '--marketplace', marketplaceName, '--available', '--json'], env);
     const availableEntries = available.available ?? available.plugins ?? [];
-    if (!availableEntries.some((item) => item.pluginId === pluginId || item.name === marketplaceName)) fail('Codex did not discover symphony-lite from the local marketplace');
+    if (!availableEntries.some((item) => item.pluginId === pluginId || item.name === marketplaceName)) fail('Codex did not discover conductor from the local marketplace');
     const added = jsonCommand(['plugin', 'add', pluginId, '--json'], env);
     if (typeof added.installedPath !== 'string' || !existsSync(added.installedPath)) fail('Codex plugin add did not return an installedPath');
     const installedPath = realpathSync(added.installedPath);
     const installedList = jsonCommand(['plugin', 'list', '--json'], env);
-    if (!(installedList.installed ?? []).some((item) => item.pluginId === pluginId)) fail('Codex installed-plugin discovery does not list symphony-lite');
+    if (!(installedList.installed ?? []).some((item) => item.pluginId === pluginId)) fail('Codex installed-plugin discovery does not list conductor');
     compareInventory(plugin, installedPath);
   } finally {
     rmSync(home, { recursive: true, force: true });
