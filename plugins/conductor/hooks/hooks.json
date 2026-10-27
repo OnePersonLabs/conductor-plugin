@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/issue-mutation.mjs\"",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/issue-mutation.mjs\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/issue-mutation.mjs\"",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/issue-mutation.mjs\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

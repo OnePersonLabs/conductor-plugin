@@ -1,9 +1,9 @@
 # Configure a Conductor repository
 
 Conductor reads `conductor.json` from the target Git repository root. Use
-`$conductor:setup-repo-workflow` only when asked to prepare or migrate this
-configuration. Setup inspects repository policy and prepares the file; it does
-not start issue processing.
+`$conductor:setup-repo-workflow` to prepare or migrate this configuration.
+Setup inspects repository policy and prepares the file. The user must explicitly
+enable the repository to create or bind its director and start issue observation.
 
 ## Repository and execution settings
 
@@ -83,11 +83,12 @@ Confirm `origin` matches `repository`, the configured base branch exists, and
 commands from a clean worktree. Ensure Git, GitHub CLI, Node.js 24+ and Codex
 App Server are available.
 
-The source exposes explicit director/service startup and recovery controls; a
-configuration file alone does not start a watcher or authorize a production
-dispatch. Follow [workflow and recovery](workflow.md) for the current commands
-and migration path. Windows and WSL maintain separate GitHub, Node and Codex
-environments; recover work in the environment that owns it.
+The source exposes explicit repository enablement and recovery controls; a
+configuration file alone does not start a watcher or authorize production
+dispatch. `conductor enable` starts the configured repository's director after
+setup. Follow [workflow and recovery](workflow.md) for wakeup, stop and migration
+behavior. Windows and WSL maintain separate GitHub, Node and Codex environments;
+recover work in the environment that owns it.
 
 Legacy configurations using `readyLabel` require explicit migration while
 admission is stopped. Migration inventories current issues and jobs, maps
@@ -116,7 +117,7 @@ conductor migrate --apply --mapping .\conductor-migration.json
 The command rechecks revisions, changes issue labels, saves a dated legacy
 configuration backup beside `conductor.json`, and writes a version 2
 configuration with admission paused. Review the resulting issue states and
-configuration. Start the director service, inspect its status and explicitly
-activate admission with a control request before any new implementation begins.
+configuration. Enable the director, inspect its status and explicitly activate
+admission with a control request before any new implementation begins.
 If an issue changed after preview, regenerate the preview and reconcile the new
 contents instead of reusing the stale mapping.

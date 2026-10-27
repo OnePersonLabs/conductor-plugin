@@ -1,7 +1,7 @@
 {
   "name": "conductor",
   "version": "0.1.0",
-  "description": "A foreground Codex worker pool for GitHub issue-to-PR delivery",
+  "description": "A conversational GitHub issue director with event-driven Codex worker orchestration",
   "type": "module",
   "private": true,
   "license": "MIT",

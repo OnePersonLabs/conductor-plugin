@@ -6,6 +6,7 @@
   "repository": "https://github.com/OnePersonLabs/conductor-plugin",
   "keywords": ["github", "codex", "workflow", "issue-tracking", "pull-requests"],
   "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "Conductor",
     "shortDescription": "Direct issue work and coordinate verified delivery in chat",

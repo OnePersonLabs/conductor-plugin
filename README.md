@@ -13,6 +13,13 @@ holds and current issue contents. It retains original builder sessions through
 repair, verifies checks and reviews, and closes work only after acceptance and
 landing are confirmed.
 
+Once you explicitly enable Conductor for a configured repository, it keeps one
+director chat bound to that repository. Relevant changes wake that chat when it
+is idle. If it is already working, Conductor records that there is more to
+check and lets the current turn sort out the next work without extra wakeup
+messages. When it has nothing actionable, it tells you to say “wakeup” to check
+again.
+
 ## First use
 
 Install the Codex plugin and CLI separately. Node.js 24+, Git, GitHub CLI and
@@ -30,22 +37,24 @@ and authenticated GitHub CLI. Windows and WSL have separate local runtimes.
 
 From the target repository, ask Codex to use `$conductor:setup-repo-workflow`.
 Review its proposed `conductor.json`, issue label mapping, checks, concurrency,
-delivery settings and genuine scope authority. Legacy configurations first
-require an explicit migration while admission is stopped. Installation and
-setup do not start work.
+delivery settings and genuine scope authority. Then explicitly enable the
+configured repository to establish its director and start observation. Merely
+installing the plugin or preparing configuration does not enable processing.
 
-Start the observer explicitly, bound to the current director chat:
+Use the director chat for issue triage, decisions and execution. Say `wakeup`
+there at any time to make Conductor check for work. From a terminal, the
+equivalent command is:
 
 ```powershell
-conductor start --thread THREAD_UUID
+conductor wakeup
 ```
 
-Then use `$conductor:director` in that chat to inspect the queue, work through
-decisions, create or update issues, and direct execution. `conductor status`
-shows service and recovery state; `conductor stop` disables dispatch and
-wakeups while retaining recovery data. Run `conductor --help` for the installed
-CLI's controls and the [workflow guide](plugins/conductor/docs/workflow.md) for
-holds, release, event handling and recovery.
+If a repository already has an explicitly bound director, Conductor reuses it;
+otherwise enabling starts one. `conductor status` shows service and recovery
+state. `conductor stop` deliberately disables automatic dispatch and wakeups
+while retaining recovery data. Run `conductor --help` for controls and the
+[workflow guide](plugins/conductor/docs/workflow.md) for holds, release, event
+handling and recovery.
 
 ## How issue states work
 
@@ -60,9 +69,12 @@ Newly reported bugs normally enter triage. Open dependencies are checked
 automatically; when a valid prerequisite completes, the ready issue is
 reconsidered on the next scan.
 
-The service signals the same chat when work completes or needs attention and
-checks GitHub changes every 30 minutes. An unchanged check causes no model turn.
-Human-collaboration is an optional side channel; regular chat is sufficient.
+The service signals the same chat when work completes, relevant issue changes
+occur, or attention is needed, and checks GitHub changes every 30 minutes. If
+the director is already active, new activity is recorded for its next check
+instead of queuing more wakeup messages. An unchanged check causes no model
+turn. Human-collaboration is an optional side channel; regular chat is
+sufficient.
 
 ## Limits and evidence
 

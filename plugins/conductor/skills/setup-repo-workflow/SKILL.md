@@ -5,9 +5,11 @@ description: Explicitly prepare or migrate a repository for Conductor's director
 
 # Set up a repository for Conductor
 
-Use only when the user asks to set up or migrate the repository. Inspect and
-prepare `conductor.json`; never start the observer or dispatch production work
-as part of setup.
+Use when the user asks to set up or migrate the repository. Inspect and prepare
+`conductor.json`. Configuration preparation is inert; only the separate,
+explicit `conductor enable` action establishes the repository's persistent
+director and starts observation. Do not dispatch production work as part of
+configuration preparation.
 
 ## Inspect the repository
 
@@ -66,7 +68,8 @@ The service can report status and reconcile events while admission is paused.
 ## Verify and hand off
 
 Verify origin, base branch, checks, label mapping and configuration shape. Show
-the prepared file. State that configuration and installation do not start the
-observer. Link the user to [configuration](../../docs/configuration.md) and
-[workflow and recovery](../../docs/workflow.md). Only an explicit subsequent
-start binds the director chat and starts observation.
+the prepared file. Explain that installation and configuration preparation do
+not start observation; explicit enablement creates or reuses the designated
+director and starts the observer. Link the user to
+[configuration](../../docs/configuration.md) and
+[workflow and recovery](../../docs/workflow.md).

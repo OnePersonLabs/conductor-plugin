@@ -2,8 +2,9 @@
 
 Conductor uses a conversational director for planning and issue management, with
 a local deterministic service for dispatch, worker lifecycle and delivery. The
-director is your ordinary chat. The service can remain active after the
-director finishes a turn. Installation and setup never start it.
+director is one persistent chat bound to the repository. Explicitly enabling a
+configured repository creates that chat if needed and starts observation.
+Installation and preparing configuration alone do not enable it.
 
 ## Issue states
 
@@ -38,19 +39,33 @@ Release the hold and use the `reconcile` control with the issue's current
 `expectedRevision` to verify the landed commit and acceptance. This does not
 start another builder. Use `resume` for work whose PR has not landed.
 
-## Start and use the director
+## Enable and use the director
 
-Set up the repository and review `conductor.json` first. Start the observer
-explicitly and bind the current Codex thread as its director:
+Set up the repository and review `conductor.json` first. Explicitly enable
+Conductor for this repository:
 
 ```powershell
-conductor start --thread THREAD_UUID
+conductor enable
 conductor status
 ```
 
-The start receipt confirms launch was requested; check `conductor status` and
-the service log to confirm the owner process is actually running before telling
-the user observation is live.
+Enabling uses the existing bound director chat, or creates a persistent chat
+named for the repository if no director is bound yet. It starts the local
+observer. Check `conductor status` to confirm the service and director before
+assuming observation is active. The existing `conductor start --thread UUID`
+command can bind an existing chat already loaded in the shared daemon. It
+rejects an unloaded chat without a Conductor ownership receipt, including an
+ordinary Desktop-owned chat. Use `conductor enable` to create a daemon-owned
+director when no binding exists.
+
+**Host integration qualification is still open.** The Windows shared-daemon
+proxy did not report an active Codex Desktop chat as loaded, and no supported
+way to observe that Desktop chat's live status was found. Conductor refuses to
+reuse an unowned thread reported as `notLoaded`. A Conductor-owned daemon
+session is supported by the CLI protocol, but its visibility and interaction
+from the Desktop UI have not been verified. Check the [runtime selection
+evidence](../../../docs/runtime-selection-2026-10-20.md) before choosing a
+director surface; do not treat the read-only proxy probe as live qualification.
 The control interface accepts a JSON request file from the same repository. It
 checks repository and bound chat identity and saves a receipt for each operation.
 Use the `status` control operation for a fresh issue snapshot and its revision;
@@ -105,19 +120,45 @@ Use ordinary chat for questions, approvals and issue direction. The optional
 `$onepersonlabs:human-collaboration` inbox can carry longer reviews or phone
 responses; it is not required. An inbox draft is not a submitted answer.
 
-## Idle behavior and wakeups
+## Idle behavior, wakeup and restart
 
-Worker outcomes and verified Conductor actions signal the director. A local
-observer also reconciles external GitHub changes on the configured interval,
-defaulting to 30 minutes. This check uses ordinary code. If nothing changed, it
-does not start a model turn. Events are queued to the same director session and
-acknowledged when handled. A queued message is not evidence that it was
-consumed.
+Worker outcomes, relevant issue changes and verified Conductor actions signal
+the bound director. A local observer also reconciles external GitHub changes on
+the configured interval, defaulting to 30 minutes. This check uses ordinary
+code. If nothing changed, it does not start a model turn.
 
-Startup is explicit. No login task is installed. After a restart, start the
-observer and inspect status; it reconciles pending events and original worker
-ownership before dispatch. Never start a replacement builder when saved thread
-or process ownership is uncertain.
+The service checks the director's actual host status. If it is idle, Conductor
+sends one wakeup to reconcile current state. If the director is already
+working, changes remain pending for its next check; Conductor does not flood
+the same session with additional wakeup messages. Before ending a turn with no
+further immediate action, including after presenting a blocking question,
+request fresh `status`, inspect its issue/job state
+and pending events, then submit `settle` with that response's exact
+`checkRevision`. Settling acknowledges only events through the inspected
+snapshot. If it returns `idle: false`, request status again and repeat the
+inspection and settle in the same turn. If it returns `idle: true`, finish the
+turn with: “Conductor is idle. Say ‘wakeup’ to manually wake Conductor.” Only
+finishing the turn makes the host thread idle; `settle` does not.
+
+In a client attached to the same shared daemon, say `wakeup` in the director
+chat, or run `conductor wakeup` from the configured
+checkout, to ensure the service is available and ask it to check current work.
+After a system restart, a Conductor interaction starts observation again and
+reuses the saved director. Local issue activity starts the service as needed;
+GitHub-only changes made while the local service is down are found on wakeup or
+the next reconciliation. No login task or remote webhook receiver is installed.
+
+Explicitly stopping Conductor disables automatic dispatch and wakeups. Passive
+issue-change signals do not restart a deliberately stopped service. Manual
+wakeup can restart observation but retains the admission pause established by
+the stop, migration pauses, and issue holds. Activate admission or release
+those states explicitly.
+
+If a runner turn is interrupted or fails, inspect status and its recovery
+receipt. Conductor preserves the original builder, reviewer, branch and
+worktree. A wakeup can ask the director to diagnose saved state; `resume ISSUE`
+is the explicit command to continue an interrupted issue job once reconciled.
+Do not treat a replacement director as permission to replace a worker.
 
 ## Pause, hold and release
 

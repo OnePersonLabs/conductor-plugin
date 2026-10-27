@@ -49,6 +49,12 @@ function fixture({ issues = [makeIssue(1)], jobs = [], agents = 1 } = {}) {
     store, github,
     execute: async () => ({ code: 0, stdout: 'queued', stderr: '' }),
     Client: class extends EventEmitter {},
+    Host: class extends EventEmitter {
+      async connect() {}
+      async ensureThread() { return THREAD; }
+      async status() { return { type: 'active' }; }
+      async close() {}
+    },
     workspace: {},
   });
   coordinator.state = { jobs, director: { threadId: THREAD, enabled: true, snapshots: {}, events: [], batches: [], acknowledged: [] }, holds: [], admissionPaused: false };
@@ -114,4 +120,47 @@ test('v2 service startup preserves a saved pause and never starts that worker', 
   assert.equal(h.coordinator.state.jobs[0].intent, 'pause');
   assert.deepEqual(h.calls.launch, []);
   await h.coordinator.stop();
+});
+
+test('explicit enable creates one director before readiness and keeps migration admission paused', async () => {
+  const h = fixture({ issues: [makeIssue(1)] });
+  h.coordinator.store.read = async () => ({ version: 1, jobs: [], director: {}, admissionPaused: true });
+  h.coordinator.preflight = async () => {};
+  let creates = 0, turns = 0;
+  h.coordinator.Host = class extends EventEmitter {
+    constructor({ state, save }) { super(); this.state = state; this.save = save; this.type = 'idle'; }
+    async connect() {}
+    async ensureThread() { creates++; this.state.threadId = THREAD; await this.save(); return THREAD; }
+    async status() { return { type: this.type }; }
+    async startRunner() { turns++; this.type = 'active'; return { id: 'director-turn' }; }
+    async close() {}
+  };
+  await h.coordinator.start({ enable: true, manualWake: true });
+  assert.equal(creates, 1);
+  assert.equal(turns, 1);
+  assert.equal(h.coordinator.state.runtimeEnabled, true);
+  assert.equal(h.coordinator.state.serviceReady, true);
+  assert.equal(h.coordinator.state.admissionPaused, true);
+  assert.deepEqual(h.calls.launch, []);
+  await h.coordinator.stop({ explicit: true });
+  assert.equal(h.coordinator.state.runtimeEnabled, true);
+  assert.equal(h.coordinator.state.director.enabled, false);
+});
+
+test('manual wake reconciles a known interrupted director without resuming its worker', async () => {
+  const job = { issue: 1, phase: 'paused', intent: 'pause', threadId: 'original-worker' };
+  const h = fixture({ issues: [makeIssue(1)], jobs: [job] });
+  h.coordinator.state.director.recoveryRequired = { turnId: 'failed-turn', status: 'interrupted' };
+  h.coordinator.state.director.batches = [{ id: 'batch', status: 'queued', turnId: 'failed-turn', eventIds: [] }];
+  h.coordinator.directorHost = {
+    status: async () => ({ type: 'idle' }),
+    inspectTurn: async () => ({ id: 'failed-turn', status: 'interrupted' }),
+    markTurnReconciled: async () => { h.coordinator.state.director.recoveryRequired.resolvedAt = 'now'; },
+  };
+  await h.coordinator.requestCheck({ manual: true });
+  assert.equal(h.coordinator.state.director.batches[0].status, 'reconciled-ended');
+  assert.equal(h.coordinator.state.director.recoveryRequired.resolvedAt, 'now');
+  assert.equal(job.phase, 'paused');
+  assert.equal(job.threadId, 'original-worker');
+  assert.deepEqual(h.calls.launch, []);
 });

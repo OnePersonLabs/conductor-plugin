@@ -31,11 +31,14 @@ function normalize(state, threadId) {
 }
 
 export class DirectorEvents {
-  constructor({ state, save, execute, cwd, threadId }) {
+  constructor({ state, save, execute, cwd, threadId, host }) {
     if (!UUID.test(threadId ?? '')) throw new TypeError('A valid director thread UUID is required.');
     if (typeof save !== 'function' || typeof execute !== 'function') throw new TypeError('save and execute functions are required.');
-    Object.assign(this, { state, save, execute, cwd, threadId });
+    Object.assign(this, { state, save, execute, cwd, threadId, host });
     normalize(this.state, threadId);
+    this.state.checkRevision ??= 0;
+    this.state.checkedRevision ??= 0;
+    this.flushing = null;
   }
 
   async observe(key, value, event) {
@@ -57,7 +60,8 @@ export class DirectorEvents {
       const existing = this.state.events.find(item => item.dedupeKey === event.dedupeKey && !item.acknowledgedAt);
       if (existing) return existing;
     }
-    const item = { id: randomUUID(), createdAt: new Date().toISOString(), event: structuredClone(event), dedupeKey: event.dedupeKey ?? null, acknowledgedAt: null };
+    const item = { id: randomUUID(), revision: ++this.state.checkRevision, createdAt: new Date().toISOString(), event: structuredClone(event), dedupeKey: event.dedupeKey ?? null, acknowledgedAt: null };
+    this.state.pendingCheck = true;
     this.state.events.push(item);
     await this.save();
     return item;
@@ -87,8 +91,31 @@ export class DirectorEvents {
     return { acknowledged: ids };
   }
 
-  async flush() {
+  async settle(revision) {
+    if (!Number.isSafeInteger(revision) || revision < 0 || revision > this.state.checkRevision) throw new Error('Settle requires a checkRevision from current status.');
+    // Consume only the snapshot the director actually inspected. A concurrent
+    // change remains pending and is reconsidered on turn completion.
+    await this.acknowledge(this.state.events.filter(item => (item.revision ?? 0) <= revision).map(item => item.id));
+    this.state.checkedRevision = Math.max(this.state.checkedRevision, revision);
+    this.state.pendingCheck = this.state.checkedRevision < this.state.checkRevision;
+    await this.save();
+    return { idle: !this.state.pendingCheck, checkRevision: this.state.checkRevision };
+  }
+
+  flush() {
+    // All callers share one submission. An acknowledgement is not a turn-end.
+    if (this.flushing) return this.flushing;
+    this.flushing = this._flush().finally(() => { this.flushing = null; });
+    return this.flushing;
+  }
+
+  async _flush() {
     if (!this.state.enabled) return { status: 'disabled' };
+    if (this.state.recoveryRequired && !this.state.recoveryRequired.resolvedAt) return { status: 'recovery-required', reason: this.state.recoveryRequired };
+    if (this.host) {
+      const status = await this.host.status();
+      if (status.type !== 'idle') return { status: status.type === 'active' ? 'busy' : 'unavailable', hostStatus: status };
+    }
     if (this.state.batches.some(batch => batch.status === 'uncertain' && !batch.acknowledgedAt)) return { status: 'uncertain', batch: this.state.batches.find(batch => batch.status === 'uncertain' && !batch.acknowledgedAt) };
     const waiting = this.state.batches.find(batch => ['submitting','queued'].includes(batch.status) && !batch.acknowledgedAt);
     if (waiting) return { status: waiting.status === 'queued' ? 'awaiting-acknowledgement' : 'submitting', batch: structuredClone(waiting) };
@@ -100,12 +127,20 @@ export class DirectorEvents {
     await this.save();
     const message = `Conductor event batch ${batch.id}. Reconcile these persisted event IDs before acting: ${batch.eventIds.join(', ')}. Acknowledge them only after handling.`;
     try {
-      const result = await this.execute('codex', ['queue', '--thread', this.threadId, '--message', message], { cwd: this.cwd });
+      const turn = this.host ? await this.host.startRunner({ prompt: message }) : null;
+      const result = this.host ? { code: 0, stdout: turn.id } : await this.execute('codex', ['queue', '--thread', this.threadId, '--message', message], { cwd: this.cwd });
+      if (turn) batch.turnId = turn.id;
       if (result?.code !== 0) throw Object.assign(new Error(result?.stderr || `codex queue failed (${result?.code}).`), { result });
       batch.status = 'queued'; batch.queuedAt = new Date().toISOString(); batch.receipt = String(result?.stdout ?? '').slice(0, 1000);
       await this.save();
       return { status: 'queued', batch: structuredClone(batch) };
     } catch (error) {
+      if (['DIRECTOR_BUSY', 'DIRECTOR_UNAVAILABLE', 'DIRECTOR_RECOVERY_REQUIRED'].includes(error.code)) {
+        batch.status = 'reconciled-not-queued';
+        batch.error = error.message;
+        await this.save();
+        return { status: error.code === 'DIRECTOR_BUSY' ? 'busy' : error.code === 'DIRECTOR_RECOVERY_REQUIRED' ? 'recovery-required' : 'unavailable' };
+      }
       batch.status = 'uncertain'; batch.error = String(error.message ?? error).slice(0, 1000); batch.uncertainAt = new Date().toISOString();
       await this.save();
       return { status: 'uncertain', batch: structuredClone(batch) };

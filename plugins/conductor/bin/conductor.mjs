@@ -14,21 +14,27 @@ import { GitHub } from '../lib/github.mjs';
 import { applyMigration, previewMigration } from '../lib/migration.mjs';
 import { processExists } from '../lib/state.mjs';
 import { atomicJSON } from '../lib/state.mjs';
+import { ensureService, signalIfEnabled } from '../lib/bootstrap.mjs';
+import { git } from '../lib/process.mjs';
 
 const HELP = `Conductor 0.1.0 -- conversational GitHub issue director
-Usage: conductor start --thread UUID
-       conductor serve --thread UUID      (internal)
+Usage: conductor enable [--thread UUID]
+       conductor wakeup
+       conductor signal                    (internal, passive)
+       conductor start --thread UUID       (compatibility)
+       conductor serve [--thread UUID]      (internal)
        conductor rpc --request-file PATH
        conductor status | conductor stop | conductor migrate [--apply --mapping FILE]
 
-Starting is explicit. Migration preview makes no changes. A migrated
-configuration remains admission-paused until deliberately resumed.
+Use enable to persistently enable the repository runner. Wakeup resumes
+observation and requests a check. Passive signals never re-enable a stopped runner.
+Migration preview makes no changes; migrated configuration remains admission-paused.
 `;
 
 export function parseArgs(args) {
   const result = { command: 'run', overrides: {} };
   if (args[0] && !args[0].startsWith('-')) result.command = args.shift();
-  if (!['run','signal','status','stop','cancel','resume','start','serve','rpc','migrate'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
+  if (!['run','signal','status','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
   if (['cancel','resume'].includes(result.command)) {
     result.issue = Number(args.shift());
     if (!Number.isSafeInteger(result.issue) || result.issue < 1) throw new Error(`${result.command} requires a positive issue number.`);
@@ -39,13 +45,15 @@ export function parseArgs(args) {
     else if (flag === '--poll-interval') { result.overrides.pollInterval = args.shift(); if (!result.overrides.pollInterval) throw new Error('--poll-interval requires a duration.'); }
     else if (flag === '--thread' && result.command === 'resume') { result.threadId = args.shift(); if (!result.threadId) throw new Error('--thread requires the existing thread ID.'); }
     else if (flag === '--role' && result.command === 'resume') { result.role = args.shift(); if (!['builder', 'reviewer'].includes(result.role)) throw new Error('--role must be builder or reviewer.'); }
-    else if (flag === '--thread' && ['start','serve'].includes(result.command)) { result.threadId = args.shift(); if (!result.threadId) throw new Error('--thread requires a thread ID.'); }
+    else if (flag === '--thread' && ['start','serve','enable'].includes(result.command)) { result.threadId = args.shift(); if (!result.threadId) throw new Error('--thread requires a thread ID.'); }
+    else if (flag === '--enable' && result.command === 'serve') result.enable = true;
+    else if (flag === '--manual-wake' && result.command === 'serve') result.manualWake = true;
     else if (flag === '--request-file' && result.command === 'rpc') { result.requestFile = args.shift(); if (!result.requestFile) throw new Error('--request-file requires a JSON file.'); }
     else if (flag === '--apply' && result.command === 'migrate') result.apply = true;
     else if (flag === '--mapping' && result.command === 'migrate') { result.mappingFile = args.shift(); if (!result.mappingFile) throw new Error('--mapping requires a JSON file.'); }
     else throw new Error(`Unknown option: ${flag}`);
   }
-  if (['start','serve'].includes(result.command) && result.threadId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.threadId)) throw new Error('--thread must be the existing director thread UUID.');
+  if (['start','serve','enable'].includes(result.command) && result.threadId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.threadId)) throw new Error('--thread must be the existing director thread UUID.');
   if (result.command !== 'run' && Object.keys(result.overrides).length) throw new Error('Runtime options apply only to run.');
   return result;
 }
@@ -57,6 +65,14 @@ async function main() {
   const options = parseArgs(args);
   const repo = await inspectRepository(process.cwd());
   const store = new Store(repo.commonDir);
+  const cliPath = fileURLToPath(import.meta.url);
+  const launch = async (command, argv, spawnOptions) => {
+    const logPath = resolve(store.dir, 'service.log');
+    mkdirSync(store.dir, { recursive: true });
+    const logHandle = openSync(logPath, 'a');
+    try { return spawn(command, argv, { ...spawnOptions, stdio: ['ignore', logHandle, logHandle] }); }
+    finally { closeSync(logHandle); }
+  };
   if (options.command === 'migrate') {
     const raw = JSON.parse(readFileSync(resolve(repo.root, 'conductor.json'), 'utf8'));
     if (raw.version === 2) { console.log('Configuration already uses Conductor director policy v2.'); return; }
@@ -93,25 +109,22 @@ async function main() {
     const state = await store.read(); const owner = await store.owner();
     console.log(JSON.stringify({ owner, ...state, controls: await store.results() }, null, 2)); return;
   }
-  if (options.command === 'start') {
-    if (!options.threadId) throw new Error('Start requires --thread with the existing director chat UUID.');
-    const config = await loadConfig(repo.root, options.overrides);
-    await store.initialize();
-    const state = await store.read();
-    const owner = await store.owner();
-    if (owner && (owner.hostname !== hostname() || owner.platform !== process.platform)) throw new Error('A foreign Conductor owner exists; inspect it in that environment before starting here.');
-    if (owner?.pid && owner.hostname === hostname() && owner.platform === process.platform && processExists(owner.pid)) throw new Error(`Conductor already has an owner (PID ${owner.pid}); inspect status before resuming.`);
-    state.director ??= { threadId: null, enabled: false, snapshots: {}, events: [], batches: [], acknowledged: [] };
-    if (state.director.threadId && state.director.threadId !== options.threadId) throw new Error(`Repository is bound to director thread ${state.director.threadId}; rebind explicitly before changing it.`);
-    // Only the child holding the repository lock persists a binding. Two
-    // simultaneous launch requests must not overwrite each other's state.
-    mkdirSync(store.dir, { recursive: true });
-    const logPath = resolve(store.dir, 'service.log');
-    const logHandle = openSync(logPath, 'a');
-    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), 'serve', '--thread', options.threadId], { cwd: repo.root, env: process.env, detached: true, stdio: ['ignore', logHandle, logHandle], windowsHide: true });
-    closeSync(logHandle);
-    child.unref();
-    console.log(JSON.stringify({ launched: true, confirmedRunning: false, repository: config.repository, threadId: options.threadId, pid: child.pid, logPath, pollInterval: `${config.pollMs / 60000}m`, note: 'Check status and the service log to confirm startup.' })); return;
+  if (['start','enable','wakeup'].includes(options.command)) {
+    if (options.command === 'start' && !options.threadId) throw new Error('Start requires --thread with the existing director chat UUID. Use `conductor enable` to create or resume the configured director automatically.');
+    const enabled = options.command === 'start' || options.command === 'enable';
+    const result = await ensureService({ store, root: repo.root, threadId: options.threadId,
+      enable: enabled, manualWake: options.command === 'wakeup' || options.command === 'start' || options.command === 'enable',
+      execute: launch, cliPath });
+    if (result.status === 'disabled') throw new Error('Conductor is not enabled for this repository. Run `conductor enable` explicitly first.');
+    console.log(JSON.stringify({ ...result, repository: (await loadConfig(repo.root)).repository, logPath: resolve(store.dir, 'service.log') })); return;
+  }
+  if (options.command === 'signal') {
+    const result = await signalIfEnabled({ store, root: repo.root, execute: launch, cliPath });
+    if (result.status === 'started' || result.status === 'already-running') {
+      const request = await store.send('signal');
+      console.log(JSON.stringify({ ...result, signalQueued: true, requestId: request.id }));
+    } else console.log(JSON.stringify({ ...result, signalQueued: false }));
+    return;
   }
   if (options.command === 'rpc') {
     if (!options.requestFile) throw new Error('rpc requires --request-file PATH.');
@@ -164,7 +177,7 @@ async function main() {
         if (request.command === 'stop') {
           // Stop itself has no external side effect beyond retaining work and releasing
           // ownership. Acknowledge before release; later commands remain for the next run.
-          await store.acknowledge(request); await coordinator.stop(); break;
+          await store.acknowledge(request); await coordinator.stop({ explicit: true }); break;
         }
         let failure;
         try {
@@ -194,14 +207,14 @@ async function main() {
   coordinator.once('stopped', cleanup);
   try {
     const saved = await store.read();
-    if (saved.director?.threadId !== options.threadId) throw new Error('Director thread is not bound to this repository. Start through `conductor start --thread UUID`.');
+    if (options.threadId && saved.director?.threadId && saved.director.threadId !== options.threadId) throw new Error('Director thread is not bound to this repository. Start with its saved binding or explicitly reconcile the binding.');
     // Initialize storage before watching. A local filesystem fallback covers missed fs.watch events;
     // this never performs GitHub/model polling at the fallback frequency.
     await store.initialize();
     watcher = watch(store.controls, () => controls());
     fallback = setInterval(controls, 1000);
   console.log(`Conductor director: ${config.repository}; ${config.agents} worker slot(s); external reconciliation every ${config.pollMs / 60000}m.`);
-    await coordinator.start({ threadId: options.threadId, beforeScan: async () => { controlsReady = true; await controls(); } });
+    await coordinator.start({ threadId: options.threadId, enable: options.enable === true, manualWake: options.manualWake === true, beforeScan: async () => { controlsReady = true; await controls(); } });
   } catch (error) { cleanup(); throw error; }
 }
 

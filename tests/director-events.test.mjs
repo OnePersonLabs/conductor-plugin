@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { DirectorEvents } from '../plugins/conductor/lib/director-events.mjs';
 
 const THREAD = '019c6e27-e55b-73d1-87d8-4e01f1f75043';
-function harness({ execute = async () => ({ code: 0, stdout: 'queued' }), state = {} } = {}) {
+function harness({ execute = async () => ({ code: 0, stdout: 'queued' }), state = {}, host } = {}) {
   let saves = 0;
-  const events = new DirectorEvents({ state, threadId: THREAD, cwd: 'repo', execute, save: async () => { saves++; } });
+  const events = new DirectorEvents({ state, threadId: THREAD, cwd: 'repo', execute, host, save: async () => { saves++; } });
   return { events, state, saves: () => saves };
 }
 
@@ -21,6 +21,59 @@ test('consumption resolves an uncertain submission without replaying it', async 
   await events.emit({ kind: 'next' });
   assert.equal((await events.flush()).status, 'queued');
   assert.equal(calls, 2);
+});
+
+test('busy director retains changes and starts one turn only after becoming idle', async () => {
+  let type = 'active', calls = 0;
+  const host = { status: async () => ({ type }), startRunner: async () => { calls++; type = 'active'; return { id: 'turn-1' }; } };
+  const { events, state } = harness({ host });
+  await events.emit({ kind: 'first' });
+  assert.equal((await events.flush()).status, 'busy');
+  await events.emit({ kind: 'second' });
+  assert.equal((await events.flush()).status, 'busy');
+  assert.equal(calls, 0);
+  type = 'idle';
+  await Promise.all([events.flush(), events.flush(), events.flush()]);
+  assert.equal(calls, 1);
+  assert.equal(state.batches[0].eventIds.length, 2);
+  assert.equal(state.batches[0].turnId, 'turn-1');
+  await events.acknowledge(state.batches[0].eventIds);
+  await events.emit({ kind: 'arrived-after-ack' });
+  assert.equal((await events.flush()).status, 'busy');
+  assert.equal(calls, 1);
+  type = 'idle';
+  assert.equal((await events.flush()).status, 'queued');
+  assert.equal(calls, 2);
+  assert.equal((await events.settle(state.checkRevision)).idle, true);
+  type = 'idle';
+  assert.equal((await events.flush()).status, 'idle');
+  assert.equal(calls, 2);
+});
+
+test('settle consumes only the inspected revision and preserves a change at the idle boundary', async () => {
+  const { events, state } = harness();
+  await events.emit({ kind: 'inspected' });
+  const revision = state.checkRevision;
+  await events.emit({ kind: 'arrived-later' });
+  const receipt = await events.settle(revision);
+  assert.equal(receipt.idle, false);
+  assert.equal(state.pendingCheck, true);
+  assert.deepEqual((await events.pending()).map(item => item.event.kind), ['arrived-later']);
+  assert.equal((await events.settle(state.checkRevision)).idle, true);
+  assert.equal(state.pendingCheck, false);
+  await assert.rejects(events.settle(state.checkRevision + 1), /checkRevision/);
+});
+
+test('unknown host state and recovery-required turns never submit automatically', async () => {
+  let calls = 0;
+  const host = { status: async () => ({ type: 'unknown' }), startRunner: async () => { calls++; } };
+  const { events, state } = harness({ host });
+  await events.emit({ kind: 'change' });
+  assert.equal((await events.flush()).status, 'unavailable');
+  state.recoveryRequired = 'last turn failed';
+  host.status = async () => ({ type: 'idle' });
+  assert.equal((await events.flush()).status, 'recovery-required');
+  assert.equal(calls, 0);
 });
 
 test('observations wake only on first value or a changed snapshot', async () => {

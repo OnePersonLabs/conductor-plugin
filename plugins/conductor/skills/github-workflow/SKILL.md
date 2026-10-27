@@ -33,6 +33,14 @@ closure and delivery transitions. Before every write, read current state,
 preserve unrelated metadata and reconcile uncertain outcomes before retrying.
 Use expected issue revisions when the service offers them.
 
+After an issue change can affect eligible work, signal the configured Conductor
+service to reconcile. The service wakes its designated director only when it is
+idle; while active, leave new changes pending for that turn's next check. When
+using a tool or script that the local issue-change hook cannot identify, signal
+the service explicitly after confirming the write succeeded. A signal requests
+reconciliation; it does not make triage, proposal, held, blocked or
+needs-input work dispatchable.
+
 ## Model dependencies correctly
 
 Use native blocked-by relationships for real prerequisites. Parent-child

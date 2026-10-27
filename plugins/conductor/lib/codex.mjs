@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
@@ -10,19 +11,21 @@ const CLIENT_INFO = Object.freeze({
 });
 
 /**
- * A small JSON-RPC client for Codex App Server's stdio transport.
+ * A small JSON-RPC client for Codex App Server stdio or the shared-daemon proxy.
  *
  * The coordinator supplies reviewer-specific read-only sandbox, no-approval,
  * and tool-isolation overrides. Builder turns retain configured defaults.
  * Server requests are surfaced to the caller and remain pending until respond().
  */
 export class CodexClient extends EventEmitter {
-  constructor({ cwd = process.cwd(), env = process.env, command, args } = {}) {
+  constructor({ cwd = process.cwd(), env = process.env, command, args, transport = 'stdio' } = {}) {
     super();
     this.cwd = resolve(cwd);
     this.env = { ...env };
     this.command = command ?? 'codex';
-    this.args = args === undefined ? ['app-server', '--listen', 'stdio://'] : [...args];
+    if (!['stdio', 'proxy'].includes(transport)) throw new TypeError('transport must be stdio or proxy.');
+    this.transport = transport;
+    this.args = args === undefined ? (transport === 'proxy' ? ['app-server', 'proxy'] : ['app-server', '--listen', 'stdio://']) : [...args];
 
     this.child = undefined;
     this.connected = false;
@@ -31,6 +34,10 @@ export class CodexClient extends EventEmitter {
     this._pending = new Map();
     this._serverRequests = new Map();
     this._stdoutBuffer = '';
+    this._wsBuffer = Buffer.alloc(0);
+    this._wsHandshake = false;
+    this._wsFragments = [];
+    this._wsFragmentOpcode = null;
     this._stderrBuffer = '';
     this._exit = undefined;
     this._exitPromise = undefined;
@@ -73,9 +80,14 @@ export class CodexClient extends EventEmitter {
       });
     });
 
-    this.child.stdout.setEncoding('utf8');
-    this.child.stdout.on('data', (chunk) => this._onStdout(chunk));
-    this.child.stdout.on('end', () => this._onStdoutEnd());
+    if (this.transport === 'proxy') {
+      this.child.stdout.on('data', chunk => this._onWebSocketData(Buffer.from(chunk)));
+      this.child.stdout.on('end', () => this._onWebSocketEnd());
+    } else {
+      this.child.stdout.setEncoding('utf8');
+      this.child.stdout.on('data', (chunk) => this._onStdout(chunk));
+      this.child.stdout.on('end', () => this._onStdoutEnd());
+    }
     this.child.stderr.setEncoding('utf8');
     this.child.stderr.on('data', (chunk) => this._onStderr(chunk));
     this.child.stdin.on('error', (error) => this._reportError(error));
@@ -84,6 +96,7 @@ export class CodexClient extends EventEmitter {
       this._reportError(error);
     });
 
+    if (this.transport === 'proxy') await this._startProxyHandshake();
     await this._request('initialize', {
       clientInfo: CLIENT_INFO,
     });
@@ -97,12 +110,14 @@ export class CodexClient extends EventEmitter {
     return this._request('config/read', { cwd: resolve(cwd), includeLayers: false });
   }
 
-  async startThread({ cwd = this.cwd, sandbox, approvalPolicy, config } = {}) {
+  async startThread({ cwd = this.cwd, sandbox, approvalPolicy, config, model, reasoningEffort } = {}) {
     this._assertConnected();
     const params = { cwd: resolve(cwd) };
     if (sandbox !== undefined) params.sandbox = sandbox;
     if (approvalPolicy !== undefined) params.approvalPolicy = approvalPolicy;
     if (config !== undefined) params.config = config;
+    if (model !== undefined) params.model = model;
+    if (reasoningEffort !== undefined) params.reasoningEffort = reasoningEffort;
     const result = await this._request('thread/start', params);
     return requireResultObject(result, 'thread/start', 'thread');
   }
@@ -125,10 +140,10 @@ export class CodexClient extends EventEmitter {
     return requireResultObject(result, 'thread/resume', 'thread');
   }
 
-  async readThread({ threadId } = {}) {
+  async readThread({ threadId, includeTurns = true } = {}) {
     this._assertConnected();
     requireString(threadId, 'threadId');
-    return requireResultObject(await this._request('thread/read', { threadId, includeTurns: true }), 'thread/read', 'thread');
+    return requireResultObject(await this._request('thread/read', { threadId, includeTurns }), 'thread/read', 'thread');
   }
 
   async listThreads({ cwd = this.cwd } = {}) {
@@ -181,6 +196,7 @@ export class CodexClient extends EventEmitter {
   }
 
   async close() {
+    this._closing = true;
     if (!this.child) return;
     if (this._exit) return;
 
@@ -222,14 +238,83 @@ export class CodexClient extends EventEmitter {
     if (!this.child || this._exit || !this.child.stdin.writable) {
       return Promise.reject(new Error('Codex App Server stdin is not writable'));
     }
-    const frame = `${JSON.stringify(message)}\n`;
+    const frame = this.transport === 'proxy' ? encodeWebSocketFrame(Buffer.from(JSON.stringify(message))) : `${JSON.stringify(message)}\n`;
     return new Promise((resolveWrite, rejectWrite) => {
       try {
-        this.child.stdin.write(frame, 'utf8', (error) => error ? rejectWrite(error) : resolveWrite());
+        this.child.stdin.write(frame, this.transport === 'proxy' ? undefined : 'utf8', (error) => error ? rejectWrite(error) : resolveWrite());
       } catch (error) {
         rejectWrite(error);
       }
     });
+  }
+
+  async _startProxyHandshake() {
+    const key = randomBytes(16).toString('base64');
+    this._wsKey = key;
+    const request = [
+      'GET / HTTP/1.1', 'Host: localhost', 'Upgrade: websocket', 'Connection: Upgrade',
+      `Sec-WebSocket-Key: ${key}`, 'Sec-WebSocket-Version: 13', '', '',
+    ].join('\r\n');
+    await new Promise((resolveHandshake, rejectHandshake) => {
+      const timer = setTimeout(() => finish(new Error('Timed out connecting to the shared Codex App Server proxy.')), 5000);
+      const finish = error => {
+        clearTimeout(timer);
+        this.off('proxy-handshake', onReady);
+        this.off('error', onError);
+        if (error) rejectHandshake(error); else resolveHandshake();
+      };
+      const onReady = () => finish();
+      const onError = error => finish(error);
+      this.once('proxy-handshake', onReady);
+      this.once('error', onError);
+      this.child.stdin.write(request, 'utf8', error => { if (error) finish(error); });
+    });
+  }
+
+  _onWebSocketData(chunk) {
+    this._wsBuffer = Buffer.concat([this._wsBuffer, chunk]);
+    if (!this._wsHandshake) {
+      const end = this._wsBuffer.indexOf('\r\n\r\n');
+      if (end < 0) return;
+      const header = this._wsBuffer.subarray(0, end).toString('utf8');
+      const accept = /^sec-websocket-accept:\s*(.+)\s*$/im.exec(header)?.[1];
+      const expectedAccept = createHash('sha1').update(`${this._wsKey}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
+      if (!/^HTTP\/1\.1 101\b/m.test(header) || accept !== expectedAccept) {
+        this._reportError(new Error(`Shared Codex App Server proxy rejected its WebSocket upgrade: ${header.slice(0, 300)}`));
+        return;
+      }
+      this._wsHandshake = true;
+      this._wsBuffer = this._wsBuffer.subarray(end + 4);
+      this._emitSafely('proxy-handshake');
+    }
+    while (this._wsBuffer.length >= 2) {
+      const first = this._wsBuffer[0], second = this._wsBuffer[1];
+      const fin = (first & 0x80) !== 0, opcode = first & 0x0f, masked = (second & 0x80) !== 0;
+      let length = second & 0x7f, offset = 2;
+      if (length === 126) { if (this._wsBuffer.length < 4) return; length = this._wsBuffer.readUInt16BE(2); offset = 4; }
+      else if (length === 127) { if (this._wsBuffer.length < 10) return; const wide = this._wsBuffer.readBigUInt64BE(2); if (wide > BigInt(Number.MAX_SAFE_INTEGER)) return this._reportError(new Error('Codex proxy frame is too large.')); length = Number(wide); offset = 10; }
+      if (masked) offset += 4;
+      if (this._wsBuffer.length < offset + length) return;
+      let payload = this._wsBuffer.subarray(offset, offset + length);
+      if (masked) { const mask = this._wsBuffer.subarray(offset - 4, offset); payload = Buffer.from(payload.map((byte, index) => byte ^ mask[index % 4])); }
+      this._wsBuffer = this._wsBuffer.subarray(offset + length);
+      if (opcode === 0x8) { this.child?.kill(); return; }
+      if (opcode === 0x9) { this.child?.stdin.write(encodeWebSocketFrame(payload, 0xA)); continue; }
+      if (opcode === 0xA) continue;
+      if (opcode === 0x0) {
+        if (this._wsFragmentOpcode === null) { this._reportError(new Error('Unexpected continuation frame from Codex proxy.')); return; }
+        this._wsFragments.push(payload);
+        if (fin) { const message = Buffer.concat(this._wsFragments); const messageOpcode = this._wsFragmentOpcode; this._wsFragments = []; this._wsFragmentOpcode = null; if (messageOpcode === 0x1) this._handleFrame(message.toString('utf8')); }
+        continue;
+      }
+      if (opcode !== 0x1 && opcode !== 0x2) { this._reportError(new Error(`Unsupported WebSocket opcode ${opcode} from Codex proxy.`)); return; }
+      if (!fin) { this._wsFragmentOpcode = opcode; this._wsFragments = [payload]; continue; }
+      if (opcode === 0x1) this._handleFrame(payload.toString('utf8'));
+    }
+  }
+
+  _onWebSocketEnd() {
+    if (!this._exit && !this._closing) this._reportError(new Error('Shared Codex App Server proxy closed its stream.'));
   }
 
   _onStdout(chunk) {
@@ -344,6 +429,17 @@ export class CodexClient extends EventEmitter {
       if (event !== 'error') this._reportError(error);
     }
   }
+}
+
+function encodeWebSocketFrame(payload, opcode = 0x1) {
+  const mask = randomBytes(4);
+  let header;
+  if (payload.length < 126) { header = Buffer.alloc(2); header[1] = 0x80 | payload.length; }
+  else if (payload.length <= 0xffff) { header = Buffer.alloc(4); header[1] = 0x80 | 126; header.writeUInt16BE(payload.length, 2); }
+  else { header = Buffer.alloc(10); header[1] = 0x80 | 127; header.writeBigUInt64BE(BigInt(payload.length), 2); }
+  header[0] = 0x80 | opcode;
+  const masked = Buffer.from(payload.map((byte, index) => byte ^ mask[index % 4]));
+  return Buffer.concat([header, mask, masked]);
 }
 
 function requireResultObject(result, method, field) {

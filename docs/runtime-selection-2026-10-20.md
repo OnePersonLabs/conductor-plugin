@@ -35,6 +35,26 @@ interface; it does not by itself qualify desktop wake delivery, busy-thread
 queueing, restart behavior or quota effects. Those remain live acceptance
 questions for a separately authorized campaign.
 
+**2026-10-27 Windows proxy probe:** the local Codex CLI and generated
+App Server protocol support connecting through the shared daemon proxy and
+reading runtime thread status. In a read-only probe, the active Codex Desktop
+chat returned `notLoaded` through the CLI daemon; a separate process confirmed
+the status mismatch. The inspected protocol exposed no supported way for this
+integration to attach to and observe that Desktop chat's live turn. Conductor
+therefore rejects an unowned saved thread reported as `notLoaded`; it will not
+assume that thread is idle or start a duplicate turn there.
+
+The same shared CLI daemon supports creating and managing threads that
+Conductor owns itself. That is a viable host-managed session path, but the
+probe did not establish that such threads are visible or interactively
+available in the Codex Desktop UI, nor verify same-thread concurrency against
+a real running turn. The Windows probe was read-only and establishes no live
+runner qualification. Product choice remains open: retain the intended Desktop
+chat interaction by adding a supported lifecycle bridge, or accept a
+Conductor-owned CLI session as the director surface. Do not describe either
+path as qualified until its user-visible interaction and busy/idle behavior
+are demonstrated in a separately authorized live trial.
+
 ## Requirements identified
 
 The comparison did not find a released candidate that established all of these

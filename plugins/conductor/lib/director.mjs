@@ -10,7 +10,7 @@ export class Director {
     this.c = coordinator;
     const state = coordinator.state.director ??= {};
     this.events = new DirectorEvents({ state, threadId: threadId ?? state.threadId,
-      save: () => coordinator.save(), execute: coordinator.execute, cwd: coordinator.repo.root });
+      save: () => coordinator.save(), execute: coordinator.execute, cwd: coordinator.repo.root, host: coordinator.directorHost });
     coordinator.state.holds ??= [];
     coordinator.state.admissionPaused ??= coordinator.config.admissionPaused ?? false;
   }
@@ -159,8 +159,11 @@ export class Director {
     switch (request.op) {
       case 'status': {
         await this.observe();
-        return { jobs: c.state.jobs, holds: c.state.holds, admissionPaused: c.state.admissionPaused, issues: this.issues ?? [], requests: [...c.requests].map(([key,r]) => ({ key, issue:r.issue, method:r.method, params:r.params })) };
+        return { checkRevision: c.state.director.checkRevision, jobs: c.state.jobs, holds: c.state.holds, admissionPaused: c.state.admissionPaused, issues: this.issues ?? [], requests: [...c.requests].map(([key,r]) => ({ key, issue:r.issue, method:r.method, params:r.params })) };
       }
+      case 'settle': return this.events.settle(request.checkRevision);
+      case 'wakeup': return c.requestCheck({ manual: true });
+      case 'enable': c.state.runtimeEnabled = true; return c.requestCheck({ manual: true });
       case 'events': return this.events.pending();
       case 'ack': { const receipt = await this.events.acknowledge(request.ids); await this.events.flush(); return receipt; }
       case 'retry-wakeup': return this.events.retry(request.batchId, { confirmedNotQueued: request.confirmedNotQueued });
@@ -214,8 +217,8 @@ export class Director {
         await this.events.emit({ kind: 'workflow-changed', issue: request.issue }); return result;
       }
       case 'answer': await c.answer(request.key, typeof request.value === 'string' ? request.value : JSON.stringify(request.value)); return { answered: request.key };
-      case 'signal': await this.events.emit({ kind: 'explicit-signal', reason: request.reason }); c.wake(); return { signaled: true };
-      case 'stop': await this.events.stop(); return { stopping: true };
+      case 'signal': return c.requestCheck({ reason: request.reason });
+      case 'stop': c.state.admissionPaused = true; await this.events.stop(); return { stopping: true };
       default: throw new Error(`Unknown director operation: ${request.op}`);
     }
   }

@@ -11,6 +11,7 @@ import { createWorktree, copyWorktreeIncludes, refreshBranch } from './worktrees
 import { processExists } from './state.mjs';
 import { WakeLoop, admission } from './scheduler.mjs';
 import { Director } from './director.mjs';
+import { DirectorHost } from './director-host.mjs';
 import { builderPrompt, createRequestRevision, parseResult, parseReviewResult, reviewPrompt, resultSchema, reviewResultSchema } from './prompts.mjs';
 
 const skillPath = fileURLToPath(new URL('../skills/github-workflow/SKILL.md', import.meta.url));
@@ -31,8 +32,8 @@ export function reviewerIsolationConfig(effectiveConfig) {
 }
 
 export class Coordinator extends EventEmitter {
-  constructor({ repo, config, store, github, Client = CodexClient, execute = run, workspace = { createWorktree, copyWorktreeIncludes, refreshBranch } }) {
-    super(); Object.assign(this, { repo, config, store, Client, execute, workspace });
+  constructor({ repo, config, store, github, Client = CodexClient, Host = DirectorHost, execute = run, workspace = { createWorktree, copyWorktreeIncludes, refreshBranch } }) {
+    super(); Object.assign(this, { repo, config, store, Client, Host, execute, workspace });
     this.github = github ?? new GitHub(config.repository, { cwd: repo.root });
     this.clients = new Map(); this.tasks = new Map(); this.requests = new Map(); this.preparations = new Map();
     this.stopping = false; this.scanError = null;
@@ -44,17 +45,43 @@ export class Coordinator extends EventEmitter {
     });
   }
   async save() { await this.store.save(this.state); this.emit('status', this.state); }
-  async start({ beforeScan, threadId } = {}) {
+  async start({ beforeScan, threadId, enable = false, manualWake = false } = {}) {
     await this.store.acquire();
     try {
       this.state = await this.store.read();
-      if (this.config.version === 2) this.director = new Director(this, threadId);
-      if (this.director) await this.director.events.start();
       if (this.state.repository && this.state.repository !== this.config.repository) throw new Error('Recovery state belongs to another GitHub repository. Resolve configuration before proceeding.');
       const environment = { platform: process.platform, host: hostname(), codexHome: resolve(process.env.CODEX_HOME ?? join(homedir(), '.codex')) };
       if (this.state.environment && JSON.stringify(this.state.environment) !== JSON.stringify(environment) && this.state.jobs.some(job => !['complete','cancelled'].includes(job.phase))) throw new Error('Unfinished builders belong to a different OS or Codex home. Resume in that environment; no replacement builder was started.');
       this.state.environment = environment;
       this.state.repository = this.config.repository; this.state.root = this.repo.root;
+      this.state.serviceReady = false;
+      this.state.ownerToken = this.store.token;
+      await this.preflight();
+      if (this.config.version === 2) {
+        this.state.director ??= {};
+        if (threadId && this.state.director.threadId && threadId !== this.state.director.threadId) throw new Error('Repository already has a different designated director.');
+        this.state.runtimeEnabled ??= Boolean(this.state.director.threadId);
+        if (enable) this.state.runtimeEnabled = true;
+        if (!this.state.runtimeEnabled) throw new Error('Repository runtime is not enabled. Use conductor enable.');
+        if (!enable && !manualWake && this.state.director.enabled === false) throw new Error('Conductor was deliberately stopped; use wakeup to inspect or enable to restart observation.');
+        if (threadId) this.state.director.threadId = threadId;
+        await this.save();
+        this.directorHost = new this.Host({ cwd: this.repo.root, repository: this.config.repository,
+          model: this.config.directorModel, state: this.state.director, save: () => this.save(), execute: this.execute });
+        await this.directorHost.connect();
+        const bound = await this.directorHost.ensureThread();
+        this.director = new Director(this, bound);
+        await this.director.events.start();
+        this.directorHost.on('completed', turn => {
+          if (this.stopping) return;
+          for (const batch of this.state.director.batches) if (batch.turnId === turn.id) batch.turnStatus = turn.status;
+          if (turn.status !== 'completed') this.state.director.recoveryRequired = { threadId: this.state.director.threadId, turnId: turn.id, status: turn.status, detectedAt: new Date().toISOString() };
+          this.save().then(() => this.director.events.flush()).catch(error => this.emit('notice', error.message));
+        });
+        this.directorHost.on('status', status => {
+          if (!this.stopping && status.type === 'idle') this.director.events.flush().catch(error => this.emit('notice', error.message));
+        });
+      }
       this.state.running = true; this.state.pid = process.pid; this.state.pollMs = this.config.pollMs; this.state.agents = this.config.agents;
       for (const job of this.state.jobs) {
         job.intent = job.phase === 'cancelling' ? 'cancel' : job.phase === 'paused' || job.intent === 'pause' ? 'pause' : null;
@@ -70,13 +97,14 @@ export class Coordinator extends EventEmitter {
         }
       }
       await this.save();
-      await this.preflight();
       await beforeScan?.();
       if (this.stopping) return;
       this.ready = true;
+      this.state.serviceReady = true; await this.save();
       this.timer = setInterval(() => this.wake(), this.config.pollMs);
-      await this.wake();
-    } catch (error) { if (this.state) { this.state.running = false; await this.save().catch(() => {}); } await this.store.release(); throw error; }
+      if (manualWake || enable) await this.requestCheck({ manual: true });
+      else await this.wake();
+    } catch (error) { await this.directorHost?.close().catch(() => {}); if (this.state) { this.state.running = false; this.state.serviceReady = false; this.state.startupError = error.message; await this.save().catch(() => {}); } await this.store.release(); throw error; }
   }
   async preflight() {
     const remote = await git(this.repo.root, 'remote', 'get-url', 'origin');
@@ -87,6 +115,34 @@ export class Coordinator extends EventEmitter {
     await access(skillPath);
   }
   wake() { return this.ready ? this.loop.wake() : Promise.resolve(); }
+  async requestCheck({ manual = false, reason } = {}) {
+    if (!this.director) throw new Error('Director is not bound.');
+    if (manual) {
+      // An explicit wake can continue a known ended director turn, but an
+      // uncertain submission still needs its receipt reconciled before retry.
+      if (this.directorHost && (await this.directorHost.status()).type === 'idle') {
+        for (const batch of this.state.director.batches) {
+          if (batch.acknowledgedAt || batch.status !== 'queued' || !batch.turnId) continue;
+          const turn = await this.directorHost.inspectTurn(batch.turnId);
+          if (turn && ['completed','interrupted','failed'].includes(turn.status)) {
+            batch.turnStatus = turn.status;
+            batch.status = 'reconciled-ended';
+          }
+        }
+        const recovery = this.state.director.recoveryRequired;
+        if (recovery?.turnId && !recovery.resolvedAt) {
+          const turn = await this.directorHost.inspectTurn(recovery.turnId);
+          if (turn && ['completed','interrupted','failed','error'].includes(turn.status)) await this.directorHost.markTurnReconciled(turn.id, 'Explicit manual wake after inspecting terminal turn.');
+        }
+      }
+      if (typeof this.state.director.recoveryRequired === 'string') this.state.director.recoveryRequired = null;
+      await this.director.events.start();
+    } else if (!this.state.runtimeEnabled || !this.state.director.enabled) return { status: 'disabled' };
+    await this.director.events.emit({ kind: 'check-requested', reason });
+    // Scan first so the director receives a current tracker snapshot.
+    await this.wake();
+    return this.director.events.flush();
+  }
   async control(request) {
     if (!this.director) throw new Error('Migrate to version 2 and bind a director first.');
     const result = await this.director.control(request);
@@ -622,10 +678,11 @@ export class Coordinator extends EventEmitter {
     // cancellation never depends on receiving a final assistant message.
     await client.close();
   }
-  async stop() {
+  async stop({ explicit = false } = {}) {
     if (this.stopPromise) return this.stopPromise;
     this.stopping = true; clearInterval(this.timer);
     this.stopPromise = (async () => {
+      if (explicit && this.director) { this.state.admissionPaused = true; await this.director.events.stop(); }
       for (const job of this.state.jobs) {
         if (!['complete','cancelled'].includes(job.phase)) job.intent = 'stop';
         const client = this.clients.get(job.issue);
@@ -634,7 +691,8 @@ export class Coordinator extends EventEmitter {
       await this.loop.close();
       await Promise.allSettled([...this.preparations.values()]);
       await Promise.allSettled([...this.tasks.values()]);
-      this.state.running = false; await this.save(); await this.store.release(); this.emit('stopped');
+      await this.directorHost?.close();
+      this.state.running = false; this.state.serviceReady = false; await this.save(); await this.store.release(); this.emit('stopped');
     })();
     return this.stopPromise;
   }
