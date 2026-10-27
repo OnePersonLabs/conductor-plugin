@@ -10,11 +10,24 @@ import { git, run } from './process.mjs';
 import { createWorktree, copyWorktreeIncludes, refreshBranch } from './worktrees.mjs';
 import { processExists } from './state.mjs';
 import { WakeLoop, admission } from './scheduler.mjs';
-import { builderPrompt, parseResult, resultSchema } from './prompts.mjs';
+import { builderPrompt, createRequestRevision, parseResult, parseReviewResult, reviewPrompt, resultSchema, reviewResultSchema } from './prompts.mjs';
 
 const skillPath = fileURLToPath(new URL('../skills/github-workflow/SKILL.md', import.meta.url));
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const activePhases = new Set(['building','launching','starting','preparing']);
+const activePhases = new Set(['building','reviewing','launching','starting','preparing']);
+
+export function reviewerIsolationConfig(effectiveConfig) {
+  const config = effectiveConfig?.config?.additional ?? effectiveConfig?.additional ?? effectiveConfig;
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Codex did not return effective configuration for the read-only reviewer.');
+  const overrides = { 'apps._default.enabled': false, 'plugins._default.enabled': false };
+  for (const [key, entries] of [['mcp_servers', config.mcp_servers], ['apps', config.apps], ['plugins', config.plugins]]) {
+    if (entries !== undefined && (!entries || typeof entries !== 'object' || Array.isArray(entries))) throw new Error(`Codex returned invalid ${key} configuration; reviewer isolation cannot be guaranteed.`);
+    for (const name of Object.keys(entries ?? {})) {
+      if (name !== '_default') overrides[`${key}.${name}${key === 'mcp_servers' ? '' : '.enabled'}`] = key === 'mcp_servers' ? { enabled: false } : false;
+    }
+  }
+  return overrides;
+}
 
 export class Coordinator extends EventEmitter {
   constructor({ repo, config, store, github, Client = CodexClient, execute = run, workspace = { createWorktree, copyWorktreeIncludes, refreshBranch } }) {
@@ -40,9 +53,12 @@ export class Coordinator extends EventEmitter {
         job.intent = job.phase === 'cancelling' ? 'cancel' : null;
         if (activePhases.has(job.phase)) {
           job.recoveryPhase = job.phase;
-          if (!job.threadId || (job.childPid && processExists(job.childPid))) {
-            job.phase = 'uncertain'; job.summary = 'Previous builder launch/process ownership is uncertain; resolve it before starting another builder.';
-          } else { job.phase = 'stopped'; job.turnId = null; job.childPid = null; }
+          job.builderThreadId ??= job.threadId ?? null;
+          job.activeRole ??= 'builder';
+          const savedThread = job.activeRole === 'reviewer' ? job.reviewerThreadId : job.builderThreadId;
+          if (!savedThread || (job.childPid && processExists(job.childPid))) {
+            job.phase = 'uncertain'; job.summary = `Previous ${job.activeRole} launch/process ownership is uncertain; resolve it before starting another session.`;
+          } else { job.phase = 'stopped'; job.turnId = null; job.childPid = null; job.nextRole ??= job.activeRole; }
         }
       }
       await this.save();
@@ -71,6 +87,9 @@ export class Coordinator extends EventEmitter {
     await git(this.repo.root, 'fetch', 'origin', this.config.baseBranch);
     return git(this.repo.root, 'rev-parse', `origin/${this.config.baseBranch}`);
   }
+  reviewInstructionRevision() {
+    return digest({ version: 1, defaultPolicy: 'actionable-findings-v1', instructions: this.config.reviewInstructions });
+  }
   async scan() {
     if (this.stopping) return;
     this.scanError = null;
@@ -82,7 +101,39 @@ export class Coordinator extends EventEmitter {
         else if (job.phase === 'stopped' || job.phase === 'repair') {
           const issue = await this.github.issue(job.issue);
           if (issue.state !== 'open') { job.phase = 'blocked'; job.summary = 'Issue closed before verified delivery; operator reconciliation required.'; await this.save(); continue; }
-          this.launch(job, issue, job.repairReason ?? 'Resume the interrupted original task from current source and retained evidence.', job.pendingFeedback ?? []);
+          const revision = createRequestRevision(issue);
+          if (job.requestRevision && revision !== job.requestRevision) {
+            if (job.mergeArmed) await this.disarm(job);
+            await this.supersedeReviewIntent(job, revision, 'The accepted issue request changed. Reassess the revised request against current source and preserve useful work.');
+          }
+          job.sourceIdentity ??= issue.node_id ?? `${this.config.repository}#${issue.number}`;
+          job.requestRevision ??= revision;
+          this.launch(job, issue, job.repairReason ?? 'Resume the interrupted original task from current source and retained evidence.', job.pendingFeedback ?? [], job.nextRole ?? 'builder');
+        } else if (job.phase === 'review') {
+          const issue = await this.github.issue(job.issue);
+          if (issue.state !== 'open') { job.phase = 'blocked'; job.summary = 'Issue closed before review and verified delivery; operator reconciliation required.'; await this.save(); continue; }
+          const revision = createRequestRevision(issue);
+          if (job.requestRevision && revision !== job.requestRevision) {
+            await this.supersedeReviewIntent(job, revision, 'The issue request changed before review. Reassess the revised acceptance against the current branch.');
+            this.launch(job, issue, job.repairReason, [], 'builder'); continue;
+          }
+          if (this.config.reviewEnabled) {
+            try { await this.verify(job); }
+            catch (error) { job.nextRole = 'builder'; await this.repair(job, error); continue; }
+            const pull = await this.github.pull(job.pr);
+            const head = await git(job.worktree, 'rev-parse', 'HEAD');
+            if (head !== pull.headRefOid) {
+              const ahead = await run('git', ['merge-base', '--is-ancestor', pull.headRefOid, head], { cwd: job.worktree, allowFailure: true });
+              if (ahead.code !== 0) throw new Error('PR head differs from the local issue branch; reconcile publication before review.');
+              await git(job.worktree, 'push', 'origin', job.branch);
+              if ((await this.github.pull(job.pr)).headRefOid !== head) throw new Error('Could not confirm the issue branch push before review.');
+            }
+            if (job.reviewClearance?.head !== head || job.reviewClearance?.base !== job.checkBase || job.reviewClearance?.instructionRevision !== this.reviewInstructionRevision() || job.reviewClearance?.requestRevision !== job.requestRevision) {
+              job.reviewStatus = null; job.reviewClearance = null; job.nextRole = 'reviewer'; await this.save();
+              this.launch(job, issue, job.reviewReason ?? 'Review the current verified PR head independently.', [], 'reviewer');
+            } else { job.phase = 'waiting'; job.nextRole = null; await this.save(); }
+          }
+          else { job.reviewStatus = 'skipped'; job.phase = 'waiting'; await this.save(); }
         } else if (job.phase === 'waiting') await this.deliveryAction(() => this.reconcilePull(job, base));
       } catch (error) { job.lastError = error.message; await this.save(); this.emit('notice', `Issue #${job.issue}: ${error.message}`); }
     }
@@ -100,12 +151,12 @@ export class Coordinator extends EventEmitter {
       if (await this.github.pullForBranch(branch)) { this.emit('notice', `Issue #${issue.number} already has a PR on ${branch}; recover its owner before adoption.`); continue; }
       // Ordinary worktrees stay outside all source checkouts; their explicit paths survive restart.
       const path = join(dirname(dirname(this.repo.commonDir)), '.symphony-lite-worktrees', digest(this.repo.commonDir).slice(0, 16), `issue-${issue.number}`);
-      const job = { issue: issue.number, branch, worktree: path, baseBranch: this.config.baseBranch, phase: 'preparing', threadId: null, turnId: null, childPid: null, acceptanceComplete: false, createdAt: new Date().toISOString() };
+      const job = { issue: issue.number, sourceIdentity: issue.node_id ?? `${this.config.repository}#${issue.number}`, requestRevision: createRequestRevision(issue), branch, worktree: path, baseBranch: this.config.baseBranch, phase: 'preparing', activeRole: 'builder', nextRole: 'builder', builderThreadId: null, reviewerThreadId: null, threadId: null, turnId: null, childPid: null, acceptanceComplete: false, createdAt: new Date().toISOString() };
       this.state.jobs.push(job); await this.save();
       try {
         await this.prepare(job, base);
         if (this.stopping || job.intent) { job.phase = job.intent === 'cancel' ? 'cancelled' : 'stopped'; await this.save(); }
-        else this.launch(job, issue, 'Start the authorized issue. Read its acceptance and relevant project instructions before changing source.');
+        else this.launch(job, issue, 'Start the authorized issue. Read its acceptance and relevant project instructions before changing source.', [], 'builder');
       } catch (error) { if (job.intent !== 'cancel') job.phase = 'blocked'; job.summary = `Workspace preparation failed: ${error.message}`; await this.save(); await this.github.progress(job); }
     }
     this.state.lastScan = new Date().toISOString(); await this.save();
@@ -135,24 +186,31 @@ export class Coordinator extends EventEmitter {
     }
     return this.execute(executable, args, { cwd });
   }
-  launch(job, issue, reason, feedback = []) {
+  launch(job, issue, reason, feedback = [], role = job.nextRole ?? 'builder') {
     if (this.tasks.has(job.issue) || this.stopping) return;
-    const task = this.build(job, issue, reason, feedback).catch(async error => {
-      job.phase = job.intent === 'cancel' ? job.cancelConfirmed ? 'cancelled' : 'cancelling' : this.stopping ? 'stopped' : job.phase === 'launching' || !job.threadId ? 'uncertain' : 'blocked'; job.summary = error.message; job.lastError = error.message;
+    const task = this.build(job, issue, reason, feedback, role).catch(async error => {
+      const threadId = role === 'reviewer' ? job.reviewerThreadId : job.builderThreadId ?? job.threadId;
+      job.activeRole = role; job.nextRole = role;
+      job.phase = job.intent === 'cancel' ? job.cancelConfirmed ? 'cancelled' : 'cancelling' : this.stopping ? 'stopped' : ['starting','launching'].includes(job.phase) || !threadId ? 'uncertain' : 'blocked'; job.summary = error.message; job.lastError = error.message;
       await this.save(); await this.github.progress(job).catch(e => this.emit('notice', e.message));
     }).finally(() => { this.tasks.delete(job.issue); if (!this.stopping) this.wake(); });
     this.tasks.set(job.issue, task);
   }
-  async build(job, issue, reason, feedback) {
+  async build(job, issue, reason, feedback, role = 'builder') {
+    if (role === 'reviewer' && job.reviewPublicationStatus === 'pending') {
+      await this.publishReviewResult(job);
+      return;
+    }
     const client = new this.Client({ cwd: job.worktree });
     this.clients.set(job.issue, client);
     let finalText = '';
+    let threadId;
     let terminalResolve, terminalReject;
     const terminal = new Promise((resolve, reject) => { terminalResolve = resolve; terminalReject = reject; });
     // Rejection can arrive while startTurn's RPC is still pending.
     terminal.catch(() => {});
     client.on('notification', ({ method, params }) => {
-      if (params?.threadId && job.threadId && params.threadId !== job.threadId) return;
+      if (params?.threadId && threadId && params.threadId !== threadId) return;
       if (method === 'item/completed' && params?.item?.type === 'agentMessage') finalText = params.item.text;
       if (method === 'turn/completed') terminalResolve(params.turn);
       if (method === 'serverRequest/resolved') {
@@ -162,34 +220,69 @@ export class Coordinator extends EventEmitter {
     client.on('request', request => {
       const key = `${job.issue}:${request.id}`;
       this.requests.set(key, { ...request, issue: job.issue, client });
-      this.emit('request', { key, issue: job.issue, ...request });
+      this.emit('request', { key, issue: job.issue, role, ...request });
     });
     client.on('exit', ({ code }) => terminalReject(new Error(`Codex process exited (${code}) before a terminal turn result.`)));
     client.on('error', terminalReject);
     try {
       if (job.intent || this.stopping) return;
       if (!job.prepared) throw new Error('Workspace preparation is incomplete; use explicit resume after inspecting preparation state.');
-      job.phase = job.threadId ? 'building' : 'starting'; await this.save();
+      job.activeRole = role; job.nextRole = role;
+      const field = role === 'reviewer' ? 'reviewerThreadId' : 'builderThreadId';
+      threadId = job[field] ?? (role === 'builder' ? job.threadId : null);
+      job[field] = threadId;
+      if (role === 'builder') job.threadId = threadId;
+      job.phase = threadId ? role === 'reviewer' ? 'reviewing' : 'building' : 'starting'; await this.save();
       await client.connect(); job.childPid = client.pid; await this.save();
       if (job.intent || this.stopping) return;
-      if (job.threadId) {
-        const recovered = await client.readThread({ threadId: job.threadId });
-        if (recovered.turns?.some(turn => turn.status === 'inProgress')) throw new Error('Original thread still has an active turn; reconcile its owner before resuming.');
-        await client.resumeThread({ threadId: job.threadId, cwd: job.worktree });
+      const reviewerConfig = role === 'reviewer' ? reviewerIsolationConfig(await client.readConfig({ cwd: job.worktree })) : undefined;
+      if (threadId) {
+        const recovered = await client.readThread({ threadId });
+        if (recovered.turns?.some(turn => turn.status === 'inProgress')) throw new Error(`Original ${role} thread still has an active turn; reconcile its owner before resuming.`);
+        await client.resumeThread({ threadId, cwd: job.worktree, ...(role === 'reviewer' ? { sandbox: 'read-only', approvalPolicy: 'never', config: reviewerConfig } : {}) });
       }
-      else { const thread = await client.startThread({ cwd: job.worktree }); job.threadId = thread.id; await this.save(); }
+      else {
+        const thread = await client.startThread({ cwd: job.worktree, ...(role === 'reviewer' ? { sandbox: 'read-only', approvalPolicy: 'never', config: reviewerConfig } : {}) });
+        threadId = thread.id; job[field] = threadId; if (role === 'builder') job.threadId = threadId; await this.save();
+      }
+      await client.setThreadName({ threadId, name: `${this.config.repository} #${issue.number} - ${role}` });
       if (this.stopping || job.intent) return;
       if (this.config.maxTurns && this.state.jobs.reduce((n, j) => n + (j.turnCount ?? 0), 0) >= this.config.maxTurns) throw new Error('Configured total Codex turn budget exhausted; work is retained.');
+      const base = role === 'reviewer' ? await this.base() : null;
+      const head = role === 'reviewer' ? await git(job.worktree, 'rev-parse', 'HEAD') : null;
+      if (role === 'reviewer') {
+        const pull = await this.github.pull(job.pr);
+        if (head !== pull.headRefOid || head !== job.checkHead || base !== job.checkBase || await git(job.worktree, 'status', '--porcelain', '--untracked-files=all')) throw new Error('Verified base/head changed or worktree is dirty before review; reconcile and re-verify before starting the reviewer.');
+      }
       job.phase = 'launching'; job.turnCount = (job.turnCount ?? 0) + 1; await this.save();
-      const turn = await client.startTurn({ threadId: job.threadId, cwd: job.worktree, prompt: builderPrompt({ config: this.config, job, issue, reason, feedback }), skillPath, outputSchema: resultSchema });
+      const turn = role === 'reviewer'
+        ? await client.startTurn({ threadId, cwd: job.worktree, prompt: reviewPrompt({ config: this.config, job, issue, base, head, previous: job.reviewFindings ?? [] }), outputSchema: reviewResultSchema })
+        : await client.startTurn({ threadId, cwd: job.worktree, prompt: builderPrompt({ config: this.config, job, issue, reason, feedback }), skillPath, outputSchema: resultSchema });
       job.turnId = turn.id;
-      if (this.stopping || job.intent) { await client.interrupt({ threadId: job.threadId, turnId: turn.id }); return; }
-      job.phase = 'building'; await this.save();
+      if (this.stopping || job.intent) { await client.interrupt({ threadId, turnId: turn.id }); return; }
+      job.phase = role === 'reviewer' ? 'reviewing' : 'building'; await this.save();
       const done = await terminal;
       if (job.intent === 'cancel') return;
-      if (done.status === 'interrupted' || this.stopping) { job.phase = 'stopped'; await this.save(); return; }
-      if (done.status !== 'completed') throw new Error(`Builder turn ${done.status}: ${JSON.stringify(done.error ?? {})}`);
-      const result = parseResult(finalText); Object.assign(job, result); job.acceptanceComplete = result.acceptanceComplete;
+      if (done.status === 'interrupted' || this.stopping) { job.phase = 'stopped'; job.nextRole = role; await this.save(); return; }
+      if (done.status !== 'completed') throw new Error(`${role === 'reviewer' ? 'Reviewer' : 'Builder'} turn ${done.status}: ${JSON.stringify(done.error ?? {})}`);
+      const result = role === 'reviewer' ? parseReviewResult(finalText) : parseResult(finalText);
+      if (role === 'reviewer') {
+        if (!await this.revalidateReviewRequest(job)) return;
+        const afterHead = await git(job.worktree, 'rev-parse', 'HEAD');
+        const afterBase = await this.base();
+        if (afterBase !== base) {
+          job.phase = 'review'; job.activeRole = null; job.nextRole = 'reviewer'; job.reviewStatus = null; job.reviewClearance = null;
+          job.reviewReason = 'The configured base advanced during review. Integrate it, rerun checks, and review the current branch.';
+          job.lastError = null; await this.save(); return;
+        }
+        if (afterHead !== head || job.checkHead !== head || job.checkBase !== base) throw new Error('The issue head changed during review; its result is stale and must be reviewed again.');
+        job.reviewResult = result; job.reviewHead = head; job.reviewBase = base; job.reviewInstructionRevision = this.reviewInstructionRevision(); job.reviewFindings = result.findings;
+        job.reviewResultRevision = job.requestRevision;
+        if (result.status === 'blocked') { job.phase = 'blocked'; job.nextRole = 'reviewer'; job.summary = result.summary; job.lastError = null; await this.save(); await this.github.progress(job); return; }
+        job.reviewAttempt = (job.reviewAttempt ?? 0) + 1; job.reviewPublicationStatus = 'pending'; job.nextRole = 'reviewer'; await this.save();
+        await this.publishReviewResult(job); return;
+      }
+      Object.assign(job, result); job.acceptanceComplete = result.acceptanceComplete;
       if (result.disposition === 'blocked' || !result.acceptanceComplete) { job.phase = 'blocked'; await this.save(); await this.github.progress(job); return; }
       if (await git(job.worktree, 'status', '--porcelain')) throw new Error('Builder left uncommitted or untracked work; finish the owned change before delivery.');
       try { await this.verify(job); }
@@ -200,12 +293,13 @@ export class Coordinator extends EventEmitter {
       const pull = await this.github.createPull(job, issue); job.pr = pull.number;
       // Do not swallow feedback arriving while the builder was active: only evidence sent
       // to that turn is acknowledged by reconcilePull before launching it.
-      job.phase = 'waiting'; job.lastError = null; job.repairReason = null; job.pendingFeedback = [];
+      job.phase = this.config.reviewEnabled ? 'review' : 'waiting'; job.activeRole = null; job.nextRole = this.config.reviewEnabled ? 'reviewer' : null; job.lastError = null; job.repairReason = null; job.pendingFeedback = [];
+      job.reviewStatus = this.config.reviewEnabled ? null : 'skipped'; job.reviewClearance = null;
       await this.save(); await this.github.progress(job);
     } finally {
       await client.close(); this.clients.delete(job.issue); job.childPid = null; job.turnId = null;
       if (job.intent === 'cancel') job.phase = job.cancelConfirmed ? 'cancelled' : 'cancelling';
-      else if (this.stopping && activePhases.has(job.phase)) job.phase = 'stopped';
+      else if (this.stopping && activePhases.has(job.phase)) { job.phase = 'stopped'; job.nextRole = role; }
       for (const [key, request] of this.requests) if (request.issue === job.issue) this.requests.delete(key);
       await this.save();
     }
@@ -217,6 +311,80 @@ export class Coordinator extends EventEmitter {
     job.phase = job.repairAttempts >= 2 ? 'blocked' : 'repair';
     job.repairReason = `Repair local verification in this original issue: ${error.message}`;
     job.lastError = error.message; await this.save(); await this.github.progress(job);
+  }
+  async publishReviewResult(job) {
+    const result = job.reviewResult;
+    if (!result || !['clear', 'findings'].includes(result.status) || !Number.isSafeInteger(job.reviewAttempt) || !job.reviewHead) throw new Error('Saved review publication intent is incomplete; no PR comment was sent.');
+    if (!await this.revalidateReviewRequest(job)) return;
+    if (!job.reviewResultRevision || job.reviewResultRevision !== job.requestRevision) {
+      await this.supersedeReviewIntent(job, job.requestRevision, 'The saved review result does not match the current issue revision. Reassess the current request before publishing a review.');
+      return;
+    }
+    const [currentHead, currentBase, pull] = await Promise.all([
+      git(job.worktree, 'rev-parse', 'HEAD'), this.base(), this.github.pull(job.pr),
+    ]);
+    if (currentHead !== job.reviewHead || currentBase !== job.reviewBase || job.checkHead !== currentHead || job.checkBase !== currentBase || pull.headRefOid !== currentHead) {
+      await this.supersedeReviewPublication(job, 'The checked base or PR head changed before review publication. Integrate, recheck, and review the current branch.');
+      return;
+    }
+    const published = await this.github.submitReview(job.pr, { attempt: job.reviewAttempt, head: job.reviewHead, result });
+    job.reviewPublication = published; job.reviewPublicationStatus = 'published'; job.reviewStatus = result.status; job.summary = result.summary; job.lastError = null;
+    if (result.status === 'findings') {
+      job.phase = 'repair'; job.activeRole = null; job.nextRole = 'builder'; job.repairReason = 'Address the independent PR review findings. The original reviewer will re-check each finding after your repair.';
+      job.pendingFeedback = result.findings.map((finding, index) => ({ kind: 'reviewer-agent', id: `${job.reviewHead}:${index}`, ...finding, head: job.reviewHead }));
+    } else {
+      job.phase = 'waiting'; job.activeRole = null; job.nextRole = null;
+      job.reviewClearance = { head: job.reviewHead, base: job.reviewBase, instructionRevision: job.reviewInstructionRevision, requestRevision: job.reviewResultRevision };
+    }
+    await this.save(); await this.github.progress(job);
+  }
+  async supersedeReviewPublication(job, reason) {
+    // A saved pending intent may already have reached GitHub. Reconcile its marker
+    // before superseding it; a failed read leaves the intent intact for recovery.
+    const receipt = await this.findSavedReviewReceipt(job);
+    if (receipt) job.reviewPublication = receipt;
+    job.reviewPublicationStatus = receipt ? 'published' : 'superseded';
+    job.reviewResultStatus = 'superseded'; job.reviewResult = null;
+    job.reviewStatus = 'stale'; job.reviewClearance = null;
+    job.phase = 'review'; job.activeRole = null; job.nextRole = 'reviewer'; job.reviewReason = reason;
+    job.lastError = null; await this.save(); await this.github.progress(job);
+  }
+  async revalidateReviewRequest(job) {
+    const issue = await this.github.issue(job.issue);
+    if (issue.state !== 'open') {
+      if (job.reviewPublicationStatus === 'pending') {
+        const receipt = await this.findSavedReviewReceipt(job);
+        if (receipt) job.reviewPublication = receipt;
+        job.reviewPublicationStatus = 'superseded';
+      }
+      job.phase = 'blocked'; job.activeRole = null; job.nextRole = 'reviewer'; job.reviewStatus = 'stale'; job.reviewClearance = null;
+      job.summary = 'The issue closed during review; the saved review result was not newly published.';
+      await this.save(); await this.github.progress(job); return false;
+    }
+    const revision = createRequestRevision(issue);
+    if (!job.requestRevision) { job.requestRevision = revision; return true; }
+    if (revision !== job.requestRevision) {
+      await this.supersedeReviewIntent(job, revision, 'The issue request changed during review or publication. Reassess its revised acceptance against current source before publishing another review.');
+      return false;
+    }
+    return true;
+  }
+  async supersedeReviewIntent(job, revision, reason) {
+    if (job.reviewPublicationStatus === 'pending') {
+      // Resolve any uncertain write before changing the request it represents.
+      const receipt = await this.findSavedReviewReceipt(job);
+      if (receipt) job.reviewPublication = receipt;
+    }
+    job.requestRevision = revision; job.acceptanceComplete = false; job.reviewStatus = 'stale'; job.reviewClearance = null;
+    job.reviewResultStatus = 'superseded'; job.reviewResult = null; job.reviewFindings = [];
+    if (job.reviewPublicationStatus === 'pending') job.reviewPublicationStatus = 'superseded';
+    job.checkBase = null; job.checkHead = null; job.pendingFeedback = [];
+    job.phase = 'repair'; job.activeRole = null; job.nextRole = 'builder'; job.repairReason = reason;
+    job.lastError = null; await this.save(); await this.github.progress(job);
+  }
+  async findSavedReviewReceipt(job) {
+    if (!job.pr || !Number.isSafeInteger(job.reviewAttempt) || !job.reviewHead) throw new Error('Saved review publication intent lacks its PR, attempt, or reviewed head; preserve it and reconcile before continuing.');
+    return this.github.findReviewReceipt(job.pr, { attempt: job.reviewAttempt, head: job.reviewHead });
   }
   async verify(job) {
     const base = await this.base();
@@ -239,10 +407,25 @@ export class Coordinator extends EventEmitter {
       if (!pull.mergeCommit?.oid) throw new Error('Merged PR has no verified merge commit yet.');
       await git(this.repo.root, 'merge-base', '--is-ancestor', pull.mergeCommit.oid, acceptedBase);
       if (!job.acceptanceComplete) { job.phase = 'blocked'; job.summary = 'PR merged but complete issue acceptance remains unresolved.'; await this.save(); return; }
+      const deliveredIssue = await this.github.issue(job.issue);
+      const deliveredRevision = createRequestRevision(deliveredIssue);
+      if (deliveredRevision !== job.requestRevision) {
+        job.phase = 'blocked'; job.landedRequestRevision = job.requestRevision; job.currentRequestRevision = deliveredRevision;
+        job.summary = `PR #${job.pr} landed for an older issue revision. The issue remains open for reconciliation; no follow-up implementation was started on the merged branch.`;
+        await this.save(); await this.github.progress(job); return;
+      }
       await this.github.closeIssue(job.issue, `Delivered by PR #${job.pr}; accepted base contains ${pull.mergeCommit.oid}.\n\n${job.summary}`);
       job.phase = 'complete'; job.mergedCommit = pull.mergeCommit.oid; await this.save(); await this.github.progress(job); return;
     }
     if (pull.state === 'CLOSED') { job.phase = 'blocked'; job.summary = 'PR closed without merge; acceptance remains open.'; await this.save(); await this.github.progress(job); return; }
+    const currentIssue = await this.github.issue(job.issue);
+    const currentRevision = createRequestRevision(currentIssue);
+    if (!job.requestRevision) job.requestRevision = currentRevision;
+    else if (currentRevision !== job.requestRevision) {
+      if (job.mergeArmed) await this.disarm(job);
+      await this.supersedeReviewIntent(job, currentRevision, 'The issue request changed. Reassess the revised acceptance against current source and preserve useful work.');
+      this.launch(job, currentIssue, job.repairReason, [], 'builder'); return;
+    }
     const feedback = await this.github.feedback(job.pr, pull.headRefOid);
     const unseen = feedback.items.filter(item => !(job.feedbackSeen ?? []).includes(digest(item)));
     const checks = checkState(pull);
@@ -256,25 +439,39 @@ export class Coordinator extends EventEmitter {
       this.launch(job, await this.github.issue(job.issue), job.repairReason, job.pendingFeedback); return;
     }
     if (checks.failed.length || checks.pending || pull.isDraft || pull.reviewDecision === 'CHANGES_REQUESTED') return;
+    const currentBase = await this.base();
+    if (job.mergeArmed && job.checkBase !== currentBase) await this.disarm(job);
+    try { await this.verify(job); }
+    catch (error) { job.nextRole = 'builder'; await this.repair(job, error); return; }
+    let head = await git(job.worktree, 'rev-parse', 'HEAD');
+    if (head !== pull.headRefOid) {
+      const localContainsRemote = await run('git', ['merge-base', '--is-ancestor', pull.headRefOid, head], { cwd: job.worktree, allowFailure: true });
+      if (localContainsRemote.code !== 0) throw new Error('PR contains changes not present in the issue worktree; reconcile before updating it.');
+      await git(job.worktree, 'push', 'origin', job.branch);
+      const pushed = await this.github.pull(job.pr);
+      if (pushed.headRefOid !== head) throw new Error('Updated issue branch push is not confirmed by the PR.');
+      if (job.mergeArmed) await this.disarm(job);
+      job.reviewStatus = null; job.reviewClearance = null; job.phase = this.config.reviewEnabled ? 'review' : 'waiting'; job.nextRole = this.config.reviewEnabled ? 'reviewer' : null; await this.save();
+      if (this.config.reviewEnabled) this.launch(job, currentIssue, 'The issue branch now includes the latest base; review the newly verified commit.', [], 'reviewer');
+      return;
+    }
+    const instructionsRevision = this.reviewInstructionRevision();
+    if (this.config.reviewEnabled && (job.reviewStatus !== 'clear' || job.reviewClearance?.head !== head || job.reviewClearance?.base !== currentBase || job.reviewClearance?.instructionRevision !== instructionsRevision || job.reviewClearance?.requestRevision !== job.requestRevision)) {
+      if (job.mergeArmed) await this.disarm(job);
+      job.reviewStatus = null; job.reviewClearance = null; job.phase = 'review'; job.nextRole = 'reviewer'; await this.save();
+      this.launch(job, currentIssue, 'Review the current verified PR head against the current issue and review instructions.', [], 'reviewer'); return;
+    }
     // GitHub can retain an armed request after all gates turn green. Reconcile a
     // CLEAN request through the normal protected merge command instead of waiting forever.
     if (job.mergeArmed && pull.autoMergeRequest && pull.mergeStateStatus !== 'CLEAN') return;
-    const approvals = await this.github.approvals(job.pr);
+    const approvals = await this.github.approvals(job.pr, head);
     if (approvals.changesRequested || approvals.approved < this.config.requiredApprovals) return;
     // Only one PR may have native auto-merge armed. Waiting issues retain their slots.
     if (this.state.jobs.some(other => other.issue !== job.issue && other.mergeArmed && other.phase !== 'complete')) return;
-    const head = await git(job.worktree, 'rev-parse', 'HEAD');
-    if (head !== pull.headRefOid) throw new Error('Local and PR heads differ; reconcile publication before merging.');
-    if (job.checkBase !== base || job.checkHead !== head) {
-      try { await this.verify(job); }
-      catch (error) { await this.repair(job, error); return; }
-      const verified = await git(job.worktree, 'rev-parse', 'HEAD');
-      if (verified !== pull.headRefOid) { await git(job.worktree, 'push', 'origin', job.branch); return; }
-    }
     const fresh = await this.github.pull(job.pr);
     if (fresh.headRefOid !== job.checkHead || (await this.base()) !== job.checkBase) return;
     const freshChecks = checkState(fresh);
-    const freshApprovals = await this.github.approvals(job.pr);
+    const freshApprovals = await this.github.approvals(job.pr, fresh.headRefOid);
     if (this.stopping || job.intent || fresh.state !== 'OPEN' || fresh.isDraft || freshChecks.pending || freshChecks.failed.length || fresh.reviewDecision === 'CHANGES_REQUESTED' || freshApprovals.changesRequested || freshApprovals.approved < this.config.requiredApprovals) return;
     job.mergeArmed = true; await this.save();
     if (this.stopping || job.intent) return;
@@ -292,6 +489,7 @@ export class Coordinator extends EventEmitter {
   async answer(key, value) {
     const request = this.requests.get(key);
     if (!request) throw new Error('That request is no longer pending.');
+    if (request.issue && this.state.jobs.find(job => job.issue === request.issue)?.activeRole === 'reviewer') throw new Error('Reviewer sessions are read-only and cannot receive approval. Stop and reconcile the review instead.');
     let response;
     if (['item/commandExecution/requestApproval','item/fileChange/requestApproval'].includes(request.method)) {
       if (!['accept','acceptForSession','decline','cancel'].includes(value)) throw new Error('Type accept, acceptForSession, decline or cancel explicitly.');
@@ -324,25 +522,34 @@ export class Coordinator extends EventEmitter {
     job.phase = 'cancelled'; job.summary = 'Cancelled by the operator; unfinished branch and worktree retained, automatic redispatch disabled.'; await this.save();
     await this.github.progress(job); this.wake();
   }
-  async resume(issue, threadId) {
+  async resume(issue, threadId, role) {
     const job = this.state.jobs.find(x => x.issue === issue);
     if (!job || !['blocked','stopped','uncertain'].includes(job.phase) || this.tasks.has(issue)) throw new Error('Only a stopped or blocked original issue can be resumed.');
     if (job.childPid && processExists(job.childPid)) throw new Error('Previous builder process is still alive; ownership remains uncertain.');
     const source = await this.github.issue(issue);
     if (source.state !== 'open') throw new Error('Reopen and reconcile the issue before resuming it.');
-    if (!job.threadId && job.prepared) {
+    const targetRole = role ?? job.nextRole ?? job.activeRole ?? 'builder';
+    if (!['builder', 'reviewer'].includes(targetRole)) throw new Error('Role must be builder or reviewer.');
+    const field = targetRole === 'reviewer' ? 'reviewerThreadId' : 'builderThreadId';
+    job.builderThreadId ??= job.threadId ?? null;
+    let savedThread = job[field] ?? (targetRole === 'builder' ? job.threadId : null);
+    if (!savedThread && job.prepared) {
       const client = new this.Client({ cwd: job.worktree });
       try {
         await client.connect();
         const candidates = await client.listThreads({ cwd: job.worktree });
         if (threadId && !candidates.some(thread => thread.id === threadId)) throw new Error('Selected thread does not belong to this worktree.');
-        const selected = threadId ? candidates.find(thread => thread.id === threadId) : candidates.length === 1 ? candidates[0] : null;
-        if (!selected) throw new Error('Thread ownership is uncertain. Inspect Codex threads for this worktree, then use resume ISSUE --thread ID; no replacement builder was started.');
+        const expectedName = `${this.config.repository} #${issue} - ${targetRole}`;
+        const named = candidates.filter(thread => thread.name === expectedName);
+        const eligible = named.length ? named : targetRole === 'builder' ? candidates.filter(thread => !thread.name || thread.name === `${this.config.repository} #${issue} - builder`) : [];
+        const selected = threadId ? candidates.find(thread => thread.id === threadId) : eligible.length === 1 ? eligible[0] : null;
+        if (!selected) throw new Error(`Thread ownership for the ${targetRole} is uncertain. Inspect Codex threads for this worktree, then use resume ISSUE --role ${targetRole} --thread ID; no replacement session was started.`);
         const recovered = await client.readThread({ threadId: selected.id });
         if (recovered.turns?.some(turn => turn.status === 'inProgress')) throw new Error('The selected thread is still active; reconcile its owner first.');
-        job.threadId = selected.id; await this.save();
+        job[field] = selected.id; savedThread = selected.id; if (targetRole === 'builder') job.threadId = selected.id;
+        await client.setThreadName({ threadId: selected.id, name: expectedName }); await this.save();
       } finally { await client.close(); }
-    } else if (threadId && threadId !== job.threadId) throw new Error('This issue already owns a different thread.');
+    } else if (threadId && threadId !== savedThread) throw new Error(`This issue already owns a different ${targetRole} thread.`);
     job.intent = null;
     if (!job.prepared) {
       try {
@@ -355,10 +562,11 @@ export class Coordinator extends EventEmitter {
       // Explicit resume authorizes repeating an interrupted preparation command.
       await this.prepare(job, await this.base());
     }
-    job.phase = 'stopped'; job.repairAttempts = 0; await this.save(); this.wake();
+    job.activeRole = targetRole; job.nextRole = targetRole; job.phase = 'stopped'; job.repairAttempts = 0; await this.save(); this.wake();
   }
   async haltClient(job, client) {
-    if (job.turnId) await client.interrupt({ threadId: job.threadId, turnId: job.turnId }).catch(error => this.emit('notice', error.message));
+    const threadId = job.activeRole === 'reviewer' ? job.reviewerThreadId : job.builderThreadId ?? job.threadId;
+    if (job.turnId && threadId) await client.interrupt({ threadId, turnId: job.turnId }).catch(error => this.emit('notice', error.message));
     // EOF also resolves pending startup RPCs. The client waits for process exit;
     // cancellation never depends on receiving a final assistant message.
     await client.close();

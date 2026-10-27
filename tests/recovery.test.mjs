@@ -9,10 +9,11 @@ import { validateConfig } from '../plugins/symphony-lite/lib/config.mjs';
 import { Store } from '../plugins/symphony-lite/lib/state.mjs';
 import { git } from '../plugins/symphony-lite/lib/process.mjs';
 import { inspectRepository } from '../plugins/symphony-lite/lib/worktrees.mjs';
+import { createRequestRevision } from '../plugins/symphony-lite/lib/prompts.mjs';
 
 const issue = number => ({ number, title: `Task ${number}`, body: 'Finish the accepted task.', state: 'open', labels: ['symphony:ready'] });
 const config = () => validateConfig({
-  repository: 'example/project', baseBranch: 'main', authorized: true,
+  repository: 'example/project', baseBranch: 'main', authorized: true, reviewEnabled: false,
   checks: [{ command: process.execPath, args: ['check.mjs'] }],
 });
 
@@ -38,7 +39,7 @@ async function repository(t) {
 function coordinator({ repo, store = { save: async () => {} }, github, Client = class extends EventEmitter {} }) {
   const instance = new Coordinator({ repo, config: config(), store, github, Client });
   instance.preflight = async () => {};
-  instance.base = async () => 'fixture-base';
+  instance.base = async () => git(repo.root, 'rev-parse', 'HEAD');
   return instance;
 }
 
@@ -51,11 +52,13 @@ test('failed repair launch retains exact pending PR feedback through explicit re
     constructor({ cwd }) { super(); this.cwd = cwd; this.pid = undefined; }
     async connect() {}
     async readThread() { return { turns: [] }; }
+    async setThreadName() {}
     async resumeThread({ threadId }) { resumedThreads.push(threadId); return { id: threadId }; }
     async startTurn({ prompt }) { seenPrompts.push(prompt); throw new Error('injected startTurn failure'); }
     async close() { this.emit('exit', { code: 0 }); }
   }
   const original = issue(7);
+  const base = await git(repo.root, 'rev-parse', 'HEAD');
   const feedback = [{ kind: 'conversation', id: 91, body: 'Keep the export error visible to callers.', updated: '2026-10-26T00:00:00Z' }];
   const github = {
     issue: async () => original,
@@ -69,11 +72,11 @@ test('failed repair launch retains exact pending PR feedback through explicit re
   const job = {
     issue: 7, branch: 'symphony/issue-7', worktree: repo.root, phase: 'waiting',
     threadId: 'original-thread', prepared: true, pr: 17, acceptanceComplete: true,
-    checkBase: 'fixture-base', checkHead: 'same-head', feedbackSeen: [], pendingFeedback: [],
+    checkBase: base, checkHead: 'same-head', feedbackSeen: [], pendingFeedback: [],
   };
   c.state.jobs.push(job);
 
-  await c.reconcilePull(job, 'fixture-base');
+  await c.reconcilePull(job, base);
   await c.tasks.get(7);
   assert.equal(job.phase, 'uncertain');
   assert.deepEqual(job.pendingFeedback, feedback);
@@ -90,6 +93,7 @@ test('failed repair launch retains exact pending PR feedback through explicit re
 
 test('cancel intent wins over an in-flight PR reconciliation before auto-merge can arm', async t => {
   const { repo } = await repository(t);
+  const base = await git(repo.root, 'rev-parse', 'HEAD');
   let pullCalls = 0, releaseFresh;
   let freshPullStarted;
   const freshStarted = new Promise(resolve => { freshPullStarted = resolve; });
@@ -114,11 +118,11 @@ test('cancel intent wins over an in-flight PR reconciliation before auto-merge c
   const job = {
     issue: 8, branch: 'symphony/issue-8', worktree: repo.root, phase: 'waiting',
     threadId: 'thread-8', prepared: true, pr: 18, acceptanceComplete: true,
-    checkBase: 'fixture-base', checkHead: pull.headRefOid, feedbackSeen: [],
+    checkBase: base, checkHead: pull.headRefOid, feedbackSeen: [],
   };
   c.state.jobs.push(job);
 
-  const reconcile = c.deliveryAction(() => c.reconcilePull(job, 'fixture-base'));
+  const reconcile = c.deliveryAction(() => c.reconcilePull(job, base));
   await freshStarted;
   const cancellation = c.cancel(8);
   assert.equal(job.intent, 'cancel');
@@ -150,7 +154,7 @@ test('PR merged during disarm returns to delivery reconciliation instead of rema
   const job = {
     issue: 9, branch: 'symphony/issue-9', worktree: repo.root, phase: 'waiting',
     threadId: 'thread-9', prepared: true, pr: 19, acceptanceComplete: true,
-    checkBase: head, checkHead: head, mergeArmed: true, feedbackSeen: [],
+    requestRevision: createRequestRevision(issue(9)), checkBase: head, checkHead: head, mergeArmed: true, feedbackSeen: [],
   };
   c.state.jobs.push(job);
 
@@ -206,6 +210,7 @@ test('uncertain thread recovery is scoped to the exact worktree and requires exp
     async connect() {}
     async listThreads({ cwd }) { requested.push(cwd); return [{ id: 'thread-a' }, { id: 'thread-b' }]; }
     async readThread({ threadId }) { return { id: threadId, turns: [] }; }
+    async setThreadName() {}
     async close() {}
   }
   const github = { issue: async () => issue(22) };
@@ -215,7 +220,7 @@ test('uncertain thread recovery is scoped to the exact worktree and requires exp
   const job = { issue: 22, branch: 'symphony/issue-22', worktree: repo.root, phase: 'uncertain', prepared: true, threadId: null };
   c.state.jobs.push(job);
 
-  await assert.rejects(c.resume(22), /ownership is uncertain/);
+  await assert.rejects(c.resume(22), /is uncertain/);
   assert.equal(job.threadId, null);
   await assert.rejects(c.resume(22, 'thread-outside-worktree'), /does not belong/);
   await c.resume(22, 'thread-b');

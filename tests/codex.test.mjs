@@ -56,6 +56,20 @@ test('connects, starts and resumes threads, and uses configured cwd defaults', a
   });
 });
 
+test('starts a read-only session and names it by its durable thread ID', async () => {
+  await withClient('normal', async client => {
+    const configured = await client.readConfig({ cwd: process.cwd() });
+    assert.deepEqual(Object.keys(configured.config.additional), ['mcp_servers', 'apps', 'plugins']);
+    const started = nextMatching(client, 'notification', item => item.method === 'fixture/threadStarted');
+    const isolation = { 'apps._default.enabled': false, 'plugins._default.enabled': false, 'mcp_servers.github': { enabled: false }, 'mcp_servers.linear': { enabled: false }, 'apps.github.enabled': false, 'plugins.review-tools@local.enabled': false };
+    const thread = await client.startThread({ cwd: process.cwd(), sandbox: 'read-only', approvalPolicy: 'never', config: isolation });
+    assert.deepEqual((await started).params, { cwd: process.cwd(), sandbox: 'read-only', approvalPolicy: 'never', config: isolation });
+    const named = nextMatching(client, 'notification', item => item.method === 'fixture/threadNamed');
+    await client.setThreadName({ threadId: thread.id, name: 'example/project #42 - reviewer' });
+    assert.deepEqual((await named).params, { threadId: 'thread-new', name: 'example/project #42 - reviewer' });
+  });
+});
+
 test('resolves an npm-style Windows codex shim to its JavaScript launcher', { skip: process.platform !== 'win32' }, async () => {
   const shim = fileURLToPath(new URL('./fixtures/codex-app-server-shim.cmd', import.meta.url));
   await withClient('normal', async (client) => {

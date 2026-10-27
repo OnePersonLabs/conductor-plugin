@@ -38,8 +38,20 @@ input.on('line', (line) => {
     return;
   }
 
+  if (message.method === 'config/read') {
+    frame({ id: message.id, result: { config: { additional: { mcp_servers: { github: { enabled: true }, linear: { enabled: true } }, apps: { github: { enabled: true } }, plugins: { 'review-tools@local': { enabled: true } } } } } });
+    return;
+  }
+
   if (message.method === 'thread/start') {
+    frame({ method: 'fixture/threadStarted', params: message.params });
     frame({ id: message.id, result: { thread: { id: 'thread-new', cwd: message.params.cwd } } });
+    return;
+  }
+
+  if (message.method === 'thread/name/set') {
+    frame({ method: 'fixture/threadNamed', params: message.params });
+    frame({ id: message.id, result: {} });
     return;
   }
 

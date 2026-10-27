@@ -101,6 +101,40 @@ The coordinator enforces admission, slot ownership, verification and landing
 order. The builder's role boundary is an instruction, not a credential or
 sandbox restriction. Builders inherit the operator's Codex permissions.
 
+With the default `reviewEnabled: true`, the coordinator then starts an independent
+reviewer session in the same worktree, sequentially in the issue's existing slot.
+The reviewer inspects the exact checked base/head and issue acceptance. Its thread
+starts read-only with approvals disabled. Symphony reads the effective Codex
+configuration and disables configured MCP servers, Apps and plugins for that
+review thread. If it cannot read the configuration or establish isolation, review
+blocks rather than falling back to the builder's permissive tools. The reviewer
+returns structured `clear`, `findings`, or `blocked` status. Malformed or missing
+results do not clear review.
+
+The reviewer works from the issue, repository instructions, and local source.
+Its turn does not have plugin skills or external tracker tools available, so
+`reviewInstructions` should describe review criteria and repository evidence to
+inspect. Naming a writing skill does not grant it tools to make changes; requests
+that need external information or a decision return as blocked.
+
+Findings are published as a readable PR review; locations on changed lines become
+inline comments. Findings may cite relevant existing source outside the diff and
+remain readable in the review body. The original builder repairs findings and
+failed checks. Symphony then resumes the same reviewer to reconsider them. Review
+clearance is tied to the reviewed base, head, issue content revision, and review
+instructions, so any change to those inputs requires another review. Both roles
+count against `maxTurns`. Set `reviewEnabled: false`
+only when the project explicitly opts out.
+
+Before merge, Symphony fetches the configured base and compares it with the
+issue branch. If the base advanced, it merges the new base into the issue branch,
+runs checks again, and sends the integrated result through review. Conflicts and
+integration failures go to the original builder. Different issues can build in
+parallel, while landing is serialized so only one PR completes against a given
+accepted base at a time. Symphony rechecks the base and reviewed head immediately
+before requesting merge. Human branch races and GitHub merge-queue policy remain
+outside this runtime's guarantee.
+
 The coordinator waits for required checks and approvals. Once they pass, it can
 arm GitHub auto-merge using `mergeMethod`. It closes the issue only after it
 observes a merged commit in the configured base and the builder reported full
@@ -116,7 +150,9 @@ symphony-lite signal
 symphony-lite stop
 symphony-lite cancel 42
 symphony-lite resume 42
+symphony-lite resume 42 --role reviewer
 symphony-lite resume 42 --thread THREAD_ID
+symphony-lite resume 42 --role reviewer --thread REVIEWER_THREAD_ID
 ```
 
 `status` reads saved state. `signal` asks the active process to scan now. `stop`
@@ -126,11 +162,13 @@ retains its branch and worktree. `resume ISSUE` is an explicit request to
 continue a stopped or blocked issue. If startup stopped before it saved a thread
 ID, the runtime lists Codex threads for the worktree saved for the issue. It
 adopts only the sole candidate. If none or multiple match, it blocks and asks
-you to inspect the candidates. Select one with
-`symphony-lite resume ISSUE --thread THREAD_ID`. A selected thread must belong
-to that exact worktree and have no active turn. If the issue already has a saved
-thread ID, `--thread` cannot replace it. Inspect status and the worktree before
-resuming; unresolved thread ownership never starts a replacement builder.
+you to inspect the candidates. Select the role and thread with
+`symphony-lite resume ISSUE --role builder|reviewer --thread THREAD_ID`. A selected
+thread must belong to that exact worktree and have no active turn. `status` shows
+the active role and both saved thread IDs. If the issue already has a saved thread
+ID, `--thread` cannot replace it. Inspect status and the worktree before resuming;
+unresolved ownership never starts a replacement session. Reviewer sessions do
+not accept approval responses.
 
 `status` includes the ten most recent completed control-command receipts and
 their errors. Commands submitted while the process is stopping remain queued
@@ -165,10 +203,12 @@ ownership. Do not start a second builder in the same issue directory or assume
 a turn was delivered. If a check modified the worktree or left files uncommitted,
 have the original builder reconcile that work before delivery.
 
-The runtime saves review and failed-check feedback with the issue until a repair
-build succeeds. If the process stops during repair, inspect the pending feedback
-and resume the same issue and thread. Keep the evidence; do not start a new
-builder to get a clean prompt.
+The runtime saves review findings and failed-check feedback with the issue until
+the builder repairs them. If the process stops during review or repair, inspect
+the active role and pending publication state, then resume the same role and its
+saved thread. Keep the evidence; do not start replacement sessions to get clean
+prompts. Review publication uses a saved attempt marker so recovery can reconcile
+an uncertain GitHub write before retrying.
 
 `maxTurns`, when configured, caps the total persisted Codex turns for a bounded
 qualification run. A limit reached stops further turns; inspect status and

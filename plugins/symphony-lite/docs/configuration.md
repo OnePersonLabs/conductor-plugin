@@ -39,6 +39,9 @@ required. `prepare` is optional and defaults to an empty list.
 | `requiredApprovals` | `0` | Number of current PR approvals required before auto-merge can be armed. |
 | `mergeMethod` | `merge` | One of `merge`, `squash`, or `rebase`. |
 | `maxTurns` | omitted | Optional total Codex-turn limit for a bounded run. |
+| `implementationInstructions` | `""` | Project-specific instructions appended to each builder request. |
+| `reviewEnabled` | `true` | Require an independent Symphony review before merge. Set `false` for an explicit project opt-out. |
+| `reviewInstructions` | `""` | Additional project-specific criteria appended to each review request. |
 
 `agents` limits separate primary issues; it is not a subagent count. Open
 dependency blockers are excluded before capacity is assigned. The runtime does
@@ -63,7 +66,10 @@ scope.
   "prepare": [],
   "requiredApprovals": 1,
   "mergeMethod": "squash",
-  "maxTurns": 8
+  "maxTurns": 8,
+  "implementationInstructions": "When .conceptor/ exists in the selected root, invoke $conceptor:apply-change.",
+  "reviewEnabled": true,
+  "reviewInstructions": "Check the public API compatibility policy."
 }
 ```
 

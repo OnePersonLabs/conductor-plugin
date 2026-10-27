@@ -12,9 +12,9 @@ const CLIENT_INFO = Object.freeze({
 /**
  * A small JSON-RPC client for Codex App Server's stdio transport.
  *
- * This adapter deliberately leaves Codex's model, permissions, sandbox,
- * approval policy, and instructions at their configured defaults. Server
- * requests are surfaced to the caller and remain pending until respond().
+ * The coordinator supplies reviewer-specific read-only sandbox, no-approval,
+ * and tool-isolation overrides. Builder turns retain configured defaults.
+ * Server requests are surfaced to the caller and remain pending until respond().
  */
 export class CodexClient extends EventEmitter {
   constructor({ cwd = process.cwd(), env = process.env, command, args } = {}) {
@@ -92,16 +92,36 @@ export class CodexClient extends EventEmitter {
     return this;
   }
 
-  async startThread({ cwd = this.cwd } = {}) {
+  async readConfig({ cwd = this.cwd } = {}) {
     this._assertConnected();
-    const result = await this._request('thread/start', { cwd: resolve(cwd) });
+    return this._request('config/read', { cwd: resolve(cwd), includeLayers: false });
+  }
+
+  async startThread({ cwd = this.cwd, sandbox, approvalPolicy, config } = {}) {
+    this._assertConnected();
+    const params = { cwd: resolve(cwd) };
+    if (sandbox !== undefined) params.sandbox = sandbox;
+    if (approvalPolicy !== undefined) params.approvalPolicy = approvalPolicy;
+    if (config !== undefined) params.config = config;
+    const result = await this._request('thread/start', params);
     return requireResultObject(result, 'thread/start', 'thread');
   }
 
-  async resumeThread({ threadId, cwd = this.cwd } = {}) {
+  async setThreadName({ threadId, name } = {}) {
     this._assertConnected();
     requireString(threadId, 'threadId');
-    const result = await this._request('thread/resume', { threadId, cwd: resolve(cwd) });
+    requireString(name, 'name');
+    return this._request('thread/name/set', { threadId, name });
+  }
+
+  async resumeThread({ threadId, cwd = this.cwd, sandbox, approvalPolicy, config } = {}) {
+    this._assertConnected();
+    requireString(threadId, 'threadId');
+    const params = { threadId, cwd: resolve(cwd) };
+    if (sandbox !== undefined) params.sandbox = sandbox;
+    if (approvalPolicy !== undefined) params.approvalPolicy = approvalPolicy;
+    if (config !== undefined) params.config = config;
+    const result = await this._request('thread/resume', params);
     return requireResultObject(result, 'thread/resume', 'thread');
   }
 

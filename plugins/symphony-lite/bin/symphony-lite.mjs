@@ -11,7 +11,7 @@ import { Coordinator } from '../lib/coordinator.mjs';
 const HELP = `Symphony Lite 0.1.0 -- foreground GitHub/Codex issue worker pool
 Usage: symphony-lite [--agents N] [--poll-interval 5m]
        symphony-lite signal | status | stop | cancel ISSUE
-       symphony-lite resume ISSUE [--thread ID]
+       symphony-lite resume ISSUE [--role builder|reviewer] [--thread ID]
 
 Run from a configured repository with symphony-lite.json. Defaults: one issue
 through landing, five-minute polling. Enter requests a scan; it never approves
@@ -33,6 +33,7 @@ export function parseArgs(args) {
     if (flag === '--agents') result.overrides.agents = Number(args.shift());
     else if (flag === '--poll-interval') { result.overrides.pollInterval = args.shift(); if (!result.overrides.pollInterval) throw new Error('--poll-interval requires a duration.'); }
     else if (flag === '--thread' && result.command === 'resume') { result.threadId = args.shift(); if (!result.threadId) throw new Error('--thread requires the existing thread ID.'); }
+    else if (flag === '--role' && result.command === 'resume') { result.role = args.shift(); if (!['builder', 'reviewer'].includes(result.role)) throw new Error('--role must be builder or reviewer.'); }
     else throw new Error(`Unknown option: ${flag}`);
   }
   if (result.command !== 'run' && Object.keys(result.overrides).length) throw new Error('Runtime options apply only to run.');
@@ -51,19 +52,22 @@ async function main() {
     console.log(JSON.stringify({ owner, ...state, controls: await store.results() }, null, 2)); return;
   }
   if (options.command !== 'run') {
-    const queued = await store.send(options.command, options.issue, options.threadId);
+    const queued = await store.send(options.command, options.issue, options.threadId, options.role);
     console.log(`${options.command} queued (${queued.id}); use status to inspect the resulting state.`); return;
   }
   const config = await loadConfig(repo.root, options.overrides);
   const coordinator = new Coordinator({ repo, config, store });
   coordinator.on('notice', message => console.error(message));
   coordinator.on('request', request => {
-    console.log(`\nIssue #${request.issue} needs input (${request.method}).\n${JSON.stringify(request.params, null, 2)}\nAnswer with: answer ${request.key} <explicit decision or JSON response>\nEnter alone only scans GitHub.`);
+    const reviewer = request.role === 'reviewer';
+    console.log(`\nIssue #${request.issue} ${request.role ?? 'builder'} session needs input (${request.method}).\n${JSON.stringify(request.params, null, 2)}\n${reviewer ? 'Reviewer requests cannot be approved; stop and reconcile the read-only review.' : `Answer with: answer ${request.key} <explicit decision or JSON response>`}\nEnter alone only scans GitHub.`);
   });
   const seen = new Map();
   coordinator.on('status', state => {
     for (const job of state.jobs) {
-      const line = `#${job.issue} ${job.phase}${job.pr ? ` PR #${job.pr}` : ''}${job.lastError ? ` -- ${job.lastError}` : ''}`;
+      const sessions = [job.builderThreadId ?? job.threadId, job.reviewerThreadId].filter(Boolean).map((id, index) => `${index ? 'reviewer' : 'builder'}:${id}`).join(' ');
+      const role = ['building','reviewing','launching','starting','preparing'].includes(job.phase) ? job.activeRole : ['stopped','uncertain','blocked','repair','review'].includes(job.phase) ? job.nextRole ?? job.activeRole : null;
+      const line = `#${job.issue} ${job.phase}${role ? ` (${role})` : ''}${job.pr ? ` PR #${job.pr}` : ''}${sessions ? ` ${sessions}` : ''}${job.lastError ? ` -- ${job.lastError}` : ''}`;
       if (seen.get(job.issue) !== line) { console.log(line); seen.set(job.issue, line); }
     }
   });
@@ -82,7 +86,7 @@ async function main() {
         try {
           if (request.command === 'signal') coordinator.wake();
           else if (request.command === 'cancel') await coordinator.cancel(request.issue);
-          else if (request.command === 'resume') await coordinator.resume(request.issue, request.threadId);
+          else if (request.command === 'resume') await coordinator.resume(request.issue, request.threadId, request.role);
           else throw new Error(`Unknown queued command: ${request.command}`);
         } catch (error) { failure = error.message; console.error(error.message); }
         await store.acknowledge(request, failure);

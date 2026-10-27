@@ -50,11 +50,11 @@ export class Store {
     return owner;
   }
   async release() { if ((await this.owner())?.token === this.token) await unlink(this.lockPath); }
-  async send(command, issue, threadId) {
+  async send(command, issue, threadId, role) {
     const owner = await this.owner();
     if (!owner) throw new Error('No coordinator is running for this repository.');
     if (owner.hostname === hostname() && owner.platform === process.platform && !processExists(owner.pid)) throw new Error('The recorded coordinator has stopped. Start symphony-lite to reconcile recovery state.');
-    const request = { id: randomUUID(), owner: owner.token, command, issue, threadId, at: new Date().toISOString() };
+    const request = { id: randomUUID(), owner: owner.token, command, issue, threadId, role, at: new Date().toISOString() };
     await atomicJSON(join(this.controls, `${request.id}.json`), request);
     return request;
   }

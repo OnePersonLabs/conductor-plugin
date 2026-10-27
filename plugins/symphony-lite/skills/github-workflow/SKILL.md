@@ -15,7 +15,9 @@ This skill serves two contexts:
 - **Symphony Lite builder:** the foreground coordinator owns GitHub issue and PR
   mutations, push, merge, and issue closure. Return proposed issue changes and
   unresolved findings in the builder result. Do not perform those transitions
-  directly. The coordinator can route new PR feedback to this same builder.
+  directly. The coordinator can route new PR feedback to this same builder. A
+  separate read-only reviewer session checks the PR by default; it returns
+  findings to this builder for repair, then resumes its own review thread.
 - **Standalone task:** follow the user's and repository's actual tracker and
   publication authority. Skill invocation, GitHub authentication, or a remote
   URL alone does not authorize a write.
@@ -57,7 +59,8 @@ against current source and acceptance; stale feedback is not an instruction.
 Repair in the same issue and PR, run checks again, and report any finding that
 remains unresolved. A builder turn ending does not establish delivery.
 
-The coordinator waits for required checks and reviews under repository policy.
+The coordinator waits for its independent review, required checks, and any
+separate GitHub approval requirements under repository policy.
 It can enable GitHub auto-merge using the configured merge method after checks
 pass and required approvals are present. It closes the issue only after a merged
 commit is verified in the configured base and the builder reported complete

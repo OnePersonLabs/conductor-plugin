@@ -29,7 +29,11 @@ export function validateConfig(raw) {
   if (raw.readyLabel !== undefined && (typeof raw.readyLabel !== 'string' || !raw.readyLabel.trim())) throw new Error('readyLabel must be a nonempty string.');
   const mergeMethod = raw.mergeMethod ?? 'merge';
   if (!['merge', 'squash', 'rebase'].includes(mergeMethod)) throw new Error('mergeMethod must be merge, squash, or rebase.');
-  return { ...raw, agents, readyLabel: raw.readyLabel ?? 'symphony:ready', priorityLabels: raw.priorityLabels ?? [], pollMs: duration(raw.pollInterval ?? '5m'), requiredApprovals, mergeMethod, prepare: raw.prepare ?? [] };
+  for (const key of ['implementationInstructions', 'reviewInstructions']) {
+    if (raw[key] !== undefined && typeof raw[key] !== 'string') throw new Error(`${key} must be a string.`);
+  }
+  if (raw.reviewEnabled !== undefined && typeof raw.reviewEnabled !== 'boolean') throw new Error('reviewEnabled must be a boolean.');
+  return { ...raw, agents, implementationInstructions: raw.implementationInstructions ?? '', reviewEnabled: raw.reviewEnabled ?? true, reviewInstructions: raw.reviewInstructions ?? '', readyLabel: raw.readyLabel ?? 'symphony:ready', priorityLabels: raw.priorityLabels ?? [], pollMs: duration(raw.pollInterval ?? '5m'), requiredApprovals, mergeMethod, prepare: raw.prepare ?? [] };
 }
 
 export async function loadConfig(root, overrides = {}) {

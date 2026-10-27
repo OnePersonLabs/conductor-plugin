@@ -1,9 +1,10 @@
 # Symphony Lite
 
 Symphony Lite runs authorized GitHub issues through a foreground Codex worker
-pool. It selects issues with a ready label and starts isolated builders. It runs
-configured checks, opens pull requests, handles review and failed-check feedback,
-and follows each issue through merge.
+pool. It selects issues with a ready label and starts isolated builders. By
+default, a separate read-only reviewer checks each PR before merge. Symphony
+runs configured checks, publishes review findings, routes repairs to the original
+builder, and follows each issue through merge.
 
 ## Try it
 
