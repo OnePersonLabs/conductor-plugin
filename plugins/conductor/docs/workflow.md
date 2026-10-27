@@ -41,31 +41,33 @@ start another builder. Use `resume` for work whose PR has not landed.
 
 ## Enable and use the director
 
-Set up the repository and review `conductor.json` first. Explicitly enable
-Conductor for this repository:
+Set up the repository and review `conductor.json` first. In Codex Desktop,
+explicitly enable Conductor for this repository. If the current chat is already
+the saved director, reuse it. Otherwise create a persistent local project chat
+using Codex's native thread creation, name it `Conductor: owner/repository`,
+and start it with `$conductor:director`. Its initial instruction must make its
+first action `conductor enable --host desktop --thread <its own UUID>` before
+it inspects issues or dispatches work. Wait for that native thread's
+completion/status and verify the exact UUID is saved as the repository binding
+before reporting enablement complete. This keeps the new director from starting
+work before it is bound.
 
-```powershell
-conductor enable
-conductor status
-```
+Enabling uses the existing bound director chat or binds the supplied Desktop
+thread when no director is bound. It starts the local observer. Check
+`conductor status` to confirm the service and director before assuming
+observation is active. The existing `conductor start --thread UUID` command
+remains available to bind and start an existing daemon-owned director for
+terminal clients.
 
-Enabling uses the existing bound director chat, or creates a persistent chat
-named for the repository if no director is bound yet. It starts the local
-observer. Check `conductor status` to confirm the service and director before
-assuming observation is active. The existing `conductor start --thread UUID`
-command can bind an existing chat already loaded in the shared daemon. It
-rejects an unloaded chat without a Conductor ownership receipt, including an
-ordinary Desktop-owned chat. Use `conductor enable` to create a daemon-owned
-director when no binding exists.
-
-**Host integration qualification is still open.** The Windows shared-daemon
-proxy did not report an active Codex Desktop chat as loaded, and no supported
-way to observe that Desktop chat's live status was found. Conductor refuses to
-reuse an unowned thread reported as `notLoaded`. A Conductor-owned daemon
-session is supported by the CLI protocol, but its visibility and interaction
-from the Desktop UI have not been verified. Check the [runtime selection
-evidence](../../../docs/runtime-selection-2026-10-20.md) before choosing a
-director surface; do not treat the read-only proxy probe as live qualification.
+Desktop is the primary interactive surface. Lifecycle hooks report when its
+director chat is active, idle or interrupted; the observer uses those signals
+to suppress wakeups while the director is active. Unknown host status suppresses
+automatic wakeups; Conductor never assumes unknown means idle. Trust the plugin
+hooks when Desktop requests hook review. After installing or refreshing hook
+definitions, restart or open a fresh Desktop session to load them. Do not bind
+a Desktop chat to the shared-daemon proxy or infer its live status from that
+proxy. The proxy limitation is recorded in the [runtime selection
+evidence](../../../docs/runtime-selection-2026-10-20.md).
 The control interface accepts a JSON request file from the same repository. It
 checks repository and bound chat identity and saves a receipt for each operation.
 Use the `status` control operation for a fresh issue snapshot and its revision;
@@ -140,13 +142,21 @@ inspection and settle in the same turn. If it returns `idle: true`, finish the
 turn with: “Conductor is idle. Say ‘wakeup’ to manually wake Conductor.” Only
 finishing the turn makes the host thread idle; `settle` does not.
 
-In a client attached to the same shared daemon, say `wakeup` in the director
-chat, or run `conductor wakeup` from the configured
-checkout, to ensure the service is available and ask it to check current work.
-After a system restart, a Conductor interaction starts observation again and
-reuses the saved director. Local issue activity starts the service as needed;
-GitHub-only changes made while the local service is down are found on wakeup or
-the next reconciliation. No login task or remote webhook receiver is installed.
+Say `wakeup` in the Desktop director chat, or run `conductor wakeup` from the
+configured checkout, to ensure the service is available and ask it to check
+current work. The Desktop activity hook marks this interaction active, so the
+service does not queue a redundant wakeup. After a system restart, a Conductor
+interaction starts observation again and reuses the saved director. Local issue
+activity starts the service as needed; GitHub-only changes made while the local
+service is down are found on wakeup or the next reconciliation. No login task
+or remote webhook receiver is installed.
+
+When Desktop is closed or its private server is unavailable, the background
+observer cannot launch or resume that server. A submitted wakeup is stored in
+the native session queue for Desktop to consume when it loads the bound chat.
+Automatic delivery across Desktop or system restart still needs a live trial;
+if work has not resumed, open the saved director chat and say `wakeup`.
+Terminal-hosted directors continue to use the shared daemon path.
 
 Explicitly stopping Conductor disables automatic dispatch and wakeups. Passive
 issue-change signals do not restart a deliberately stopped service. Manual
@@ -159,6 +169,12 @@ receipt. Conductor preserves the original builder, reviewer, branch and
 worktree. A wakeup can ask the director to diagnose saved state; `resume ISSUE`
 is the explicit command to continue an interrupted issue job once reconciled.
 Do not treat a replacement director as permission to replace a worker.
+
+If status reports `queue-cancellation-failed`, an obsolete wake could not be
+removed from Desktop's queue. Restore the host connection, then send the
+`retry-wakeup` control with the reported `batchId`. For a saved cancellation,
+this retries deletion of the same queue item rather than submitting a new wake.
+Refresh status and settle the inspected revision after recovery.
 
 ## Pause, hold and release
 

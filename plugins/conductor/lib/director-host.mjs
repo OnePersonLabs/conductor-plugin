@@ -8,7 +8,7 @@ import { run } from './process.mjs';
 
 function mappedStatus(status) {
   const type = status?.type;
-  if (!['idle', 'active', 'notLoaded', 'systemError'].includes(type)) return { type: 'unknown', activeFlags: [] };
+  if (!['idle', 'active', 'interrupted', 'notLoaded', 'systemError'].includes(type)) return { type: 'unknown', activeFlags: [] };
   return { type, activeFlags: Array.isArray(status.activeFlags) ? [...status.activeFlags] : [] };
 }
 
@@ -17,14 +17,19 @@ function isMissingThread(error) {
 }
 
 export class DirectorHost extends EventEmitter {
-  constructor({ client, cwd, repository, model, reasoningEffort = 'medium', skillPath = fileURLToPath(new URL('../skills/director/SKILL.md', import.meta.url)), threadId, state, save, execute = run } = {}) {
+  constructor({ client, cwd, repository, model, reasoningEffort = 'medium', skillPath = fileURLToPath(new URL('../skills/director/SKILL.md', import.meta.url)), threadId, state, save, execute = run, activity, host } = {}) {
     super();
     if (typeof cwd !== 'string' || !cwd) throw new TypeError('cwd is required.');
     if (typeof repository !== 'string' || !/^[^/]+\/[^/]+$/.test(repository)) throw new TypeError('repository must be owner/name.');
     if (!state || typeof state !== 'object' || Array.isArray(state)) throw new TypeError('director state is required.');
     if (typeof save !== 'function') throw new TypeError('save callback is required.');
     if (client && typeof client.connect !== 'function') throw new TypeError('client must support connect().');
-    Object.assign(this, { client: client ?? new CodexClient({ cwd, transport: 'proxy' }), cwd: resolve(cwd), repository, model, reasoningEffort, skillPath, state, save, execute });
+    const hostMode = host ?? state.threadHostOwnership?.host ?? 'codex-app-server-daemon';
+    if (!['codex-app-server-daemon', 'codex-desktop'].includes(hostMode)) throw new TypeError('host must be codex-app-server-daemon or codex-desktop.');
+    if (hostMode === 'codex-desktop' && (state.threadHostOwnership?.host !== 'codex-desktop' || !state.threadHostOwnership?.threadId)) {
+      throw new Error('Desktop host mode requires an explicit codex-desktop thread ownership receipt.');
+    }
+    Object.assign(this, { client: client ?? new CodexClient({ cwd, transport: 'proxy', experimentalApi: hostMode === 'codex-desktop' }), cwd: resolve(cwd), repository, model, reasoningEffort, skillPath, state, save, execute, activity, hostMode });
     this.threadId = threadId ?? state.threadId ?? null;
     this.codexHome = resolve(process.env.CODEX_HOME ?? `${homedir()}/.codex`);
     this.threadEnsured = false;
@@ -48,7 +53,7 @@ export class DirectorHost extends EventEmitter {
       const started = await this.execute('codex', ['app-server', 'daemon', 'start'], { cwd: this.cwd });
       if (started.code !== 0) throw new Error(`Could not start the Codex App Server daemon: ${started.stderr || started.stdout || started.code}`);
       await this.client.close();
-      this.client = new CodexClient({ cwd: this.cwd, transport: 'proxy' });
+      this.client = new CodexClient({ cwd: this.cwd, transport: 'proxy', experimentalApi: this.hostMode === 'codex-desktop' });
       await this.client.connect();
     }
     this.client.on('notification', this._onNotification);
@@ -59,6 +64,7 @@ export class DirectorHost extends EventEmitter {
   get directorName() { return `Conductor: ${this.repository}`; }
 
   async ensureThread() {
+    if (this.hostMode === 'codex-desktop') return this._ensureDesktopThread();
     if (this.threadId) {
       const savedId = this.threadId;
       try {
@@ -141,6 +147,34 @@ export class DirectorHost extends EventEmitter {
 
   async status() {
     if (!this.threadId) return { type: 'notLoaded', activeFlags: [] };
+    if (this.hostMode === 'codex-desktop') {
+      if (!this.activity || typeof this.activity.read !== 'function') {
+        const unknown = { type: 'unknown', activeFlags: [], error: 'Desktop activity adapter is unavailable.' };
+        this._publishStatus(unknown);
+        return unknown;
+      }
+      try {
+        const observed = await this.activity.read(this.threadId);
+        const type = observed?.state;
+        if (!['active', 'idle', 'interrupted'].includes(type)) {
+          const unknown = { type: 'unknown', activeFlags: [] };
+          this._publishStatus(unknown);
+          return unknown;
+        }
+        const next = {
+          type,
+          activeFlags: [],
+          nativeTurnId: observed.nativeTurnId ?? observed.turnId ?? null,
+          wakeupMarker: observed.wakeupMarker ?? null,
+        };
+        this._publishStatus(next);
+        return { ...next };
+      } catch (error) {
+        const unknown = { type: 'unknown', activeFlags: [], error: error.message };
+        this._publishStatus(unknown);
+        return unknown;
+      }
+    }
     try {
       const thread = await this.client.readThread({ threadId: this.threadId, includeTurns: false });
       if (thread.cwd && resolve(thread.cwd) !== this.cwd) return { type: 'unknown', activeFlags: [] };
@@ -178,6 +212,17 @@ export class DirectorHost extends EventEmitter {
     if (this.inflightRevision !== null && this.inflightRevision === revision) throw Object.assign(new Error('This director wakeup revision is already in flight.'), { code: 'DIRECTOR_BUSY' });
     this.inflightRevision = revision ?? randomUUID();
     try {
+      if (this.hostMode === 'codex-desktop') {
+        if (typeof revision !== 'string' || !revision) throw Object.assign(new Error('Desktop wakeup requires the persisted batch ID as its revision so uncertain queue submissions can be reconciled.'), { code: 'DIRECTOR_UNAVAILABLE' });
+        const marker = `<!-- conductor:director-wakeup:${revision} -->`;
+        const clientMessageId = `conductor-director-${revision}`;
+        const message = `$conductor:director\n\n${marker}\n${prompt}`;
+        const queuedSubmission = await this.client.addQueuedMessage({ threadId, text: message, clientUserMessageId: clientMessageId });
+        if (typeof queuedSubmission.id !== 'string' || !queuedSubmission.id) throw new Error('Codex accepted the Desktop wake request without returning its queue item ID; inspect the saved marker before retrying.');
+        this.currentStatus = { type: 'active', activeFlags: [], nativeTurnId: null, wakeupMarker: marker };
+        this.emit('status', { threadId, ...this.currentStatus });
+        return { queued: true, id: queuedSubmission.id, clientMessageId, marker };
+      }
       const turn = await this.client.startTurn({ threadId, cwd: this.cwd, prompt, skillPath: this.skillPath });
       if (!turn?.id) throw new Error('Codex App Server did not return a turn id; inspect the director thread before retrying.');
       this.currentStatus = { type: 'active', activeFlags: [] };
@@ -198,6 +243,7 @@ export class DirectorHost extends EventEmitter {
   }
 
   _notification(method, params) {
+    if (this.hostMode === 'codex-desktop') return;
     if (!params || params.threadId !== this.threadId) return;
     if (method === 'thread/status/changed') this._setStatus(params.status);
     if (method === 'turn/completed') {
@@ -217,11 +263,55 @@ export class DirectorHost extends EventEmitter {
 
   _setStatus(status) {
     const next = mappedStatus(status);
+    this._publishStatus(next);
+  }
+
+  _publishStatus(next) {
     const prior = this.currentStatus;
     this.currentStatus = next;
     if (next.type === 'idle') this.inflightRevision = null;
     if (prior.type !== next.type || prior.activeFlags.join(',') !== next.activeFlags.join(',')) {
       this.emit('status', { threadId: this.threadId, ...next });
     }
+  }
+
+  async _ensureDesktopThread() {
+    const ownership = this.state.threadHostOwnership;
+    const threadId = this.threadId ?? ownership?.threadId;
+    if (!threadId || ownership?.threadId !== threadId || ownership?.host !== 'codex-desktop') {
+      throw new Error('No explicitly bound Codex Desktop director thread is saved. Create/open the director thread in Codex Desktop and bind its thread UUID before enabling Desktop wakeups.');
+    }
+    let existing;
+    try {
+      existing = await this.client.readThread({ threadId, includeTurns: false });
+    } catch (error) {
+      if (isMissingThread(error)) throw new Error(`Saved Codex Desktop director thread ${threadId} no longer exists. Create a new director in Codex Desktop and explicitly rebind it; Conductor will not create a replacement on the shared daemon.`);
+      throw error;
+    }
+    if (typeof existing.cwd !== 'string' || resolve(existing.cwd) !== this.cwd) throw new Error(`Bound Codex Desktop director thread ${threadId} belongs to ${existing.cwd ?? 'an unknown working directory'}, not ${this.cwd}.`);
+    if (!['idle', 'active', 'interrupted', 'notLoaded'].includes(existing.status?.type)) throw new Error('Cannot validate the Codex Desktop director thread metadata; refusing to queue input.');
+    this.threadId = threadId;
+    this.state.threadId = threadId;
+    // Fail readiness if the shared daemon cannot access the native queue; the
+    // Desktop thread itself remains unloaded and is never resumed here.
+    await this.client.listQueuedMessages({ threadId });
+    await this.save();
+    this.threadEnsured = true;
+    return threadId;
+  }
+
+  async findQueuedWakeup(marker) {
+    if (this.hostMode !== 'codex-desktop') throw new Error('Queued wakeup inspection is available only for a Codex Desktop director.');
+    if (!this.threadId) throw new Error('No Desktop director thread is bound.');
+    if (typeof marker !== 'string' || !marker) throw new TypeError('marker is required.');
+    const queued = await this.client.listQueuedMessages({ threadId: this.threadId });
+    return queued.find(item => JSON.stringify(item).includes(marker)) ?? null;
+  }
+
+  async cancelQueuedWakeup(queueItemId) {
+    if (this.hostMode !== 'codex-desktop') throw new Error('Queued wakeup cancellation is available only for a Codex Desktop director.');
+    if (!this.threadId) throw new Error('No Desktop director thread is bound.');
+    if (typeof queueItemId !== 'string' || !queueItemId) throw new TypeError('queueItemId is required.');
+    return this.client.deleteQueuedMessage({ threadId: this.threadId, queuedSubmissionId: queueItemId });
   }
 }

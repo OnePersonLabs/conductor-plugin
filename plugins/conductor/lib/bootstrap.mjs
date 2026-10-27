@@ -36,7 +36,7 @@ export async function runnerEnabled(store) {
 }
 
 export async function ensureService({ store, root, threadId, enable = false, manualWake = false,
-  execute, cliPath, timeoutMs = 30_000 }) {
+  host, execute, cliPath, timeoutMs = 30_000 }) {
   let saved = await store.read();
   let enabled = await runnerEnabled(store);
   if (!enabled && !enable) return { status: 'disabled' };
@@ -50,6 +50,14 @@ export async function ensureService({ store, root, threadId, enable = false, man
     if (!enable && !manualWake && state.director?.enabled === false) return { status: 'stopped', threadId: state.director?.threadId ?? null };
     if (threadId && state.director?.threadId && state.director.threadId !== threadId) {
       throw new Error(`Repository is bound to director thread ${state.director.threadId}; rebind explicitly before changing it.`);
+    }
+    const requestedHost = host === 'desktop' ? 'codex-desktop' : host === 'daemon' ? 'codex-app-server-daemon' : host;
+    const savedOwnership = state.threadHostOwnership;
+    if (requestedHost && savedOwnership?.host && requestedHost !== savedOwnership.host) {
+      throw new Error(`Director thread ${state.director?.threadId ?? savedOwnership.threadId} is owned by ${savedOwnership.host}; refusing to start it through ${requestedHost}. Reconcile its ownership explicitly first.`);
+    }
+    if (requestedHost === 'codex-desktop' && !threadId && !state.director?.threadId) {
+      throw new Error('Desktop mode requires --thread with the current Codex Desktop chat UUID; Conductor cannot create a private replacement chat.');
     }
     const owner = await store.owner();
     const isLive = owner?.hostname === hostname() && owner.platform === process.platform && processExists(owner.pid);
@@ -68,6 +76,7 @@ export async function ensureService({ store, root, threadId, enable = false, man
     }
     const args = [cliPath, 'serve'];
     if (threadId) args.push('--thread', threadId);
+    if (host) args.push('--host', host);
     if (enable) args.push('--enable');
     if (manualWake) args.push('--manual-wake');
     const child = await execute(process.execPath, args, { cwd: root, detached: true, windowsHide: true, stdio: 'ignore' });

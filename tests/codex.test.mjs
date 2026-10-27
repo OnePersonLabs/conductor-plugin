@@ -127,6 +127,38 @@ test('sends a turn interrupt with both owning identifiers', async () => {
   });
 });
 
+test('negotiates experimental API and queues/list pages a Desktop wake message', async () => {
+  const client = new CodexClient({
+    cwd: process.cwd(), command: process.execPath, args: [fixture],
+    env: { ...process.env, CODEX_FAKE_MODE: 'queue-pages' }, experimentalApi: true,
+  });
+  try {
+    const initializedPromise = nextMatching(client, 'notification', item => item.method === 'fixture/initialize');
+    await client.connect();
+    const initialized = await initializedPromise;
+    assert.equal(initialized.params.capabilities.experimentalApi, true);
+    const addNotice = nextMatching(client, 'notification', item => item.method === 'fixture/queueAdd');
+    const queued = await client.addQueuedMessage({ threadId: 'desktop-thread', text: '$conductor:director\nmarker', clientUserMessageId: 'conductor-director-batch-1' });
+    assert.equal(queued.id, 'queue-item-1');
+    assert.deepEqual((await addNotice).params, {
+      threadId: 'desktop-thread', input: [{ type: 'text', text: '$conductor:director\nmarker', textElements: [] }],
+      clientUserMessageId: 'conductor-director-batch-1',
+    });
+    const items = await client.listQueuedMessages({ threadId: 'desktop-thread' });
+    assert.deepEqual(items.map(item => item.id), ['queue-item-1', 'queue-item-2']);
+    assert.equal(await client.deleteQueuedMessage({ threadId: 'desktop-thread', queuedSubmissionId: 'queue-item-1' }), true);
+  } finally {
+    await client.close();
+  }
+});
+
+test('rejects experimental queue APIs unless opted in during initialize', async () => {
+  await withClient('normal', async client => {
+    await assert.rejects(client.addQueuedMessage({ threadId: 'thread', text: 'x', clientUserMessageId: 'id' }), /experimentalApi=true/);
+    await assert.rejects(client.listQueuedMessages({ threadId: 'thread' }), /experimentalApi=true/);
+  });
+});
+
 test('preserves terminal agentMessage text in item/completed notifications', async () => {
   await withClient('terminal', async (client) => {
     const completed = nextMatching(client, 'notification', (item) => item.method === 'item/completed');

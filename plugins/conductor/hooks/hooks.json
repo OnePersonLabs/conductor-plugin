@@ -10,6 +10,16 @@
             "timeout": 3
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/director-lifecycle.mjs\"",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/director-lifecycle.mjs\"",
+            "timeout": 3
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [
@@ -19,6 +29,43 @@
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/hooks/issue-mutation.mjs\"",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/issue-mutation.mjs\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/director-lifecycle.mjs\"",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/director-lifecycle.mjs\"",
+            "timeout": 3,
+            "additionalContextLimit": 2000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/director-lifecycle.mjs\"",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/director-lifecycle.mjs\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/director-lifecycle.mjs\"",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/director-lifecycle.mjs\"",
             "timeout": 3
           }
         ]

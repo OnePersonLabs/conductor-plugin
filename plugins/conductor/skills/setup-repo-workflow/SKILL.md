@@ -7,9 +7,9 @@ description: Explicitly prepare or migrate a repository for Conductor's director
 
 Use when the user asks to set up or migrate the repository. Inspect and prepare
 `conductor.json`. Configuration preparation is inert; only the separate,
-explicit `conductor enable` action establishes the repository's persistent
-director and starts observation. Do not dispatch production work as part of
-configuration preparation.
+explicit enable action establishes the repository's persistent Desktop director
+and starts observation. Do not dispatch production work as part of configuration
+preparation.
 
 ## Inspect the repository
 
@@ -65,11 +65,35 @@ After reviewing a migration, start the bound director with admission still
 paused, inspect the fresh status snapshot, and explicitly activate admission.
 The service can report status and reconcile events while admission is paused.
 
+## Enable the Desktop director
+
+Only do this when the user explicitly asks to enable Conductor. If this chat is
+already the saved director for this repository, reuse its thread ID. Otherwise,
+use Codex's native app thread creation to create a persistent local project chat
+in the configured repository, named `Conductor: owner/repository`. Start it
+with `$conductor:director` and an initial instruction that its first action is
+to run `conductor enable --host desktop --thread <its own UUID>`, then verify
+the saved binding before inspecting issues or dispatching work. Retain the
+thread UUID returned by native thread creation. The parent setup conversation
+waits for the native thread's completion/status and confirms that this exact
+UUID is saved as the repository director before reporting enablement complete.
+Do not use the CLI's shared-daemon thread creation for the Desktop director.
+
+The command starts the repository observer; verify status before reporting it is
+active. Preserve an existing binding. If the chat is already bound, do not
+create another. Hook lifecycle signals from Desktop interactions report when
+the director is active, idle, or interrupted. Unknown host activity suppresses
+automatic wakeups; never synthesize an idle status. Issue changes while it is
+active remain pending for that turn; signals wake it only when positively
+known to be idle. Trust the plugin hooks when Desktop requests review of them,
+and restart or open a fresh Desktop session after hook-definition changes so
+the lifecycle handlers load.
+
 ## Verify and hand off
 
 Verify origin, base branch, checks, label mapping and configuration shape. Show
 the prepared file. Explain that installation and configuration preparation do
 not start observation; explicit enablement creates or reuses the designated
-director and starts the observer. Link the user to
+Desktop director and starts the observer. Link the user to
 [configuration](../../docs/configuration.md) and
 [workflow and recovery](../../docs/workflow.md).

@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { DirectorHost } from '../plugins/conductor/lib/director-host.mjs';
 
 class FakeCodex extends EventEmitter {
-  constructor() { super(); this.threads = []; this.statusValue = { type: 'idle' }; this.calls = []; }
+  constructor() { super(); this.threads = []; this.statusValue = { type: 'idle' }; this.calls = []; this.queued = []; }
   async connect() { this.calls.push(['connect']); }
   async listThreads() { this.calls.push(['listThreads']); return this.threads; }
   async startThread(args) { this.calls.push(['startThread', args]); const thread = { id: 'new-thread', cwd: args.cwd, status: { type: 'idle' } }; this.threads.push({ ...thread, name: null }); return thread; }
@@ -12,6 +12,9 @@ class FakeCodex extends EventEmitter {
   async resumeThread(args) { this.calls.push(['resumeThread', args]); const thread = this.threads.find(x => x.id === args.threadId); if (!thread) throw Object.assign(new Error('thread not found'), { code: -32001 }); if (this.statusValue.type === 'notLoaded') this.statusValue = { type: 'idle' }; return { ...thread, status: this.statusValue }; }
   async readThread(args) { this.calls.push(['readThread', args]); const thread = this.threads.find(x => x.id === args.threadId); if (!thread) throw Object.assign(new Error('thread not found'), { code: -32001 }); return { ...thread, status: this.statusValue }; }
   async startTurn(args) { this.calls.push(['startTurn', args]); this.statusValue = { type: 'active', activeFlags: [] }; return { id: 'turn-1' }; }
+  async addQueuedMessage(args) { this.calls.push(['addQueuedMessage', args]); const item = { id: `queue-${this.queued.length + 1}`, threadId: args.threadId, input: [{ type: 'text', text: args.text }], clientUserMessageId: args.clientUserMessageId }; this.queued.push(item); return item; }
+  async listQueuedMessages(args) { this.calls.push(['listQueuedMessages', args]); return this.queued; }
+  async deleteQueuedMessage(args) { this.calls.push(['deleteQueuedMessage', args]); const index = this.queued.findIndex(item => item.id === args.queuedSubmissionId); if (index < 0) return false; this.queued.splice(index, 1); return true; }
   async close() { this.calls.push(['close']); }
 }
 
@@ -25,6 +28,17 @@ function fixture(overrides = {}) {
     state, save: async () => { saves++; }, ...overrides,
   });
   return { host, client, state, saves: () => saves };
+}
+
+function desktopFixture(overrides = {}) {
+  const client = overrides.client ?? new FakeCodex();
+  const threadId = overrides.threadId ?? 'desktop-thread';
+  const state = overrides.state ?? { threadId, threadHostOwnership: { threadId, host: 'codex-desktop' } };
+  client.threads.push({ id: threadId, name: 'Conductor: owner/repo', cwd: 'C:\\repo', status: { type: 'notLoaded' } });
+  let activityState = 'idle';
+  const activity = overrides.activity ?? { read: async id => { assert.equal(id, threadId); return { state: activityState }; } };
+  const f = fixture({ client, state, host: 'codex-desktop', activity, threadId, ...overrides });
+  return { ...f, setActivity: value => { activityState = value; } };
 }
 
 test('creates, names, and durably binds one persistent director before its first turn', async () => {
@@ -140,4 +154,68 @@ test('resumes a notLoaded thread with a saved shared-daemon ownership marker', a
   assert.equal(await f.host.ensureThread(), 'conductor');
   assert.equal(client.calls.some(x => x[0] === 'resumeThread'), true);
   assert.equal(f.host.currentStatus.type, 'idle');
+});
+
+test('binds an explicitly owned Desktop thread read-only without resume or creation', async () => {
+  const f = desktopFixture();
+  await f.host.connect();
+  assert.equal(await f.host.ensureThread(), 'desktop-thread');
+  assert.equal(f.client.calls.some(x => x[0] === 'readThread'), true);
+  assert.equal(f.client.calls.some(x => x[0] === 'listQueuedMessages'), true);
+  assert.equal(f.client.calls.some(x => ['resumeThread', 'startThread', 'listThreads'].includes(x[0])), false);
+  assert.equal(f.state.threadId, 'desktop-thread');
+  f.client.emit('notification', { method: 'turn/completed', params: { threadId: 'desktop-thread', turn: { id: 'daemon-false-positive' } } });
+  assert.notEqual(f.host.currentStatus.type, 'idle');
+});
+
+test('fails closed for an unbound Desktop host and for a mismatched repository cwd', async () => {
+  assert.throws(() => fixture({ state: { threadId: null, threadHostOwnership: { host: 'codex-desktop' } }, host: 'codex-desktop' }), /explicit codex-desktop thread ownership receipt/);
+
+  const f = desktopFixture();
+  f.client.readThread = async () => ({ id: 'desktop-thread', cwd: 'C:\\other-repo', status: { type: 'notLoaded' } });
+  await f.host.connect();
+  await assert.rejects(f.host.ensureThread(), /belongs to C:\\other-repo/);
+  assert.equal(f.client.calls.some(x => ['resumeThread', 'startThread'].includes(x[0])), false);
+});
+
+test('Desktop queue sends a stable marker and skill invocation only when activity says idle', async () => {
+  const f = desktopFixture();
+  await f.host.connect();
+  await f.host.ensureThread();
+  f.setActivity('active');
+  await assert.rejects(f.host.startRunner({ prompt: 'Reconcile events', revision: 'batch-a' }), error => error.code === 'DIRECTOR_BUSY');
+  assert.equal(f.client.calls.some(x => x[0] === 'addQueuedMessage'), false);
+
+  f.setActivity('idle');
+  const queued = await f.host.startRunner({ prompt: 'Reconcile events', revision: 'batch-a' });
+  assert.deepEqual(queued, { queued: true, id: 'queue-1', clientMessageId: 'conductor-director-batch-a', marker: '<!-- conductor:director-wakeup:batch-a -->' });
+  const request = f.client.calls.find(x => x[0] === 'addQueuedMessage')[1];
+  assert.equal(request.threadId, 'desktop-thread');
+  assert.equal(request.clientUserMessageId, 'conductor-director-batch-a');
+  assert.match(request.text, /^\$conductor:director\n\n/);
+  assert.match(request.text, /<!-- conductor:director-wakeup:batch-a -->/);
+  assert.equal(f.client.calls.some(x => x[0] === 'startTurn'), false);
+  assert.equal((await f.host.findQueuedWakeup(queued.marker)).id, 'queue-1');
+  assert.equal(await f.host.cancelQueuedWakeup(queued.id), true);
+  assert.equal(await f.host.cancelQueuedWakeup(queued.id), false);
+  assert.equal(f.client.calls.some(x => x[0] === 'deleteQueuedMessage' && x[1].threadId === 'desktop-thread'), true);
+});
+
+test('Desktop activity unknown and interrupted states do not queue input', async () => {
+  const f = desktopFixture({ activity: { read: async () => ({ state: 'idle', nativeTurnId: 'native-turn-5', wakeupMarker: '<!-- marker -->' }) } });
+  await f.host.connect();
+  await f.host.ensureThread();
+  const observed = await f.host.status();
+  assert.equal(observed.type, 'idle');
+  assert.equal(observed.nativeTurnId, 'native-turn-5');
+  assert.equal(observed.wakeupMarker, '<!-- marker -->');
+
+  f.host.activity = { read: async () => ({ state: 'unknown' }) };
+  assert.equal((await f.host.status()).type, 'unknown');
+  await assert.rejects(f.host.startRunner({ prompt: 'x', revision: 'batch-b' }), error => error.code === 'DIRECTOR_UNAVAILABLE');
+  assert.equal(f.client.calls.some(x => x[0] === 'addQueuedMessage'), false);
+
+  f.host.activity = { read: async () => ({ state: 'interrupted' }) };
+  await assert.rejects(f.host.startRunner({ prompt: 'x', revision: 'batch-c' }), error => error.code === 'DIRECTOR_BUSY');
+  assert.equal(f.client.calls.some(x => x[0] === 'addQueuedMessage'), false);
 });

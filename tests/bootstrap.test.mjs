@@ -89,8 +89,32 @@ test('enable starts a threadless service and waits for owned readiness', async t
 test('CLI accepts lifecycle commands and preserves explicit existing binding syntax', () => {
   assert.deepEqual(parseArgs(['enable']), { command: 'enable', overrides: {} });
   assert.deepEqual(parseArgs(['wakeup']), { command: 'wakeup', overrides: {} });
+  assert.deepEqual(parseArgs(['enable', '--host', 'desktop', '--thread', THREAD]), { command: 'enable', overrides: {}, host: 'desktop', threadId: THREAD });
+  assert.throws(() => parseArgs(['enable', '--host', 'desktop']), /requires --thread/);
+  assert.throws(() => parseArgs(['enable', '--host', 'remote']), /desktop or daemon/);
   assert.deepEqual(parseArgs(['serve', '--enable', '--manual-wake']), { command: 'serve', overrides: {}, enable: true, manualWake: true });
+  assert.deepEqual(parseArgs(['serve', '--host', 'daemon']), { command: 'serve', overrides: {}, host: 'daemon' });
   assert.equal(parseArgs(['start', '--thread', THREAD]).threadId, THREAD);
+});
+
+test('host selection passes through to owned service startup', async t => {
+  const { base, store } = await fixture(t);
+  let argv;
+  const result = await ensureService({ store, root: base, enable: true, manualWake: true, host: 'desktop', threadId: THREAD,
+    cliPath: 'conductor.mjs', timeoutMs: 500, execute: async (_command, args) => {
+      argv = args;
+      await atomicJSON(store.lockPath, { token: 'live', pid: process.pid, hostname: hostname(), platform: process.platform });
+      await atomicJSON(join(store.dir, 'state.json'), { version: 1, jobs: [], runtimeEnabled: true, ownerToken: 'live', serviceReady: true, director: { threadId: THREAD, enabled: true }, threadHostOwnership: { threadId: THREAD, host: 'codex-desktop' } });
+      return { unref() {} };
+    } });
+  assert.equal(result.status, 'started');
+  assert.deepEqual(argv.slice(1), ['serve', '--thread', THREAD, '--host', 'desktop', '--enable', '--manual-wake']);
+});
+
+test('explicit host changes are rejected for an already bound director', async t => {
+  const { base, store } = await fixture(t, { runtimeEnabled: true, director: { threadId: THREAD, enabled: true }, threadHostOwnership: { threadId: THREAD, host: 'codex-desktop' } });
+  await assert.rejects(ensureService({ store, root: base, enable: true, host: 'daemon', threadId: THREAD,
+    cliPath: 'conductor.mjs', execute: async () => { throw new Error('must reject before launch'); } }), /owned by codex-desktop/);
 });
 
 test('simultaneous enable requests converge on one ready service', async t => {

@@ -14,11 +14,11 @@ repair, verifies checks and reviews, and closes work only after acceptance and
 landing are confirmed.
 
 Once you explicitly enable Conductor for a configured repository, it keeps one
-director chat bound to that repository. Relevant changes wake that chat when it
-is idle. If it is already working, Conductor records that there is more to
-check and lets the current turn sort out the next work without extra wakeup
-messages. When it has nothing actionable, it tells you to say “wakeup” to check
-again.
+Desktop director chat bound to that repository. Relevant changes wake that
+chat when it is idle. If it is already working, Conductor records that there is
+more to check and lets the current turn sort out the next work without extra
+wakeup messages. When it has nothing actionable, it tells you to say “wakeup”
+to check again.
 
 ## First use
 
@@ -37,13 +37,29 @@ and authenticated GitHub CLI. Windows and WSL have separate local runtimes.
 
 From the target repository, ask Codex to use `$conductor:setup-repo-workflow`.
 Review its proposed `conductor.json`, issue label mapping, checks, concurrency,
-delivery settings and genuine scope authority. Then explicitly enable the
-configured repository to establish its director and start observation. Merely
-installing the plugin or preparing configuration does not enable processing.
+delivery settings and genuine scope authority. In Desktop, reuse the existing
+bound director or create a persistent local project chat named
+`Conductor: owner/repository`, start it with `$conductor:director`, and bind it
+when enabling the repository. A new director's initial instruction must run
+the enable command against its own thread UUID before inspecting issues or
+dispatching. Wait for the director to report completion and verify the saved
+binding with `conductor status`:
+
+```powershell
+conductor enable --host desktop --thread THREAD_UUID
+```
+
+Merely installing the plugin or preparing configuration does not enable
+processing.
+
+Review and trust the Conductor lifecycle hooks when Desktop prompts you to do
+so. After installing or refreshing hook definitions, restart or open a fresh
+Desktop session so they load. If lifecycle status is unknown, automatic wakeups
+are suppressed instead of assuming the director is idle.
 
 Use the director chat for issue triage, decisions and execution. Say `wakeup`
-there at any time to make Conductor check for work. From a terminal, the
-equivalent command is:
+there at any time to make Conductor check for work. From a terminal, wake an
+already-enabled repository with:
 
 ```powershell
 conductor wakeup

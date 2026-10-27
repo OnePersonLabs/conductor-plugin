@@ -12,6 +12,7 @@ import { processExists } from './state.mjs';
 import { WakeLoop, admission } from './scheduler.mjs';
 import { Director } from './director.mjs';
 import { DirectorHost } from './director-host.mjs';
+import { watch } from 'node:fs';
 import { builderPrompt, createRequestRevision, parseResult, parseReviewResult, reviewPrompt, resultSchema, reviewResultSchema } from './prompts.mjs';
 
 const skillPath = fileURLToPath(new URL('../skills/github-workflow/SKILL.md', import.meta.url));
@@ -45,7 +46,7 @@ export class Coordinator extends EventEmitter {
     });
   }
   async save() { await this.store.save(this.state); this.emit('status', this.state); }
-  async start({ beforeScan, threadId, enable = false, manualWake = false } = {}) {
+  async start({ beforeScan, threadId, enable = false, manualWake = false, host } = {}) {
     await this.store.acquire();
     try {
       this.state = await this.store.read();
@@ -60,14 +61,22 @@ export class Coordinator extends EventEmitter {
       if (this.config.version === 2) {
         this.state.director ??= {};
         if (threadId && this.state.director.threadId && threadId !== this.state.director.threadId) throw new Error('Repository already has a different designated director.');
+        const hostMode = host === 'desktop' ? 'codex-desktop' : host === 'daemon' ? 'codex-app-server-daemon' : this.state.director.threadHostOwnership?.host;
+        if (hostMode && this.state.director.threadHostOwnership?.host && hostMode !== this.state.director.threadHostOwnership.host) throw new Error('A bound director cannot be moved between app-server hosts. Preserve the existing host.');
         this.state.runtimeEnabled ??= Boolean(this.state.director.threadId);
         if (enable) this.state.runtimeEnabled = true;
         if (!this.state.runtimeEnabled) throw new Error('Repository runtime is not enabled. Use conductor enable.');
         if (!enable && !manualWake && this.state.director.enabled === false) throw new Error('Conductor was deliberately stopped; use wakeup to inspect or enable to restart observation.');
         if (threadId) this.state.director.threadId = threadId;
+        if (hostMode === 'codex-desktop') {
+          if (!this.state.director.threadId) throw new Error('Create the director with the native Desktop task tool, then enable with its thread UUID.');
+          this.state.director.threadHostOwnership = { threadId: this.state.director.threadId, host: hostMode, codexHome: environment.codexHome };
+          const { DirectorActivity } = await import('./director-activity.mjs');
+          this.directorActivity = new DirectorActivity({ dir: this.store.dir });
+        }
         await this.save();
         this.directorHost = new this.Host({ cwd: this.repo.root, repository: this.config.repository,
-          model: this.config.directorModel, state: this.state.director, save: () => this.save(), execute: this.execute });
+          model: this.config.directorModel, state: this.state.director, save: () => this.save(), execute: this.execute, activity: this.directorActivity });
         await this.directorHost.connect();
         const bound = await this.directorHost.ensureThread();
         this.director = new Director(this, bound);
@@ -101,10 +110,18 @@ export class Coordinator extends EventEmitter {
       if (this.stopping) return;
       this.ready = true;
       this.state.serviceReady = true; await this.save();
+      if (this.directorActivity) {
+        const refresh = () => this.refreshDirectorActivity().catch(error => this.emit('notice', `Director activity: ${error.message}`));
+        this.activityWatcher = watch(this.store.dir, (_event, name) => { if (String(name).startsWith('director-activity.sqlite')) refresh(); });
+        // Local receipt fallback covers missed filesystem notifications. It never
+        // polls GitHub or invokes a model unless a native idle transition exists.
+        this.activityTimer = setInterval(refresh, 1000);
+        await this.refreshDirectorActivity();
+      }
       this.timer = setInterval(() => this.wake(), this.config.pollMs);
       if (manualWake || enable) await this.requestCheck({ manual: true });
       else await this.wake();
-    } catch (error) { await this.directorHost?.close().catch(() => {}); if (this.state) { this.state.running = false; this.state.serviceReady = false; this.state.startupError = error.message; await this.save().catch(() => {}); } await this.store.release(); throw error; }
+    } catch (error) { this.activityWatcher?.close(); clearInterval(this.activityTimer); this.directorActivity?.close(); await this.directorHost?.close().catch(() => {}); if (this.state) { this.state.running = false; this.state.serviceReady = false; this.state.startupError = error.message; await this.save().catch(() => {}); } await this.store.release(); throw error; }
   }
   async preflight() {
     const remote = await git(this.repo.root, 'remote', 'get-url', 'origin');
@@ -115,12 +132,36 @@ export class Coordinator extends EventEmitter {
     await access(skillPath);
   }
   wake() { return this.ready ? this.loop.wake() : Promise.resolve(); }
+  async refreshDirectorActivity() {
+    if (!this.directorActivity || this.stopping || this.activityRefreshing) return;
+    this.activityRefreshing = true;
+    try {
+      const activity = await this.directorActivity.read(this.state.director.threadId);
+      if (this.activityRevision === activity.revision) return;
+      this.activityRevision = activity.revision;
+      this.state.director.nativeActivity = activity;
+      const recovery = this.state.director.recoveryRequired;
+      if (activity.state === 'interrupted') this.state.director.recoveryRequired = { native: true, turnId: activity.turnId, status: 'interrupted' };
+      else if (activity.state === 'active' && recovery?.native && activity.turnId !== recovery.turnId) {
+        recovery.resolvedAt = new Date().toISOString(); recovery.outcome = 'A new native Desktop turn resumed the director.';
+      }
+      if (activity.wakeupMarker) {
+        const batch = this.state.director.batches.find(item => item.id === activity.wakeupMarker);
+        if (batch && ['submitting','uncertain','queued'].includes(batch.status)) {
+          batch.status = 'queued'; batch.turnId = activity.turnId; batch.nativeConsumed = true;
+        }
+      }
+      await this.save();
+      if (activity.state === 'idle') await this.director.events.flush();
+    } finally { this.activityRefreshing = false; }
+  }
   async requestCheck({ manual = false, reason } = {}) {
     if (!this.director) throw new Error('Director is not bound.');
     if (manual) {
+      await this.refreshDirectorActivity();
       // An explicit wake can continue a known ended director turn, but an
       // uncertain submission still needs its receipt reconciled before retry.
-      if (this.directorHost && (await this.directorHost.status()).type === 'idle') {
+      if (this.directorHost && !this.directorActivity && (await this.directorHost.status()).type === 'idle') {
         for (const batch of this.state.director.batches) {
           if (batch.acknowledgedAt || batch.status !== 'queued' || !batch.turnId) continue;
           const turn = await this.directorHost.inspectTurn(batch.turnId);
@@ -681,8 +722,14 @@ export class Coordinator extends EventEmitter {
   async stop({ explicit = false } = {}) {
     if (this.stopPromise) return this.stopPromise;
     this.stopping = true; clearInterval(this.timer);
+    this.activityWatcher?.close(); clearInterval(this.activityTimer);
     this.stopPromise = (async () => {
-      if (explicit && this.director) { this.state.admissionPaused = true; await this.director.events.stop(); }
+      let wakeCancellationError;
+      if (explicit && this.director) {
+        this.state.admissionPaused = true;
+        try { await this.director.events.stop(); }
+        catch (error) { wakeCancellationError = error; }
+      }
       for (const job of this.state.jobs) {
         if (!['complete','cancelled'].includes(job.phase)) job.intent = 'stop';
         const client = this.clients.get(job.issue);
@@ -692,7 +739,11 @@ export class Coordinator extends EventEmitter {
       await Promise.allSettled([...this.preparations.values()]);
       await Promise.allSettled([...this.tasks.values()]);
       await this.directorHost?.close();
+      this.directorActivity?.close();
       this.state.running = false; this.state.serviceReady = false; await this.save(); await this.store.release(); this.emit('stopped');
+      // A failed native queue deletion remains recoverable, but must not keep
+      // the observer lock or worker processes alive after an explicit stop.
+      if (wakeCancellationError) throw wakeCancellationError;
     })();
     return this.stopPromise;
   }

@@ -44,16 +44,23 @@ integration to attach to and observe that Desktop chat's live turn. Conductor
 therefore rejects an unowned saved thread reported as `notLoaded`; it will not
 assume that thread is idle or start a duplicate turn there.
 
-The same shared CLI daemon supports creating and managing threads that
-Conductor owns itself. That is a viable host-managed session path, but the
-probe did not establish that such threads are visible or interactively
-available in the Codex Desktop UI, nor verify same-thread concurrency against
-a real running turn. The Windows probe was read-only and establishes no live
-runner qualification. Product choice remains open: retain the intended Desktop
-chat interaction by adding a supported lifecycle bridge, or accept a
-Conductor-owned CLI session as the director surface. Do not describe either
-path as qualified until its user-visible interaction and busy/idle behavior
-are demonstrated in a separately authorized live trial.
+The selected design keeps the Desktop chat as the director. Desktop lifecycle
+hooks report prompt start, stop and interruption to Conductor, and wakeups are
+delivered through the Desktop session queue when that director is idle. This
+path avoids inferring Desktop activity from the CLI's separate daemon. A
+“wakeup” message typed in Desktop is already a live user turn; its hook tells
+the service not to send a second prompt. If Desktop is closed, the service
+cannot launch or resume its private server; a queued wake is stored for the
+native host to consume when it loads the bound chat. Delivery across restart
+has not yet been qualified in a live trial. For a new repository, the initial director prompt binds
+that native thread as its first action; setup waits for host completion and
+verifies the saved binding before allowing issue inspection or dispatch.
+
+The Windows proxy probe was read-only and does not qualify the Desktop hook,
+queue delivery, busy/idle suppression, restart recovery, user-visible thread
+creation or quota effects. Those behaviors still require a separately
+authorized, budgeted live trial. The CLI daemon remains available for terminal
+clients, but its sessions are not the selected Desktop director surface.
 
 ## Requirements identified
 

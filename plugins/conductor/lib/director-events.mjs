@@ -69,6 +69,25 @@ export class DirectorEvents {
 
   async pending() { return structuredClone(this.state.events.filter(item => !item.acknowledgedAt)); }
 
+  async cancelWake(batch) {
+    batch.cancellationRequired = true;
+    await this.save();
+    try {
+      const removed = await this.host.cancelQueuedWakeup(batch.queueItemId);
+      delete batch.cancellationRequired;
+      const recovery = this.state.recoveryRequired;
+      if (recovery?.status === 'queue-cancellation-failed' && recovery.queueItemId === batch.queueItemId) {
+        recovery.resolvedAt = new Date().toISOString();
+      }
+      await this.save();
+      return removed;
+    } catch (error) {
+      this.state.recoveryRequired = { status: 'queue-cancellation-failed', queueItemId: batch.queueItemId, batchId: batch.id, error: error.message };
+      await this.save();
+      throw error;
+    }
+  }
+
   async acknowledge(ids) {
     if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) throw new TypeError('Acknowledgement requires event IDs.');
     const selected = new Set(ids);
@@ -77,7 +96,12 @@ export class DirectorEvents {
       item.acknowledgedAt = now;
       this.state.acknowledged.push({ id: item.id, acknowledgedAt: now });
     }
-    for (const batch of this.state.batches) if (batch.eventIds.every(id => this.state.events.find(item => item.id === id)?.acknowledgedAt)) batch.acknowledgedAt ??= now;
+    for (const batch of this.state.batches) if (batch.eventIds.every(id => this.state.events.find(item => item.id === id)?.acknowledgedAt)) {
+      // A manual Desktop turn can handle the work before its queued wake is
+      // consumed. Remove that obsolete native queue item instead of waking again.
+      if (batch.queueItemId && !batch.nativeConsumed && !batch.acknowledgedAt) await this.cancelWake(batch);
+      batch.acknowledgedAt ??= now;
+    }
     this.state.acknowledged = this.state.acknowledged.slice(-MAX_RECEIPTS);
     this.state.events = this.state.events.filter(item => {
       if (!item.acknowledgedAt) return true;
@@ -127,9 +151,17 @@ export class DirectorEvents {
     await this.save();
     const message = `Conductor event batch ${batch.id}. Reconcile these persisted event IDs before acting: ${batch.eventIds.join(', ')}. Acknowledge them only after handling.`;
     try {
-      const turn = this.host ? await this.host.startRunner({ prompt: message }) : null;
+      const turn = this.host ? await this.host.startRunner({ prompt: message, revision: batch.id }) : null;
       const result = this.host ? { code: 0, stdout: turn.id } : await this.execute('codex', ['queue', '--thread', this.threadId, '--message', message], { cwd: this.cwd });
-      if (turn) batch.turnId = turn.id;
+      if (turn?.queued) {
+        batch.queueItemId = turn.id; batch.clientMessageId = turn.clientMessageId;
+        // A native manual turn can settle (or stop) while queue/add is in
+        // flight, before acknowledgement has a queue ID it can remove.
+        if ((batch.acknowledgedAt || !this.state.enabled) && !batch.nativeConsumed) {
+          await this.cancelWake(batch);
+        }
+      }
+      else if (turn) batch.turnId = turn.id;
       if (result?.code !== 0) throw Object.assign(new Error(result?.stderr || `codex queue failed (${result?.code}).`), { result });
       batch.status = 'queued'; batch.queuedAt = new Date().toISOString(); batch.receipt = String(result?.stdout ?? '').slice(0, 1000);
       await this.save();
@@ -149,7 +181,21 @@ export class DirectorEvents {
 
   async retry(batchId, { confirmedNotQueued = false } = {}) {
     const batch = this.state.batches.find(item => item.id === batchId);
+    if (batch?.cancellationRequired && batch.queueItemId) {
+      await this.cancelWake(batch);
+      batch.status = 'reconciled-not-queued';
+      await this.save();
+      return this.flush();
+    }
     if (!batch || batch.status !== 'uncertain') throw new Error('Only an uncertain queue submission can be retried.');
+    if (this.host?.hostMode === 'codex-desktop') {
+      const queued = await this.host.findQueuedWakeup(batch.id);
+      if (queued) {
+        batch.status = 'queued'; batch.queueItemId = queued.id; batch.clientMessageId = queued.clientUserMessageId;
+        await this.save(); return { status: 'awaiting-acknowledgement', batch: structuredClone(batch) };
+      }
+      // Absence cannot prove non-delivery: the native host may have consumed it.
+    }
     if (confirmedNotQueued !== true) throw new Error('Inspect the target thread first; confirmNotQueued is required to retry an uncertain submission.');
     batch.status = 'reconciled-not-queued';
     delete batch.error;
@@ -158,6 +204,13 @@ export class DirectorEvents {
     return this.flush();
   }
 
-  async stop() { this.state.enabled = false; await this.save(); }
+  async stop() {
+    this.state.enabled = false; await this.save();
+    for (const batch of this.state.batches) if (batch.queueItemId && !batch.nativeConsumed && !batch.acknowledgedAt) {
+      const removed = await this.cancelWake(batch);
+      if (removed) batch.status = 'reconciled-not-queued';
+    }
+    await this.save();
+  }
   async start() { this.state.enabled = true; await this.save(); }
 }

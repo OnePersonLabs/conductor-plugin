@@ -28,6 +28,7 @@ input.on('line', (line) => {
   }
 
   if (message.method === 'initialize') {
+    frame({ method: 'fixture/initialize', params: message.params });
     frame({ id: message.id, result: {} });
     if (mode === 'malformed') setTimeout(() => process.stdout.write('not-json\n'), 20);
     return;
@@ -93,6 +94,26 @@ input.on('line', (line) => {
   if (message.method === 'turn/interrupt') {
     frame({ method: 'fixture/interruptReceived', params: message.params });
     frame({ id: message.id, result: {} });
+    return;
+  }
+
+  if (message.method === 'thread/queue/add') {
+    frame({ method: 'fixture/queueAdd', params: message.params });
+    frame({ id: message.id, result: { queuedSubmission: { id: 'queue-item-1', threadId: message.params.threadId, input: message.params.input, clientUserMessageId: message.params.clientUserMessageId } } });
+    return;
+  }
+
+  if (message.method === 'thread/queue/list') {
+    const secondPage = message.params.cursor === 'next';
+    frame({ id: message.id, result: {
+      data: [{ id: secondPage ? 'queue-item-2' : 'queue-item-1', clientUserMessageId: `client-${secondPage ? '2' : '1'}` }],
+      nextCursor: mode === 'queue-pages' && !secondPage ? 'next' : null,
+    } });
+    return;
+  }
+
+  if (message.method === 'thread/queue/delete') {
+    frame({ id: message.id, result: { deleted: true } });
     return;
   }
 

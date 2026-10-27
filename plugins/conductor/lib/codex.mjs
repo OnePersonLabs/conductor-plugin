@@ -18,13 +18,14 @@ const CLIENT_INFO = Object.freeze({
  * Server requests are surfaced to the caller and remain pending until respond().
  */
 export class CodexClient extends EventEmitter {
-  constructor({ cwd = process.cwd(), env = process.env, command, args, transport = 'stdio' } = {}) {
+  constructor({ cwd = process.cwd(), env = process.env, command, args, transport = 'stdio', experimentalApi = false } = {}) {
     super();
     this.cwd = resolve(cwd);
     this.env = { ...env };
     this.command = command ?? 'codex';
     if (!['stdio', 'proxy'].includes(transport)) throw new TypeError('transport must be stdio or proxy.');
     this.transport = transport;
+    this.experimentalApi = experimentalApi === true;
     this.args = args === undefined ? (transport === 'proxy' ? ['app-server', 'proxy'] : ['app-server', '--listen', 'stdio://']) : [...args];
 
     this.child = undefined;
@@ -97,9 +98,11 @@ export class CodexClient extends EventEmitter {
     });
 
     if (this.transport === 'proxy') await this._startProxyHandshake();
-    await this._request('initialize', {
+    const initialize = {
       clientInfo: CLIENT_INFO,
-    });
+    };
+    if (this.experimentalApi) initialize.capabilities = { experimentalApi: true };
+    await this._request('initialize', initialize);
     await this._notify('initialized', {});
     this.connected = true;
     return this;
@@ -144,6 +147,46 @@ export class CodexClient extends EventEmitter {
     this._assertConnected();
     requireString(threadId, 'threadId');
     return requireResultObject(await this._request('thread/read', { threadId, includeTurns }), 'thread/read', 'thread');
+  }
+
+  async addQueuedMessage({ threadId, text, clientUserMessageId } = {}) {
+    this._assertConnected();
+    requireString(threadId, 'threadId');
+    requireString(text, 'text');
+    requireString(clientUserMessageId, 'clientUserMessageId');
+    if (!this.experimentalApi) throw new Error('thread/queue/add requires initialize.capabilities.experimentalApi=true.');
+    return requireResultObject(await this._request('thread/queue/add', {
+      threadId,
+      input: [{ type: 'text', text, textElements: [] }],
+      clientUserMessageId,
+    }), 'thread/queue/add', 'queuedSubmission');
+  }
+
+  async listQueuedMessages({ threadId, limit = 100 } = {}) {
+    this._assertConnected();
+    requireString(threadId, 'threadId');
+    if (!this.experimentalApi) throw new Error('thread/queue/list requires initialize.capabilities.experimentalApi=true.');
+    const data = [];
+    let cursor;
+    do {
+      const params = { threadId, limit };
+      if (cursor !== undefined && cursor !== null) params.cursor = cursor;
+      const page = await this._request('thread/queue/list', params);
+      if (!page || typeof page !== 'object' || !Array.isArray(page.data)) throw new Error('Codex App Server thread/queue/list response did not contain data.');
+      data.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor !== undefined && cursor !== null);
+    return data;
+  }
+
+  async deleteQueuedMessage({ threadId, queuedSubmissionId } = {}) {
+    this._assertConnected();
+    requireString(threadId, 'threadId');
+    requireString(queuedSubmissionId, 'queuedSubmissionId');
+    if (!this.experimentalApi) throw new Error('thread/queue/delete requires initialize.capabilities.experimentalApi=true.');
+    const result = await this._request('thread/queue/delete', { threadId, queuedSubmissionId });
+    if (!result || typeof result.deleted !== 'boolean') throw new Error('Codex App Server thread/queue/delete response did not contain deleted.');
+    return result.deleted;
   }
 
   async listThreads({ cwd = this.cwd } = {}) {
