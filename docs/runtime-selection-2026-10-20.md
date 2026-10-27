@@ -74,6 +74,23 @@ qualify queued delivery. The trial observer was explicitly stopped with zero
 jobs. Repeat after a full Desktop restart; opening a new chat alone was
 insufficient in this trial.
 
+**2026-10-27 resumed trial after Desktop restart:** the saved native chat
+restarted observation and settled revision 4 with admission paused. Activity
+still remained `unknown`. The Desktop binary (0.165.0-alpha.1.2), queried in a
+fresh read-only app-server, listed all five Conductor hooks as trusted and
+enabled. Another installed hook recorded the trial's actual `Stop` event, but
+Conductor's temporary, metadata-only lifecycle probe produced no receipt.
+The earlier cache diagnosis therefore does not establish the cause.
+
+A direct native `thread/queue/add` probe woke that same Desktop chat. It
+reported receipt of the queued message, inspected and settled revision 4, and
+returned to idle; the native queue was empty afterward. This establishes
+native queue delivery on the loaded Desktop chat, not Conductor's automatic
+idle detection. Two live turns were used in this resumed trial. The observer
+was stopped, no issue jobs ran, and the temporary probe was removed. Resolve
+the missing Conductor lifecycle receipts before declaring automatic wakeup
+qualified; do not synthesize an idle receipt or repeat restart as a proven fix.
+
 The comparison did not find a released candidate that established all of these
 behaviors together:
 
