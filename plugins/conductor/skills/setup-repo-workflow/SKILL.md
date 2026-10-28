@@ -87,6 +87,9 @@ thread UUID returned by native thread creation. The parent setup conversation
 waits for the native thread's completion/status and confirms that this exact
 UUID is saved as the repository director before reporting enablement complete.
 Do not use the CLI's shared-daemon thread creation for the Desktop director.
+For follow-ups requiring lifecycle receipts, use Desktop's native
+`thread/queue/add` API; cross-chat messaging bypasses `UserPromptSubmit`.
+Do not use computer use to compose director messages.
 Resolve the registered project with the native project listing and use its
 local checkout. Keep admission paused when requested. A short onboarding turn
 binds the chat, inspects fresh status/issues/events, offers one useful next
