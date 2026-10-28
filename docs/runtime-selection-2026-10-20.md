@@ -111,6 +111,54 @@ receipt. Acknowledgement cannot release this hold by reusing older idle state.
 A matching native receipt or a new explicit native turn can recover it. The
 safety change has deterministic coverage; it has not had another live turn.
 
+**2026-10-27 Desktop reload and bounded acceptance:** the earlier diagnostic
+ran after stdin finished; its silence did not establish missing invocation.
+This trial instrumented process entry, input completion, parsing, imports,
+handler result and exit, without prompt contents. Two initial turns produced
+neither the trial-scoped entry trace nor new Conductor receipts. The actual
+Desktop Settings > Hooks listing showed the five Conductor hooks enabled.
+Refreshing installation/trust alone and an ordinary composer submission did
+not change the result. Toggling the Conductor UserPromptSubmit hook off and
+back on through native Desktop settings did: the next ordinary `wakeup`
+recorded entry, input completion, successful handling and exit, followed by
+matching active/idle receipts for native turn
+`01a18010-86cd-7741-8979-2e3db282e1ec` (activity revisions 5 and 6).
+
+The demonstrated repair is native runtime configuration reload. The exact
+internal stale object was not observed. Codex's
+[plugin trust implementation](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/hooks/src/engine/plugin_trust.rs)
+compares current bundle contents with captured trust, and its
+[configuration processor](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/request_processors/config_processor.rs)
+can refresh loaded thread configuration. Those mechanisms support the stale
+runtime explanation; they do not prove a particular trust rejection occurred.
+No handler logic, timeout, registrations or native thread ownership changed.
+
+Temporary instrumentation was removed and the clean plugin refreshed in both
+Windows and WSL. The same native settings reload was applied. The observer
+was stopped and restarted with the saved chat binding; `conductor wakeup`
+then created batch `780e6a69-4ad9-409a-9c04-06737f75965a`, queue item
+`01a18012-c2ba-7522-a5d1-eeaa7df8a7b6`, and actual native turn
+`01a18012-d18b-7d93-8158-c0f5d1e5d919`. SQLite independently showed active
+revision 7 and idle revision 8 with that exact turn and batch marker.
+Persisted state recorded native consumption and settlement of check revision
+13. Three passive signals while active left the batch count unchanged;
+there were no remaining events or pending checks. Native queue listing was
+empty and Desktop reported the same completed turn and idle chat. No fifth
+director turn was submitted; a subsequent quiet interval of more than three
+minutes showed the same completed turn and no new native turn. The existing
+OnePersonLabs watch record independently recorded Stop at the final turn's
+completion timestamp. Admission stayed paused with zero issue jobs and
+no trial GitHub writes. This establishes automatic delivery and lifecycle
+tracking together on this host, not production worker delivery.
+
+Shutdown encountered a separate `EPERM` replacing `state.json` on Windows.
+The stop request was consumed but did not finish saving shutdown state. The
+verified trial observer PID was terminated; its stale recovery metadata was
+preserved rather than rewritten to claim a clean shutdown. Automatic wakeup
+passed; graceful shutdown under that persistence error remains a separate
+limitation. Computer use was limited to installation recovery and the manual
+composer test, never the normal Conductor runner.
+
 The comparison did not find a released candidate that established all of these
 behaviors together:
 

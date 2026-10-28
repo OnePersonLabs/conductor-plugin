@@ -54,11 +54,22 @@ Merely installing the plugin or preparing configuration does not enable
 processing.
 
 Review and trust the Conductor lifecycle hooks when Desktop prompts you to do
-so. After installing or refreshing hook definitions, fully restart Desktop
-so its host reloads them. If lifecycle status is unknown, automatic wakeups
-are suppressed instead of assuming the director is idle. The October 27 live
-trial verified queue delivery but found missing Conductor lifecycle receipts
-for queued turns. Full Desktop automatic wakeup qualification remains open.
+so. Installation and saved trust do not establish that an already-loaded
+Desktop chat has refreshed its hook runtime. After a local refresh, reload
+Desktop before relying on automatic wakeups. On Desktop 0.165.0-alpha.1.2,
+the tested recovery for an idle director was Settings > Hooks > Conductor:
+turn its UserPromptSubmit hook off and back on, then submit `wakeup` in the
+existing director chat. Verify matching active and idle lifecycle receipts
+before treating recovery as complete. Do not toggle hooks during a running turn.
+This is installation recovery, not part of the runner loop; normal operation
+uses the native queue and hooks without UI automation. The final automatic
+test restarted the observer with `conductor wakeup` and delivered through
+the queue, without a composer submission.
+If lifecycle status is unknown, automatic wakeups are suppressed instead of
+assuming the director is idle. The October 27 bounded trial verified automatic
+delivery, matching lifecycle tracking, service restart with the same chat, and
+busy-signal suppression. See the [runtime evidence](docs/runtime-selection-2026-10-20.md)
+for scope and the separate Windows shutdown persistence failure.
 If status reports `lifecycle-receipt-missing`, inspect the native chat and hook
 execution before manually resuming; settlement alone does not prove turn completion.
 
