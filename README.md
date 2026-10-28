@@ -69,7 +69,7 @@ If lifecycle status is unknown, automatic wakeups are suppressed instead of
 assuming the director is idle. The October 27 bounded trial verified automatic
 delivery, matching lifecycle tracking, service restart with the same chat, and
 busy-signal suppression. See the [runtime evidence](docs/runtime-selection-2026-10-20.md)
-for scope and the separate Windows shutdown persistence failure.
+for scope and the Windows shutdown persistence repair.
 If status reports `lifecycle-receipt-missing`, inspect the native chat and hook
 execution before manually resuming; settlement alone does not prove turn completion.
 

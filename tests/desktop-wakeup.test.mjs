@@ -188,4 +188,6 @@ test('explicit stop releases the service even when deleting its pending wake fai
   assert.equal(f.c.state.admissionPaused, true);
   assert.equal(f.state.enabled, false);
   assert.equal(f.state.batches[0].cancellationRequired, true);
+  f.c.store.save = async () => { throw new Error('old coordinator must not save after release'); };
+  await assert.rejects(f.c.stop({ explicit: true }), /queue unavailable/);
 });

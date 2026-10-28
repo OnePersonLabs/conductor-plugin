@@ -744,7 +744,14 @@ export class Coordinator extends EventEmitter {
       await Promise.allSettled([...this.tasks.values()]);
       await this.directorHost?.close();
       this.directorActivity?.close();
-      this.state.running = false; this.state.serviceReady = false; await this.save(); await this.store.release(); this.emit('stopped');
+      this.state.running = false; this.state.serviceReady = false;
+      try { await this.save(); }
+      catch (error) {
+        // Only a failed final save retains ownership and permits stop retry.
+        this.stopPromise = undefined;
+        throw error;
+      }
+      await this.store.release(); this.emit('stopped');
       // A failed native queue deletion remains recoverable, but must not keep
       // the observer lock or worker processes alive after an explicit stop.
       if (wakeCancellationError) throw wakeCancellationError;

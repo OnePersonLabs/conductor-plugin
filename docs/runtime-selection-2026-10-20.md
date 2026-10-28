@@ -159,6 +159,19 @@ passed; graceful shutdown under that persistence error remains a separate
 limitation. Computer use was limited to installation recovery and the manual
 composer test, never the normal Conductor runner.
 
+**Windows shutdown follow-up:** state replacement now retries Windows EPERM,
+EACCES and EBUSY for up to two seconds, keeping the old snapshot intact until
+rename succeeds. Other errors fail immediately. A persistent obstruction still
+raises its original error, cleans the temporary file and retains ownership;
+an explicit stop can then retry after the obstruction is removed rather than
+reusing a permanently rejected shutdown promise. Tests use a real Windows
+reader opened without FILE_SHARE_DELETE, first prove replacement fails while
+locked, then verify shutdown saves stopped state and releases ownership after
+release. A second case holds the lock through the retry budget, verifies the
+failure and retained snapshot/ownership, releases it and verifies successful
+shutdown retry with the original director binding. These checks use no model
+turns or GitHub writes.
+
 The comparison did not find a released candidate that established all of these
 behaviors together:
 

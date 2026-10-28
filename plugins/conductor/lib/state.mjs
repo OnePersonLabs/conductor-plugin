@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile, rename, unlink, readdir, rm } from 'node:fs
 import { join } from 'node:path';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export function processExists(pid) {
   if (!Number.isSafeInteger(pid) || pid < 1) return false;
@@ -11,7 +12,19 @@ export function processExists(pid) {
 export async function atomicJSON(path, value) {
   const temp = `${path}.${randomUUID()}.tmp`;
   await writeFile(temp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
-  try { await rename(temp, path); } catch (error) { await unlink(temp).catch(() => {}); throw error; }
+  try {
+    // Windows readers that omit FILE_SHARE_DELETE temporarily prevent replacement.
+    // Keep the previous snapshot intact and retry only that platform's sharing
+    // errors. A persistent lock/permission failure still reaches the caller.
+    const deadline = performance.now() + 2000;
+    for (;;) {
+      try { await rename(temp, path); break; }
+      catch (error) {
+        if (process.platform !== 'win32' || !['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || performance.now() >= deadline) throw error;
+        await delay(25);
+      }
+    }
+  } catch (error) { await unlink(temp).catch(() => {}); throw error; }
 }
 
 export class Store {
