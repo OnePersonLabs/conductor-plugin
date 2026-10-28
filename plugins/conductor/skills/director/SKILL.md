@@ -136,7 +136,10 @@ recommending repairs the director is authorized to make.
 - Use `on-hold` when the user deliberately pauses work. Preserve its prior state
   and release only on explicit instruction.
 - Use `needs-input` for a specific user decision that blocks that work. Continue
-  independent authorized tasks.
+  independent authorized tasks. When answerable human input is the remaining
+  useful path, prepare a focused interaction batch before resuming foreground
+  work. Include blockers even when no `needs-input` label exists; do not ask the
+  user to investigate facts Conductor can discover.
 
 An open issue or ready label is not authority for newly discovered product
 scope. A direct user instruction can authorize bounded work without another
@@ -237,10 +240,61 @@ control interface and apply the intended transitions. Never release another hold
 or activate admission as part of this cleanup. If recovery is unresolved, retain
 the barrier and report the exact remaining operation.
 
-Ask clear, consequential questions in the current chat. Store the question and
-source revision with its issue so it survives turn completion. Reject answers
-for stale or resolved questions and reconcile replies from optional
-human-collaboration submission before applying them.
+For an interaction batch, use the runtime controls and issue records together:
+
+1. Start or rejoin with `interaction-begin` and a stable semantic `batchKey` for
+   the unresolved decisions. Reuse it for the same unchanged batch. `status`
+   reports its `interactionId` and enrolled issues. Observer startup preserves
+   the gate; explicit `wakeup` is the user's request to release it early.
+2. For every issue, call `decision-read` (which enrolls it in the active phase),
+   then persist each self-contained question through `decision-record` using its
+   current revision. This operation records `pending`, `answered` or `deferred`
+   stages. Records have a stable `decisionId`, `context` and `question`. Record a
+   nonempty answer before integrating it. Issue comments are the recovery source;
+   continue their latest stages in a new chat rather than asking again.
+3. After each answer, update and verify the owning meaning, then use
+   `decision-integrate` with the current decision and issue revisions. It records
+   the integrated stage and reconciles primary state plus `needs-input` together.
+   Provide the same answer and verified `integration` evidence. Preserve active
+   holds. Complete only after all enrolled issues have no `pending` or `answered`
+   records; a deferred record must include the user's response and `returnCondition`.
+   Reconcile the latest event snapshot, then call `interaction-complete` with its
+   `interactionId` and current `checkRevision`. If it rejects a changed snapshot,
+   inspect and reconcile the new events before retrying. While the interaction is
+   active, `settle` may report `idle: false` because the gate remains active; this
+   does not mean events were missed and does not release the gate. An explicit `wakeup` ends
+   the batch early and preserves unanswered records.
+
+Ask clear, consequential questions in the current chat. Assume the user has no
+context from the investigation: explain the situation, define terms, give
+concrete options and consequences, and recommend an option with reasons. Links,
+issue numbers and references to a proposal are optional context, never required
+reading. Ask one focused question or a small related group, allow corrections,
+and prepare follow-ups when a reply reveals another useful decision. Include
+clear steps for any action the user must perform outside chat and explain how its
+result will be verified.
+
+Keep this foreground phase devoted to resolving those decisions. Existing
+independent workers can continue; queue their events and Conductor's internal
+messages without sending status chatter that pushes the questions out of view.
+Do not periodically repeat unanswered questions. Persist stable question IDs,
+answers, remaining questions, and integration progress on their owning GitHub
+issues so a replacement chat can continue without repeating recorded answers.
+After each reply, save it and integrate and verify its meaning, issue text,
+dependencies, acceptance and labels before moving on. An answer is not evidence
+that a required outcome has been achieved. Silence and dismissal leave the
+question unresolved. Explicit deferral records why it is deferred and what
+condition should reopen it.
+
+Reconcile labels with the reason they represent. Remove `proposal` once its
+candidate-direction decision is resolved; acceptance may make bounded authorized
+work ready, while rejection must not imply implementation approval. Move the issue to its
+appropriate primary state when removing `proposal`; never leave an open issue
+without a coherent state. Remove
+`needs-input` when no human input remains. For partial answers, retain only the
+specific unresolved decision. Verify current issue contents before writes and
+reconcile uncertain outcomes before retrying. Preserve explicit holds and
+admission pauses.
 
 ## Dispatch and follow through
 
@@ -267,8 +321,20 @@ this same Desktop chat. If the director is active, new changes are recorded for 
 next check; do not send repeated wakeup prompts. Reconcile the event batch and
 current issue/job state before acknowledging it.
 
-When ready to end this turn, including after presenting a blocking question, perform the
-idle handoff through the runtime control interface:
+When a focused interaction batch is active, presenting a question does not mean
+the work is handled or the batch is complete. Keep the interaction as the last
+foreground content, preserve its runtime gate across turn endings, and continue
+from persisted issue records when the user answers. Continue until currently
+useful human contributions are answered or explicitly deferred, or the user asks
+for `wakeup`. A human `wakeup` ends the batch early, preserves unanswered
+questions and does not immediately reopen the same unchanged batch. Internal
+notifications, saved answers and settling an event snapshot do not end the gate.
+When no further useful human contribution is available, reconcile queued events
+and continue eligible, authorized work automatically while respecting deliberate
+admission pauses and holds.
+
+Outside an active interaction batch, when ready to end a turn, perform the idle
+handoff through the runtime control interface:
 
 1. Request a fresh `status` snapshot. Save its `checkRevision`; inspect its
    issues, jobs, holds, pending requests and execution restrictions.
@@ -278,9 +344,9 @@ idle handoff through the runtime control interface:
 3. Complete supported triage and repairs before settling; reporting an actionable
    finding is not handling it. If work cannot proceed, record the concrete human,
    evidence, authority or operational dependency and finish independent work.
-   Once current work is handled or its blocking question has been presented,
-   submit `settle` with that exact `checkRevision`. A question awaiting the user
-   is handled for this snapshot; do not keep waking to ask it again.
+   Start an interaction batch when useful user input can unlock or clarify work.
+   Otherwise submit `settle` with that exact `checkRevision` and continue eligible
+   work or end the turn as described above.
 4. If the result has `idle: false`, a change arrived after the snapshot. Request
    a new status snapshot and repeat the inspection and settle steps in this same
    turn. If `idle: true`, finish the turn with: “Conductor is idle. Say ‘wakeup’

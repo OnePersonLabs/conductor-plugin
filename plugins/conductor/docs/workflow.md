@@ -19,14 +19,24 @@ Conductor uses one primary state per issue:
 | `on-hold` | Suspend autonomous execution until explicit release. |
 
 `needs-input` marks a specific unresolved human question. It can accompany a
-primary state but prevents the affected work from advancing. Unlabeled issues
-enter triage. A prepared issue created from an accepted plan may begin ready;
-new bug reports normally enter triage. The director uses Astra to investigate,
-resolve planning gaps and apply supported transitions toward ready. Ordinary
-missing details do not require a proposal or user approval. Keep triage for an
+primary state but prevents the affected work from advancing. When useful human
+input can unlock or clarify work, Conductor proactively gathers those questions
+into a focused chat interaction, including blockers that were not previously
+labeled. It explains the situation, terms, options and consequences in the chat
+so the user does not need to know the agent's investigation or open issue links
+to answer. Unlabeled issues enter triage. A prepared issue created from an
+accepted plan may begin ready; new bug reports normally enter triage. The director
+uses Astra to investigate, resolve planning gaps and apply supported transitions
+toward ready. Ordinary missing details do not require a proposal or user approval. Keep triage for an
 unfinished investigation and needs-input for an actual human dependency, not
 uncertainty the agents can resolve. A label never grants authority for new
-product scope.
+product scope. Once a proposal's candidate direction is accepted or otherwise
+resolved, Conductor moves the issue to an appropriate primary state and removes
+`proposal`. Acceptance may make sufficiently bounded and authorized work ready;
+rejection can return it to triage or close it when the work is no longer wanted,
+but does not authorize implementation. When the user has answered the remaining
+human questions, Conductor removes `needs-input`. Partial answers retain the
+label only while a specific human dependency remains.
 
 Native blocked-by dependencies control prerequisites. A ready issue with an
 open blocker waits; when prerequisites close, Conductor rechecks the issue and
@@ -109,6 +119,104 @@ Submit control JSON with `conductor rpc --request-file REQUEST.json`. The
 director can issue these controls through the installed runtime interface; the
 CLI remains available for direct operation and recovery.
 
+A focused question batch has a durable runtime gate and issue-owned decision
+records. Start or rejoin a batch using a stable semantic `batchKey` that describes
+the unresolved decisions, not an event revision. `status` returns the active
+interaction. During it, `dispatch` and `resume` are rejected while existing
+independent workers continue. Normal observer startup preserves the gate; only
+finishing the batch or an explicit `wakeup` releases it.
+
+Before asking, read the owning issue's decision records. `decision-read` enrolls
+that issue in the active interaction, so it cannot be skipped when completing the
+batch. Record each self-contained question with `decision-record` and its current
+decision revision:
+
+```json
+{
+  "op": "decision-record",
+  "repository": "owner/repository",
+  "threadId": "THREAD_UUID",
+  "issue": 42,
+  "decisionId": "session-time-effects",
+  "expectedRevision": "<revision-from-decision-read>",
+  "record": {
+    "context": "Free play can advance the player's practice clock while the shared world clock stays still.",
+    "question": "Should personal practice time continue while the group world is paused?",
+    "status": "pending"
+  }
+}
+```
+
+Record a nonempty `answer` with status `answered` before integrating it. Once
+the owning meaning and issue acceptance are updated, use `decision-integrate` to
+persist the final stage and reconcile the issue's primary state and `needs-input`
+modifier in one revision-checked operation. Supply the current decision revision,
+current issue revision, the integrated record with the same answer and verified
+`integration` evidence, the appropriate primary `state`, and whether any human
+input remains in `needsInput`. This operation verifies the prior answer and
+current revisions before writing; it preserves active holds. If another decision
+remains unresolved, keep the issue in `proposal` and set `needsInput` true. If an
+accepted proposal is now bounded and authorized, it can move to `ready`; use
+`triage` when investigation remains. A rejected direction is updated or closed
+according to its outcome before integration, and must not become ready merely
+because the decision is resolved. A `deferred` decision needs the user's explicit
+response and a `returnCondition` explaining when to reopen it. `decision-read`
+returns the latest stage for each stable `decisionId`; issue comments preserve
+these records if the director chat is replaced. Use fresh revisions and verify
+the returned record and issue labels before moving on.
+
+For an accepted and integrated answer, the revision-checked reconciliation shape
+is:
+
+```json
+{
+  "op": "decision-integrate",
+  "repository": "owner/repository",
+  "threadId": "THREAD_UUID",
+  "issue": 42,
+  "decisionId": "session-time-effects",
+  "expectedRevision": "<revision-from-decision-read>",
+  "expectedIssueRevision": "<revision-from-status>",
+  "record": {
+    "context": "Free play can advance the player's practice clock while the shared world clock stays still.",
+    "question": "Should personal practice time continue while the group world is paused?",
+    "status": "integrated",
+    "answer": "Yes, personal practice advances independently.",
+    "integration": "Updated the accepted session-time contract and verified the issue's acceptance and labels."
+  },
+  "state": "ready",
+  "needsInput": false
+}
+```
+
+Choose `state` and `needsInput` from the remaining work after reconciling the
+answer. For example, a different unresolved human choice keeps the issue in
+`proposal` with `needsInput: true`. The accepted meaning owner remains the source
+of product decisions; this operation reconciles its issue status.
+
+Begin a batch with `interaction-begin` and its stable key. Complete it only after
+all enrolled issues have no pending or answered decision records and the current
+event snapshot has been reconciled:
+
+```json
+{
+  "op": "interaction-complete",
+  "repository": "owner/repository",
+  "threadId": "THREAD_UUID",
+  "interactionId": "<id-from-status>",
+  "checkRevision": 12
+}
+```
+
+Completion settles the inspected event revision and releases the execution gate.
+If events changed during settlement, refresh status and reconcile them before
+retrying. While the interaction gate is active, `settle` may report `idle: false`
+by design; that does not mean the inspected events were missed, and settlement
+does not release the gate. Explicit `wakeup` can release an active batch early;
+unanswered records remain, and Conductor will not reopen that unchanged batch
+automatically. A materially changed decision or new user request can create a
+new batch.
+
 After a migration, the service starts with admission paused. Explicitly enable
 it only after reviewing the migrated issue states:
 
@@ -136,13 +244,21 @@ It uses evidence and consequences rather than a list of allowed fixes. Admission
 pauses do not prevent otherwise authorized preparation; explicit holds and broader
 read-only instructions still apply. A ready label does not lift these restrictions.
 
-It asks you only when materially conflicting goals, a consequential choice it
+It asks you when materially conflicting goals, a consequential choice it
 cannot reasonably infer, missing authority or evidence only you can provide
-blocks progress. It completes independent work and brings a concrete recommendation
-with the remaining question. Resolved questions and obsolete blockers are reconciled
-from evidence. Defining acceptance criteria does not demonstrate their satisfaction;
-completion still requires the appropriate evidence and verified delivery. Durable
-meaning stays with the project's existing owner. Unchanged evidence reuses valid
+blocks progress. It first completes discoverable investigation and independent
+preparation, then brings a recommendation with enough plain-language context for
+you to decide without following the investigation. It prioritizes decisions that
+can unblock several tasks, and follows up when answers reveal another useful
+choice. Conductor records each answer and integration progress on the owning issue
+before asking the next question. A replacement director resumes from those
+records, so completed questions are not repeated. The same unchanged batch is
+not reopened after explicit `wakeup`; a materially changed decision or new user
+request can create a new batch. Answers resolve decisions; they do not establish
+evidence for outcomes that still require testing or human qualification. Defining
+acceptance criteria does not demonstrate their satisfaction; completion still
+requires the appropriate evidence and verified delivery. Durable meaning stays
+with the project's existing owner. Unchanged evidence reuses valid
 analysis rather than triggering repeated Astra calls or duplicate issue comments.
 
 Use ordinary chat for questions, approvals and issue direction. The optional
@@ -214,15 +330,27 @@ code. If nothing changed, it does not start a model turn.
 The service checks the director's actual host status. If it is idle, Conductor
 sends one wakeup to reconcile current state. If the director is already
 working, changes remain pending for its next check; Conductor does not flood
-the same session with additional wakeup messages. Before ending a turn with no
-further immediate action, including after presenting a blocking question,
-request fresh `status`, inspect its issue/job state
-and pending events, then submit `settle` with that response's exact
-`checkRevision`. Settling acknowledges only events through the inspected
-snapshot. If it returns `idle: false`, request status again and repeat the
-inspection and settle in the same turn. If it returns `idle: true`, finish the
-turn with: “Conductor is idle. Say ‘wakeup’ to manually wake Conductor.” Only
-finishing the turn makes the host thread idle; `settle` does not.
+the same session with additional wakeup messages.
+
+When current work has useful human decisions or other input to resolve, Conductor
+opens a persistent interaction phase before resuming foreground execution. It
+keeps questions as the visible foreground conversation while independent workers
+continue. Worker events and internal Conductor messages queue quietly. The phase
+survives turn endings and does not repeat unanswered questions. Every answer is
+stored with its owning issue and integrated before the next question. The user
+can say `wakeup` to end the interaction early; unanswered decisions remain
+recorded and the same unchanged batch is not immediately reopened. Once no useful
+human contribution remains, Conductor reconciles queued events and automatically
+continues eligible authorized work, while preserving explicit admission pauses
+and holds.
+
+Outside that interaction phase, before ending a turn, request fresh `status`,
+inspect issue/job state and pending events, then submit `settle` with the
+response's exact `checkRevision`. Settling acknowledges only events through the
+inspected snapshot. If it returns `idle: false`, request status again and repeat
+inspection and settling in the same turn. If it returns `idle: true`, finish the turn with:
+“Conductor is idle. Say ‘wakeup’ to manually wake Conductor.” Only finishing the
+turn makes the host thread idle; `settle` does not.
 
 Say `wakeup` in the Desktop director chat, or run `conductor wakeup` from the
 configured checkout, to ensure the service is available and ask it to check

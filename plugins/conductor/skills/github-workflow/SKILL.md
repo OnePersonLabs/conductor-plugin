@@ -33,9 +33,18 @@ for a materially new or competing direction, not merely an underspecified task.
 
 Use `needs-input` only for an actual unresolved human dependency. Investigate
 before asking, complete independent preparation and provide a recommendation.
+When useful human input can unlock or clarify current work, gather such questions
+into a focused, proactive interaction batch, including gaps discovered without a
+`needs-input` label. Explain each question so the user needs no knowledge of the
+agent's investigation or external reading to answer. Persist answers and their
+integration on the owning issue, and resume the batch from those records.
 Reconcile stale questions and remove the modifier when evidence or an authorized
-decision resolves them. Judge issue text, relationships and labels against current
-facts and accepted intent through the same Astra workflow; report repairs as
+decision resolves them. Move an issue out of `proposal` when its candidate direction is accepted or
+otherwise resolved; retain that state only while the decision remains open.
+Rejection resolves the decision but does not authorize implementation. Partial
+answers leave only the unresolved decision and its corresponding state in place.
+Judge issue text, relationships and labels against current facts and accepted
+intent through the same Astra workflow; report repairs as
 completed only after verifying the writes. Preserve explicit holds and admission
 pauses. Defining acceptance is planning; declaring it satisfied requires evidence
 appropriate to the complete claim and the existing delivery requirements.

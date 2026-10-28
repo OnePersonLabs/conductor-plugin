@@ -5,7 +5,9 @@ it autonomously triages reports, prepares accepted work, repairs the backlog,
 manages holds and directs implementation. Astra judges planning and triage;
 the director applies and verifies supported changes. It asks you when a concrete
 human dependency remains, with a recommendation, rather than requiring approval
-for routine planning within accepted goals. A small local service handles worker ownership,
+for routine planning within accepted goals. It batches useful questions in chat
+and records answers on their issues so interrupted or replaced chats can continue
+without repeating resolved decisions. A small local service handles worker ownership,
 capacity, events, recovery and delivery. When nothing needs attention, the
 director ends its turn; an unchanged idle check does not call a model.
 
@@ -20,8 +22,8 @@ Once you explicitly enable Conductor for a configured repository, it keeps one
 Desktop director chat bound to that repository. Relevant changes wake that
 chat when it is idle. If it is already working, Conductor records that there is
 more to check and lets the current turn sort out the next work without extra
-wakeup messages. When it has nothing actionable, it tells you to say “wakeup”
-to check again.
+wakeup messages. When it has no further work or useful input to resolve, it tells you to say
+“wakeup” to check again.
 
 ## First use
 
@@ -99,10 +101,14 @@ through handoff and lifecycle verification; see the same guide for the full orde
 ## How issue states work
 
 - `triage`: investigate incoming or unclassified work.
-- `proposal`: develop an unaccepted direction; no implementation dispatch.
+- `proposal`: develop an unaccepted direction; no implementation dispatch until
+  that direction is accepted. Conductor removes the label when the underlying
+  decision is resolved; a rejection does not make the work ready.
 - `ready`: accepted bounded work; dependencies can still block admission.
 - `on-hold`: paused until you explicitly release it.
-- `needs-input`: a specific unresolved decision blocks the affected work.
+- `needs-input`: a specific unresolved decision blocks the affected work. It is
+  removed when no human input remains; partial decisions retain only the remaining
+  blocker.
 
 Accepted implementation issues created from a plan can be ready immediately.
 Newly reported bugs normally enter triage. Conductor investigates and fills
