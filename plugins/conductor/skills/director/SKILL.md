@@ -73,7 +73,10 @@ unfinished operation and finish the turn. Do not continue the ordinary settle
 loop merely to consume work meant for the replacement.
 
 The replacement must wait for its UUID to become the saved binding before
-issuing director controls. Repeating attach for the same destination resumes
+issuing director controls. If attach is pending, report that result and end
+the turn; the service will reconcile the handoff and wake the replacement
+when its native activity permits it. Do not keep a model polling loop alive.
+Repeating attach for the same destination resumes
 the request. A competing destination fails rather than replacing it silently.
 Unknown activity or an unreconciled queue operation leaves the handoff pending:
 report the exact blocker, reconcile it, and retry the same attach. A stopped
