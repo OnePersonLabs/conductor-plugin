@@ -89,7 +89,9 @@ To get a fresh director context, say “Move Conductor to a fresh chat” in the
 current runner, or “Make this the Conductor runner” in another project chat.
 The [chat handoff](plugins/conductor/docs/workflow.md#move-the-director-to-another-chat)
 preserves worker ownership, holds and execution pauses and waits for an active
-director to finish before switching.
+director to finish before switching. The replacement automatically archives the
+superseded runner after verifying the handoff; its conversation history remains
+recoverable. You can explicitly ask to keep it visible.
 For plugin rollouts, finish changes and checks, publish, refresh and verify trust
 before creating the replacement chats. Keep the installed bundle unchanged
 through handoff and lifecycle verification; see the same guide for the full order.

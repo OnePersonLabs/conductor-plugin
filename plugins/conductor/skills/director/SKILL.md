@@ -100,9 +100,22 @@ for the old turn continue to be processed.
 
 Never use `conductor stop` to transfer the director: it also stops workers.
 Preserve admission pauses, holds, pending events and original worker ownership.
-Leave the old chat available unless the user requests archiving. Once the
-binding changes, the old chat must not issue controls or reclaim it without
-another explicit takeover request.
+Once the binding changes, the old chat must not issue controls or reclaim it
+without another explicit takeover request.
+
+The replacement automatically archives the superseded director after verifying
+the committed binding and a completed handoff with no unresolved recovery warning.
+Identify the old chat from the attach receipt's `fromThreadId` or the existing
+`director-attached` event, never from its title alone. Recheck that it is no longer
+bound, has no active native turn or queued user input, and that outstanding
+questions and operational duties have their current GitHub/meaning/runtime owner.
+Use the host's native thread archive operation; archive preserves conversation
+history. Archive only that superseded director, not builders, reviewers, worktrees
+or unrelated chats. Honor an explicit request to keep it visible. A pending or
+failed handoff never authorizes archiving its current owner. If archiving fails
+or its outcome is uncertain, inspect archive state before retrying, report the
+remaining cleanup and reuse the existing handoff context at the next normal
+check. Do not add another ledger or keep a polling turn alive for cleanup.
 
 ## Triage and direct work
 

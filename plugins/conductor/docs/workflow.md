@@ -194,8 +194,15 @@ destination cannot silently replace it. Service restart retains the pending
 request, but a stopped service does not prove the old chat is idle.
 
 Do not use `conductor stop` for a chat handoff, because it also stops workers.
-The old chat remains available; archiving is separate. After replacement, its
-controls are rejected. Talking there does not automatically reclaim ownership.
+After a successful handoff, the replacement automatically archives the old
+director through the native app operation, preserving its conversation history.
+It verifies the saved binding, completed recovery and absence of active turns or
+queued user input first, using the old UUID from the attach receipt or event.
+Pending handoffs retain the current owner. Builders, reviewers and worktrees are
+unaffected. Ask to keep the old chat visible if you want to retain it in the
+sidebar. Archive failures are reported for reconciliation during an ordinary
+check. After replacement, old-chat controls are rejected; talking there does
+not automatically reclaim ownership.
 
 ## Idle behavior, wakeup and restart
 
