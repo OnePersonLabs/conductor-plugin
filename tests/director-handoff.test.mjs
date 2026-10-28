@@ -150,6 +150,27 @@ test('pre-commit validation failure remains an explicit blocked handoff', async 
   assert.equal(h.state.director.threadId, OLD);
 });
 
+test('binding save failure restores the old pending binding before recording the blocker', async () => {
+  const h = fixture();
+  let persisted = structuredClone(h.state);
+  let failBindingSave = true;
+  h.coordinator.store.read = async () => structuredClone(persisted);
+  h.coordinator.store.save = async state => {
+    if (failBindingSave && state.director.threadId === NEXT && !state.director.handoff) {
+      failBindingSave = false;
+      throw new Error('binding write failed');
+    }
+    persisted = structuredClone(state);
+  };
+  const result = await h.coordinator.attachThread(NEXT);
+  assert.equal(result.status, 'handoff-pending');
+  assert.match(result.blocker, /binding write failed/);
+  assert.equal(h.state.director.threadId, OLD);
+  assert.equal(h.state.director.handoff.status, 'blocked');
+  assert.equal(persisted.director.threadId, OLD);
+  assert.equal(persisted.director.handoff.status, 'blocked');
+});
+
 test('active handoff persists, suppresses signals, and switches only on the matching terminal receipt', async () => {
   const h = fixture({ old: activity('active', 'turn-live', 4), target: activity('idle', 'target-old', 3) });
   const pending = await h.coordinator.attachThread(NEXT);

@@ -123,7 +123,6 @@ export class Coordinator extends EventEmitter {
         // Local receipt fallback covers missed filesystem notifications. It never
         // polls GitHub or invokes a model unless a native idle transition exists.
         this.activityTimer = setInterval(refresh, 1000);
-        if (!handoffThreadId) await this.refreshDirectorActivity();
       }
       if (this.directorActivity) await this.refreshDirectorActivity();
       this.ready = true;
@@ -304,6 +303,8 @@ export class Coordinator extends EventEmitter {
     handoff.status = 'switching'; handoff.blocker = null; await this.save();
     let target, bindingCommitted = false;
     const originalOwnership = structuredClone(director.threadHostOwnership ?? null);
+    const originalNativeActivity = structuredClone(director.nativeActivity ?? null);
+    const originalActivityRevision = this.activityRevision;
     try {
       let queued = await this.directorHost.client.listQueuedMessages({ threadId: handoff.fromThreadId });
       for (const batch of director.batches.filter(item => item.threadId === handoff.fromThreadId && ['submitting','queued','uncertain'].includes(item.status))) {
@@ -332,15 +333,15 @@ export class Coordinator extends EventEmitter {
 
       target = await this.directorHost.validateDesktopThread(handoff.toThreadId);
       const baseline = await this.directorActivity.read(handoff.toThreadId);
+      const attachKey = `director-attached:${handoff.fromThreadId}:${handoff.toThreadId}:${handoff.requestedAt}`;
+      if (!director.events.some(item => item.dedupeKey === attachKey)) {
+        await this.director.events.emit({ kind: 'director-attached', fromThreadId: handoff.fromThreadId, threadId: handoff.toThreadId, dedupeKey: attachKey });
+      }
       const latestOld = await this.directorActivity.read(handoff.fromThreadId);
       if (!['idle', 'interrupted'].includes(latestOld.state) || latestOld.turnId !== handoff.turnId) {
         if (latestOld.state === 'active' && latestOld.turnId) handoff.turnId = latestOld.turnId;
         const status = latestOld.state === 'active' && latestOld.turnId ? 'waiting-turn' : 'blocked';
         return pending(`Old chat changed during queue reconciliation; expected terminal receipt for turn ${handoff.turnId ?? 'unknown'}, observed ${latestOld.state} turn ${latestOld.turnId ?? 'unknown'}.`, status);
-      }
-      const attachKey = `director-attached:${handoff.fromThreadId}:${handoff.toThreadId}:${handoff.requestedAt}`;
-      if (!director.events.some(item => item.dedupeKey === attachKey)) {
-        await this.director.events.emit({ kind: 'director-attached', fromThreadId: handoff.fromThreadId, threadId: handoff.toThreadId, dedupeKey: attachKey });
       }
       if (director.recoveryRequired?.turnId && director.recoveryRequired.turnId === handoff.turnId && !director.recoveryRequired.resolvedAt) {
         director.recoveryRequired.resolvedAt = new Date().toISOString(); director.recoveryRequired.outcome = 'Director chat handed off after its native turn reached a terminal state.';
@@ -361,17 +362,19 @@ export class Coordinator extends EventEmitter {
         } catch { /* Preserve the pending handoff when commit state cannot be read. */ }
       }
       if (!bindingCommitted) {
-        const savedOldHandoff = persisted?.director?.threadId === handoff.fromThreadId && persisted.director.handoff;
-        if (target && persisted?.director?.threadId !== handoff.fromThreadId) {
-          director.threadId = handoff.fromThreadId; director.threadHostOwnership = originalOwnership; director.handoff = handoff;
-          this.state.threadId = handoff.fromThreadId;
-          this.directorHost.state = this.state.director;
-          this.directorHost.threadId = handoff.fromThreadId;
-          this.directorHost.currentStatus = { type: 'unknown', activeFlags: [] };
-          this.director = new Director(this, handoff.fromThreadId);
-        }
-        const savedHandoff = savedOldHandoff ? handoff : director.handoff ?? handoff;
-        savedHandoff.status = 'blocked'; savedHandoff.blocker = error.message;
+        director.threadId = handoff.fromThreadId;
+        director.threadHostOwnership = originalOwnership;
+        director.handoff = handoff;
+        if (originalNativeActivity) director.nativeActivity = originalNativeActivity;
+        else delete director.nativeActivity;
+        this.state.threadId = handoff.fromThreadId;
+        this.directorHost.state = this.state.director;
+        this.directorHost.threadId = handoff.fromThreadId;
+        this.directorHost.threadEnsured = true;
+        this.directorHost.currentStatus = { type: 'unknown', activeFlags: [] };
+        this.activityRevision = originalActivityRevision;
+        this.director = new Director(this, handoff.fromThreadId);
+        handoff.status = 'blocked'; handoff.blocker = error.message;
         const saved = await this.save().then(() => true, () => false);
         const blocker = saved ? error.message : `Handoff is still pending, but the blocker could not be persisted: ${error.message}`;
         return { status: 'handoff-pending', fromThreadId: handoff.fromThreadId, toThreadId: handoff.toThreadId, turnId: handoff.turnId ?? null, blocker };
