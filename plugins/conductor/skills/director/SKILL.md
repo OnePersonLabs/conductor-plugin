@@ -187,14 +187,11 @@ If hook status is missing or unknown, the service suppresses automatic wakeups;
 never synthesize idle. If recovery reports `lifecycle-receipt-missing`, inspect
 the native chat and hook execution before manually resuming; event settlement
 does not prove that the native turn ended. Automatic wakes remain suspended
-until recovery. Trust the plugin hooks when Desktop requests review of them,
-then reload Desktop after hook changes so they load. Installation and saved
-trust alone do not prove the running host reloaded its hooks. The verified
-recovery on Desktop 0.165.0-alpha.1.2 was, with the director idle, Settings >
-Hooks > Conductor, toggling UserPromptSubmit off and on, then a manual wake
-with matching active/terminal receipts. Subsequent automatic queue delivery
-also produced matching receipts. See the repository README for the procedure.
-This is installation recovery; the normal runner uses no UI automation.
+until recovery. Trust the plugin hooks when Desktop requests review of them.
+Do not prescribe routine restarts or hook toggles after refresh. Missing
+receipts require diagnosis of the delivery path and actual hook execution;
+cross-chat messaging bypasses `UserPromptSubmit`, while native queue delivery
+exercises it. The normal runner uses no UI automation.
 When Desktop is open, service wakeups are delivered through its native session
 queue only after the director is idle. If Desktop is closed, the wake remains
 queued for that session and is consumed when Desktop is available. The

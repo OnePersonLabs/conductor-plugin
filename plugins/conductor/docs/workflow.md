@@ -64,9 +64,9 @@ Desktop is the primary interactive surface. Lifecycle hooks report when its
 director chat is active, idle or interrupted; the observer uses those signals
 to suppress wakeups while the director is active. Unknown host status suppresses
 automatic wakeups; Conductor never assumes unknown means idle. Trust the plugin
-hooks when Desktop requests hook review. After installing or refreshing hook
-definitions, fully restart Desktop to reload its host's plugin cache; creating
-a new chat alone did not load the new hooks in the Windows trial. Do not bind
+hooks when Desktop requests hook review. Routine plugin refresh does not
+establish a need to restart Desktop. Diagnose missing receipts against actual
+event delivery and execution before prescribing reloads. Do not bind
 a Desktop chat to the shared-daemon proxy or infer its live status from that
 proxy. The proxy limitation is recorded in the [runtime selection
 evidence](../../../docs/runtime-selection-2026-10-20.md).

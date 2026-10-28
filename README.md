@@ -31,8 +31,6 @@ codex plugin add conductor@conductor
 npm install -g 'C:\path\to\conductor-plugin'
 ```
 
-Fully restart Codex Desktop after plugin installation so its host reloads the
-director skill and hooks. A new chat alone may retain the host's old plugin cache.
 In WSL, install through that environment's own paths, Node/npm
 and authenticated GitHub CLI. Windows and WSL have separate local runtimes.
 
@@ -54,15 +52,11 @@ Merely installing the plugin or preparing configuration does not enable
 processing.
 
 Review and trust the Conductor lifecycle hooks when Desktop prompts you to do
-so. Installation and saved trust do not establish that an already-loaded
-Desktop chat has refreshed its hook runtime. After a local refresh, reload
-Desktop before relying on automatic wakeups. On Desktop 0.165.0-alpha.1.2,
-the tested recovery for an idle director was Settings > Hooks > Conductor:
-turn its UserPromptSubmit hook off and back on, then submit `wakeup` in the
-existing director chat. Verify matching active and idle lifecycle receipts
-before treating recovery as complete. Do not toggle hooks during a running turn.
-This is installation recovery, not part of the runner loop; normal operation
-uses the native queue and hooks without UI automation. The final automatic
+so. Routine refresh does not require a blanket Desktop restart or hook toggle.
+If lifecycle receipts are missing, diagnose the event delivery path and actual
+hook execution before changing host settings. Cross-chat messaging bypasses
+`UserPromptSubmit`; use the native queue for programmatic director messages.
+Normal operation uses the native queue and hooks without UI automation. The final automatic
 test restarted the observer with `conductor wakeup` and delivered through
 the queue, without a composer submission.
 If lifecycle status is unknown, automatic wakeups are suppressed instead of

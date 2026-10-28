@@ -124,13 +124,19 @@ recorded entry, input completion, successful handling and exit, followed by
 matching active/idle receipts for native turn
 `01a18010-86cd-7741-8979-2e3db282e1ec` (activity revisions 5 and 6).
 
-The demonstrated repair is native runtime configuration reload. The exact
-internal stale object was not observed. Codex's
+The successful turn followed a native settings toggle, but this was not a
+controlled comparison and does not establish that reload was necessary. The
+exact cause of the earlier failure remains unproven. Codex's
 [plugin trust implementation](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/hooks/src/engine/plugin_trust.rs)
 compares current bundle contents with captured trust, and its
 [configuration processor](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/request_processors/config_processor.rs)
-can refresh loaded thread configuration. Those mechanisms support the stale
-runtime explanation; they do not prove a particular trust rejection occurred.
+can refresh loaded thread configuration. These capabilities do not prove that
+a stale runtime or trust rejection caused this incident. Codex also has
+[automatic skill watching](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/skills_watcher.rs)
+and [effective-plugin hook refresh](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/effective_plugin_change.rs).
+The later cross-chat messaging attempts bypassed UserPromptSubmit; native queue
+messages produced matching receipts. Do not generalize this trial into a
+mandatory restart, toggle, or additional Desktop reload bridge after refresh.
 No handler logic, timeout, registrations or native thread ownership changed.
 
 Temporary instrumentation was removed and the clean plugin refreshed in both

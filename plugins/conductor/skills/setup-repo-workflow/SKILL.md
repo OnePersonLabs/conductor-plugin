@@ -67,9 +67,9 @@ The service can report status and reconcile events while admission is paused.
 
 ## Enable the Desktop director
 
-Complete any requested plugin refresh and host hook reload before starting the
-onboarding turn. Do not refresh the plugin while onboarding is active: changing
-bundle contents can invalidate that turn's loaded hook trust before Stop runs.
+Complete requested plugin installation before starting the onboarding turn.
+Do not infer a restart or hook-toggle requirement from missing receipts;
+diagnose event delivery and hook execution first.
 
 Only do this when the user explicitly asks to enable Conductor. If this chat is
 already the saved director for this repository, reuse its thread ID. Otherwise,
@@ -106,8 +106,8 @@ the director is active, idle, or interrupted. Unknown host activity suppresses
 automatic wakeups; never synthesize an idle status. Issue changes while it is
 active remain pending for that turn; signals wake it only when positively
 known to be idle. Trust the plugin hooks when Desktop requests review of them,
-and fully restart Desktop after hook-definition changes so its host reloads
-the lifecycle handlers. A new chat alone may retain the old host plugin cache.
+and verify actual receipts when diagnosing a failure rather than assuming a
+stale host cache.
 
 ## Verify and hand off
 
