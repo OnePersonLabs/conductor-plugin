@@ -32,6 +32,12 @@ export async function handleDirectorLifecycle(payload, { activityFactory = optio
   const pendingDestination = director?.handoff?.fromThreadId === director?.threadId && director.handoff.toThreadId === threadId && ownership?.host === 'codex-desktop' && (!ownership.threadId || ownership.threadId === director.threadId);
   if (config.version !== 2 || (!boundThread && !pendingDestination)) return { handled: false };
 
+  // Reject a new submission during the final binding write. The old turn's
+  // terminal receipts remain admissible; blocked handoffs still allow recovery.
+  if (boundThread && director.handoff?.fromThreadId === threadId && director.handoff.status === 'switching' && event === 'UserPromptSubmit') {
+    return { handled: true, error: `Conductor is switching to chat ${director.handoff.toThreadId}. This new turn was not started. Retry in that chat once the handoff completes.` };
+  }
+
   let activity;
   try {
     activity = activityFactory({ dir: join(repo.commonDir, 'conductor') });

@@ -155,15 +155,26 @@ test('pending handoff informs source chat to finish and end, without making dest
   assert.equal(destination.hookOutput, null, 'pending chats receive lifecycle receipts but no conductor controls or context');
 });
 
-test('the source chat still receives handoff instructions while the queue is switching', async t => {
+test('switching rejects new source prompts but preserves the current turn and its terminal receipt', async t => {
   const { root, dir, threadId } = await fixture(t);
+  const payload = { cwd: root, session_id: threadId, turn_id: 'turn-1' };
+  await handleDirectorLifecycle({ ...payload, hook_event_name: 'UserPromptSubmit', prompt: 'current operation' });
   await writeFile(join(dir, 'state.json'), JSON.stringify({
     version: 1, jobs: [], runtimeEnabled: true,
     director: { threadId, enabled: true, threadHostOwnership: { threadId, host: 'codex-desktop' }, handoff: { fromThreadId: threadId, toThreadId: DESTINATION, turnId: 'turn-1', status: 'switching' } },
   }));
-  const result = await handleDirectorLifecycle({ cwd: root, session_id: threadId, turn_id: 'turn-2', hook_event_name: 'UserPromptSubmit', prompt: 'new request' }, { activityFactory: () => ({ record: async value => ({ state: 'active', turnId: value.turnId }), close() {} }) });
-  assert.match(result.hookOutput.hookSpecificOutput.additionalContext, /Finish only the current operation/);
-  assert.match(result.hookOutput.hookSpecificOutput.additionalContext, /Do not wait for the replacement chat/);
+  const rejected = await handleDirectorLifecycle({ ...payload, turn_id: 'turn-2', hook_event_name: 'UserPromptSubmit', prompt: 'new request' });
+  assert.ok(rejected.error.includes(DESTINATION));
+  const ongoing = await handleDirectorLifecycle({ ...payload, hook_event_name: 'PostToolUse' });
+  assert.equal(ongoing.status.turnId, 'turn-1');
+  assert.match(ongoing.hookOutput.hookSpecificOutput.additionalContext, /Finish only the current operation/);
+  const terminal = await handleDirectorLifecycle({ ...payload, hook_event_name: 'Stop' });
+  assert.equal(terminal.status.state, 'idle');
+  assert.equal(terminal.status.turnId, 'turn-1');
+  const afterTerminal = await handleDirectorLifecycle({ ...payload, turn_id: 'turn-3', hook_event_name: 'UserPromptSubmit', prompt: 'another request' });
+  assert.ok(afterTerminal.error);
+  const activity = new DirectorActivity({ dir });
+  try { assert.deepEqual(await activity.read(threadId), terminal.status); } finally { activity.close(); }
 });
 
 test('pending destination lifecycle is recorded without director context before binding', async t => {

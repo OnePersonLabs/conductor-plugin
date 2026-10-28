@@ -81,6 +81,9 @@ the request. A competing destination fails rather than replacing it silently.
 Unknown activity or an unreconciled queue operation leaves the handoff pending:
 report the exact blocker, reconcile it, and retry the same attach. A stopped
 service does not prove that its Desktop chat is idle.
+During the final binding switch, a new prompt in the old chat is rejected with
+the destination UUID. Retry there after the binding changes; terminal receipts
+for the old turn continue to be processed.
 
 Never use `conductor stop` to transfer the director: it also stops workers.
 Preserve admission pauses, holds, pending events and original worker ownership.
