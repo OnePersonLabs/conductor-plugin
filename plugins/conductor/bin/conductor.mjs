@@ -20,6 +20,7 @@ import { git } from '../lib/process.mjs';
 const HELP = `Conductor 0.1.0 -- conversational GitHub issue director
 Usage: conductor enable [--thread UUID]
        conductor enable --host desktop --thread UUID
+       conductor attach --host desktop --thread UUID
        conductor wakeup
        conductor signal                    (internal, passive)
        conductor start --thread UUID       (compatibility)
@@ -35,7 +36,7 @@ Migration preview makes no changes; migrated configuration remains admission-pau
 export function parseArgs(args) {
   const result = { command: 'run', overrides: {} };
   if (args[0] && !args[0].startsWith('-')) result.command = args.shift();
-  if (!['run','signal','status','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
+  if (!['run','signal','status','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup','attach'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
   if (result.command === 'cleanup') {
     const option = args.shift();
     if (option !== undefined && option !== '--preview') throw new Error('cleanup accepts only --preview.');
@@ -52,8 +53,10 @@ export function parseArgs(args) {
     else if (flag === '--poll-interval') { result.overrides.pollInterval = args.shift(); if (!result.overrides.pollInterval) throw new Error('--poll-interval requires a duration.'); }
     else if (flag === '--thread' && result.command === 'resume') { result.threadId = args.shift(); if (!result.threadId) throw new Error('--thread requires the existing thread ID.'); }
     else if (flag === '--role' && result.command === 'resume') { result.role = args.shift(); if (!['builder', 'reviewer'].includes(result.role)) throw new Error('--role must be builder or reviewer.'); }
-    else if (flag === '--thread' && ['start','serve','enable'].includes(result.command)) { result.threadId = args.shift(); if (!result.threadId) throw new Error('--thread requires a thread ID.'); }
-    else if (flag === '--host' && ['start','serve','enable'].includes(result.command)) { result.host = args.shift(); if (!['desktop', 'daemon'].includes(result.host)) throw new Error('--host must be desktop or daemon.'); }
+    else if (flag === '--thread' && ['start','serve','enable','attach'].includes(result.command)) { result.threadId = args.shift(); if (!result.threadId) throw new Error('--thread requires a thread ID.'); }
+    else if (flag === '--host' && ['start','serve','enable','attach'].includes(result.command)) { result.host = args.shift(); if (!['desktop', 'daemon'].includes(result.host)) throw new Error('--host must be desktop or daemon.'); }
+    else if (flag === '--attach-only' && result.command === 'serve') result.attachOnly = true;
+    else if (flag === '--handoff-thread' && result.command === 'serve') { result.handoffThreadId = args.shift(); if (!result.handoffThreadId) throw new Error('--handoff-thread requires a thread ID.'); }
     else if (flag === '--enable' && result.command === 'serve') result.enable = true;
     else if (flag === '--manual-wake' && result.command === 'serve') result.manualWake = true;
     else if (flag === '--request-file' && result.command === 'rpc') { result.requestFile = args.shift(); if (!result.requestFile) throw new Error('--request-file requires a JSON file.'); }
@@ -61,7 +64,9 @@ export function parseArgs(args) {
     else if (flag === '--mapping' && result.command === 'migrate') { result.mappingFile = args.shift(); if (!result.mappingFile) throw new Error('--mapping requires a JSON file.'); }
     else throw new Error(`Unknown option: ${flag}`);
   }
-  if (['start','serve','enable'].includes(result.command) && result.threadId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.threadId)) throw new Error('--thread must be the existing director thread UUID.');
+  if (['start','serve','enable','attach'].includes(result.command) && result.threadId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.threadId)) throw new Error('--thread must be the existing director thread UUID.');
+  if (result.command === 'attach' && (result.host !== 'desktop' || !result.threadId)) throw new Error('attach requires --host desktop --thread UUID.');
+  if (result.command === 'serve' && result.handoffThreadId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.handoffThreadId)) throw new Error('--handoff-thread must be an existing Desktop chat UUID.');
   if (result.command === 'enable' && result.host === 'desktop' && !result.threadId) throw new Error('Desktop mode requires --thread with the current Codex Desktop chat UUID; Conductor cannot create a private replacement chat.');
   if (result.command !== 'run' && Object.keys(result.overrides).length) throw new Error('Runtime options apply only to run.');
   return result;
@@ -137,10 +142,10 @@ async function main() {
     const result = await store.cleanupStopped(Date.now(), repo.root, configVerified);
     console.log(JSON.stringify(result, null, 2)); return;
   }
-  if (['start','enable','wakeup'].includes(options.command)) {
+  if (['start','enable','wakeup','attach'].includes(options.command)) {
     if (options.command === 'start' && !options.threadId) throw new Error('Start requires --thread with the existing director chat UUID. Use `conductor enable` to create or resume the configured director automatically.');
-    const enabled = options.command === 'start' || options.command === 'enable';
-    const result = await ensureService({ store, root: repo.root, threadId: options.threadId, host: options.host,
+    const enabled = options.command === 'start' || options.command === 'enable' || options.command === 'attach';
+    const result = await ensureService({ store, root: repo.root, threadId: options.threadId, attachThreadId: options.command === 'attach' ? options.threadId : undefined, host: options.host,
       enable: enabled, manualWake: options.command === 'wakeup' || options.command === 'start' || options.command === 'enable',
       execute: launch, cliPath });
     if (result.status === 'disabled') throw new Error('Conductor is not enabled for this repository. Run `conductor enable` explicitly first.');
@@ -248,7 +253,7 @@ async function main() {
     watcher = watch(store.controls, () => controls());
     fallback = setInterval(controls, 1000);
   console.log(`Conductor director: ${config.repository}; ${config.agents} worker slot(s); external reconciliation every ${config.pollMs / 60000}m.`);
-    await coordinator.start({ threadId: options.threadId, host: options.host, enable: options.enable === true, manualWake: options.manualWake === true, beforeScan: async () => { controlsReady = true; await controls(); } });
+    await coordinator.start({ threadId: options.threadId, host: options.host, enable: options.enable === true, manualWake: options.manualWake === true, attachOnly: options.attachOnly, handoffThreadId: options.handoffThreadId, beforeScan: async () => { controlsReady = true; await controls(); } });
   } catch (error) { cleanup(); throw error; }
 }
 

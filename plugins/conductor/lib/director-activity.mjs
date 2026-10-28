@@ -51,7 +51,14 @@ export class DirectorActivity {
     return { state: row.state, turnId: row.turn_id, wakeupMarker: row.wakeup_marker, revision: row.revision };
   }
 
-  async record({ threadId, turnId, event, wakeupMarker = null }) {
+  async pruneExcept(threadIds) {
+    if (!Array.isArray(threadIds) || threadIds.some(id => typeof id !== 'string' || !id)) throw new TypeError('threadIds must be an array of nonempty thread IDs.');
+    if (!threadIds.length) { this.db.exec('DELETE FROM director_activity'); return; }
+    const placeholders = threadIds.map(() => '?').join(',');
+    this.db.prepare(`DELETE FROM director_activity WHERE thread_id NOT IN (${placeholders})`).run(...threadIds);
+  }
+
+  async record({ threadId, turnId, event, wakeupMarker = null, enrollmentBaseline = null }) {
     identity(threadId, 'threadId');
     identity(turnId, 'turnId');
     if (!EVENTS.has(event)) throw new TypeError(`Unsupported director activity event: ${String(event)}`);
@@ -74,7 +81,13 @@ export class DirectorActivity {
         // The bound thread may be enrolled during its first turn. A late tool
         // hook may establish that turn, but never supersedes a newer one.
       } else if (event === 'PostToolUse') {
-        // Late tool receipts cannot replace newer turns or clear an interrupt.
+        // A destination chat can already be in its first turn before it becomes
+        // the bound director. Enroll that turn only against the exact inactive
+        // activity row observed at binding time; this also rejects late events.
+        if (current && enrollmentBaseline && current.revision === enrollmentBaseline.revision && current.turn_id === enrollmentBaseline.turnId && current.state === enrollmentBaseline.state && current.state !== 'active' && current.turn_id !== turnId) {
+          this.db.prepare(`UPDATE director_activity SET state='active', turn_id=?, wakeup_marker=NULL, revision=revision+1, updated_at=?
+            WHERE thread_id=? AND revision=? AND turn_id=? AND state=?`).run(turnId, now, threadId, enrollmentBaseline.revision, enrollmentBaseline.turnId, enrollmentBaseline.state);
+        }
       } else if (current?.state === 'active' && current.turn_id === turnId) {
         const state = event === 'Stop' ? 'idle' : 'interrupted';
         this.db.prepare(`UPDATE director_activity SET state = ?, revision = revision + 1, updated_at = ?

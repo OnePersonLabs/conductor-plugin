@@ -156,6 +156,7 @@ export class DirectorEvents {
   }
 
   async _flush() {
+    if (this.state.handoff) return { status: 'handoff-pending', handoff: structuredClone(this.state.handoff) };
     if (!this.state.enabled) return { status: 'disabled' };
     if (this.state.recoveryRequired && !this.state.recoveryRequired.resolvedAt) return { status: 'recovery-required', reason: this.state.recoveryRequired };
     if (this.host) {

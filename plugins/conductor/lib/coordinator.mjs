@@ -47,7 +47,7 @@ export class Coordinator extends EventEmitter {
     });
   }
   async save() { await this.store.save(this.state); this.emit('status', this.state); }
-  async start({ beforeScan, threadId, enable = false, manualWake = false, host } = {}) {
+  async start({ beforeScan, threadId, enable = false, manualWake = false, host, attachOnly = false, handoffThreadId } = {}) {
     await this.store.acquire();
     try {
       this.state = await this.store.read();
@@ -63,14 +63,15 @@ export class Coordinator extends EventEmitter {
       await this.preflight();
       if (this.config.version === 2) {
         this.state.director ??= {};
-        if (threadId && this.state.director.threadId && threadId !== this.state.director.threadId) throw new Error('Repository already has a different designated director.');
+        this.state.director.attachProtocol = 1;
+        if (threadId && this.state.director.threadId && threadId !== this.state.director.threadId && !handoffThreadId) throw new Error('Repository already has a different designated director.');
         const hostMode = host === 'desktop' ? 'codex-desktop' : host === 'daemon' ? 'codex-app-server-daemon' : this.state.director.threadHostOwnership?.host;
         if (hostMode && this.state.director.threadHostOwnership?.host && hostMode !== this.state.director.threadHostOwnership.host) throw new Error('A bound director cannot be moved between app-server hosts. Preserve the existing host.');
         this.state.runtimeEnabled ??= Boolean(this.state.director.threadId);
         if (enable) this.state.runtimeEnabled = true;
         if (!this.state.runtimeEnabled) throw new Error('Repository runtime is not enabled. Use conductor enable.');
         if (!enable && !manualWake && this.state.director.enabled === false) throw new Error('Conductor was deliberately stopped; use wakeup to inspect or enable to restart observation.');
-        if (threadId) this.state.director.threadId = threadId;
+        if (threadId && (!this.state.director.threadId || threadId === this.state.director.threadId)) this.state.director.threadId = threadId;
         if (hostMode === 'codex-desktop') {
           if (!this.state.director.threadId) throw new Error('Create the director with the native Desktop task tool, then enable with its thread UUID.');
           this.state.director.threadHostOwnership = { threadId: this.state.director.threadId, host: hostMode, codexHome: environment.codexHome };
@@ -82,6 +83,7 @@ export class Coordinator extends EventEmitter {
           model: this.config.directorModel, state: this.state.director, save: () => this.save(), execute: this.execute, activity: this.directorActivity });
         await this.directorHost.connect();
         const bound = await this.directorHost.ensureThread();
+        if (this.directorActivity) await this.directorActivity.pruneExcept([bound, ...(this.state.director.handoff?.toThreadId ? [this.state.director.handoff.toThreadId] : [])]);
         this.director = new Director(this, bound);
         await this.director.events.start();
         this.directorHost.on('completed', turn => {
@@ -123,8 +125,11 @@ export class Coordinator extends EventEmitter {
         await this.refreshDirectorActivity();
       }
       this.timer = setInterval(() => this.wake(), this.config.pollMs);
-      if (manualWake || enable) await this.requestCheck({ manual: true });
-      else await this.wake();
+      if (handoffThreadId) await this.attachThread(handoffThreadId);
+      if (!attachOnly) {
+        if (manualWake || enable) await this.requestCheck({ manual: true });
+        else await this.wake();
+      }
     } catch (error) { this.activityWatcher?.close(); clearInterval(this.activityTimer); this.directorActivity?.close(); await this.directorHost?.close().catch(() => {}); if (this.state) { this.state.running = false; this.state.serviceReady = false; this.state.startupError = error.message; await this.save().catch(() => {}); } await this.store.release(); throw error; }
   }
   async preflight() {
@@ -136,7 +141,7 @@ export class Coordinator extends EventEmitter {
     await access(skillPath);
   }
   wake() {
-    if (!this.ready) return Promise.resolve();
+    if (!this.ready || this.state?.director?.handoff) return Promise.resolve();
     const now = Date.now();
     const cleanup = now - this.lastCleanupAt >= 60_000
       ? (this.lastCleanupAt = now, this.store.cleanupOwned().catch(error => this.emit('notice', `Retention cleanup: ${error.message}`)))
@@ -150,6 +155,7 @@ export class Coordinator extends EventEmitter {
       const activity = await this.directorActivity.read(this.state.director.threadId);
       if (this.activityRevision === activity.revision) return;
       this.activityRevision = activity.revision;
+      if (this.state.director.threadHostOwnership?.lifecycleBaseline && activity.state !== 'unknown') delete this.state.director.threadHostOwnership.lifecycleBaseline;
       this.state.director.nativeActivity = activity;
       const recovery = this.state.director.recoveryRequired;
       if (activity.state === 'interrupted') this.state.director.recoveryRequired = { native: true, turnId: activity.turnId, status: 'interrupted' };
@@ -173,11 +179,13 @@ export class Coordinator extends EventEmitter {
         this.director.events.pruneSettled();
       }
       await this.save();
-      if (activity.state === 'idle') await this.director.events.flush();
+      if (this.state.director.handoff) await this.progressHandoff(activity);
+      if (activity.state === 'idle' && !this.state.director.handoff) await this.director.events.flush();
     } finally { this.activityRefreshing = false; }
   }
   async requestCheck({ manual = false, reason } = {}) {
     if (!this.director) throw new Error('Director is not bound.');
+    if (this.state.director.handoff) return { status: 'handoff-pending', handoff: structuredClone(this.state.director.handoff) };
     if (manual) {
       await this.refreshDirectorActivity();
       // An explicit wake can continue a known ended director turn, but an
@@ -209,9 +217,121 @@ export class Coordinator extends EventEmitter {
   }
   async control(request) {
     if (!this.director) throw new Error('Migrate to version 2 and bind a director first.');
-    const result = await this.director.control(request);
-    if (request.op !== 'stop') await this.director.events.flush();
+    if (request.op === 'attach') return this.director.control(request);
+    this.directorControlCount = (this.directorControlCount ?? 0) + 1;
+    try {
+      const result = await this.director.control(request);
+      if (request.op !== 'stop') await this.director.events.flush();
+      return result;
+    } finally {
+      this.directorControlCount--;
+      if (!this.directorControlCount && this.state.director.handoff) this.progressHandoff(await this.directorActivity.read(this.state.director.handoff.fromThreadId)).catch(error => this.emit('notice', `Director handoff: ${error.message}`));
+    }
+  }
+  async attachThread(targetThreadId) {
+    const director = this.state.director;
+    if (!this.directorHost || this.directorHost.hostMode !== 'codex-desktop') throw new Error('Chat handoff requires the repository director to use the Desktop native queue.');
+    if (typeof targetThreadId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(targetThreadId)) throw new TypeError('Destination must be an existing Desktop chat UUID.');
+    if (director.handoff && director.handoff.toThreadId !== targetThreadId) throw new Error(`A handoff to ${director.handoff.toThreadId} is already pending; resolve it before choosing another chat.`);
+    await this.directorHost.validateDesktopThread(targetThreadId);
+    if (!director.threadId) {
+      const target = await this.directorHost.validateDesktopThread(targetThreadId);
+      director.threadId = targetThreadId; director.threadHostOwnership = { threadId: targetThreadId, host: 'codex-desktop', kind: 'attached', codexHome: resolve(process.env.CODEX_HOME ?? join(homedir(), '.codex')), lifecycleBaseline: await this.directorActivity.read(targetThreadId) };
+      this.state.threadId = targetThreadId; this.state.runtimeEnabled = true; this.directorHost.threadId = targetThreadId; this.directorHost.threadEnsured = true;
+      director.nativeActivity = await this.directorActivity.read(targetThreadId);
+      this.activityRevision = null;
+      await this.save();
+      await this.directorActivity.pruneExcept([targetThreadId]);
+      return { status: 'attached', threadId: target.id, nativeStatus: director.nativeActivity.state };
+    }
+    if (director.threadId === targetThreadId && !director.handoff) {
+      this.state.runtimeEnabled = true; await this.director.events.start(); await this.save();
+      return { status: 'already-attached', threadId: targetThreadId };
+    }
+    if (!director.handoff) {
+      const oldActivity = await this.directorActivity.read(director.threadId);
+      director.handoff = { fromThreadId: director.threadId, toThreadId: targetThreadId, status: oldActivity.state === 'active' ? 'waiting-turn' : 'blocked', turnId: oldActivity.state === 'unknown' ? null : oldActivity.turnId, requestedAt: new Date().toISOString(), blocker: oldActivity.state === 'unknown' ? 'The old Desktop chat has no lifecycle receipt; inspect or recover its native activity before switching.' : null };
+      await this.save();
+    }
+    const result = await this.progressHandoff(await this.directorActivity.read(director.threadId));
     return result;
+  }
+  async progressHandoff(activity) {
+    if (this.handoffProgressing) return { status: 'handoff-pending', handoff: structuredClone(this.state.director.handoff) };
+    this.handoffProgressing = true;
+    try { return await this._progressHandoff(activity); }
+    finally { this.handoffProgressing = false; }
+  }
+  async _progressHandoff(activity) {
+    const director = this.state.director, handoff = director?.handoff;
+    if (!handoff) return { status: 'unchanged' };
+    if (this.director?.events?.flushing) {
+      await Promise.allSettled([this.director.events.flushing]);
+      activity = await this.directorActivity.read(handoff.fromThreadId);
+    }
+    if (this.directorControlCount > 0) {
+      handoff.blocker = 'Waiting for the current director control operation to finish.';
+      await this.save(); return { ...structuredClone(handoff), handoffStatus: handoff.status, status: 'handoff-pending' };
+    }
+    if (handoff.status === 'waiting-turn') {
+      if (activity.state === 'active' && activity.turnId === handoff.turnId) return { status: 'handoff-pending', fromThreadId: handoff.fromThreadId, toThreadId: handoff.toThreadId, turnId: handoff.turnId, blocker: 'Waiting for the current native turn to end.' };
+      if (!['idle', 'interrupted'].includes(activity.state) || activity.turnId !== handoff.turnId) {
+        handoff.status = 'blocked'; handoff.blocker = `Expected terminal receipt for turn ${handoff.turnId}; observed ${activity.state} turn ${activity.turnId ?? 'unknown'}.`;
+        await this.save(); return { ...structuredClone(handoff), handoffStatus: handoff.status, status: 'handoff-pending' };
+      }
+    } else {
+      if (activity.state === 'active') {
+        if (!handoff.turnId && activity.turnId) { handoff.turnId = activity.turnId; handoff.status = 'waiting-turn'; }
+        handoff.blocker = handoff.turnId ? `Waiting for matching terminal receipt for turn ${handoff.turnId}.` : 'Old chat activity is active without a turn ID; inspect its native lifecycle receipt.';
+        await this.save(); return { ...structuredClone(handoff), handoffStatus: handoff.status, status: 'handoff-pending' };
+      }
+      if (activity.state === 'unknown') {
+        handoff.blocker = 'The old Desktop chat has no native lifecycle receipt; switch remains pending until its actual terminal status is recorded.';
+        await this.save(); return { ...structuredClone(handoff), handoffStatus: handoff.status, status: 'handoff-pending' };
+      }
+      if (!activity.turnId || (handoff.turnId && activity.turnId !== handoff.turnId)) {
+        handoff.blocker = `Expected terminal receipt for turn ${handoff.turnId ?? 'unknown'}; observed ${activity.state} turn ${activity.turnId ?? 'unknown'}.`;
+        await this.save(); return { ...structuredClone(handoff), handoffStatus: handoff.status, status: 'handoff-pending' };
+      }
+    }
+    handoff.status = 'switching'; handoff.blocker = null; await this.save();
+    try {
+      const queued = await this.directorHost.client.listQueuedMessages({ threadId: handoff.fromThreadId });
+      for (const batch of director.batches.filter(item => item.threadId === handoff.fromThreadId && ['submitting','queued','uncertain'].includes(item.status))) {
+        const marker = `<!-- conductor:director-wakeup:${batch.id} -->`;
+        const item = queued.find(entry => JSON.stringify(entry).includes(marker));
+        if (item) {
+          await this.directorHost.client.deleteQueuedMessage({ threadId: handoff.fromThreadId, queuedSubmissionId: item.id });
+          const remaining = await this.directorHost.client.listQueuedMessages({ threadId: handoff.fromThreadId });
+          if (remaining.some(entry => JSON.stringify(entry).includes(marker))) throw new Error(`Obsolete wake batch ${batch.id} remains queued in the old chat.`);
+        }
+        batch.status = 'reconciled-not-queued'; batch.handoffAt = new Date().toISOString(); delete batch.queueItemId;
+      }
+      const oldBatchIds = new Set(director.batches.filter(item => item.threadId === handoff.fromThreadId).map(item => item.id));
+      director.batches = director.batches.filter(item => !oldBatchIds.has(item.id));
+      const stillReferenced = new Set(director.batches.flatMap(item => item.eventIds ?? []));
+      director.events = director.events.filter(item => !item.acknowledgedAt || stillReferenced.has(item.id));
+      const target = await this.directorHost.validateDesktopThread(handoff.toThreadId);
+      const baseline = await this.directorActivity.read(handoff.toThreadId);
+      if (director.recoveryRequired?.turnId && director.recoveryRequired.turnId === handoff.turnId && !director.recoveryRequired.resolvedAt) {
+        director.recoveryRequired.resolvedAt = new Date().toISOString(); director.recoveryRequired.outcome = 'Director chat handed off after its native turn reached a terminal state.';
+      }
+      director.threadId = target.id; director.threadHostOwnership = { threadId: target.id, host: 'codex-desktop', kind: 'attached', codexHome: resolve(process.env.CODEX_HOME ?? join(homedir(), '.codex')), lifecycleBaseline: baseline };
+      this.state.runtimeEnabled = true;
+      delete director.handoff; delete director.nativeActivity;
+      this.state.threadId = target.id; this.directorHost.threadId = target.id; this.directorHost.threadEnsured = true; this.directorHost.currentStatus = { type: 'unknown', activeFlags: [] }; this.activityRevision = null;
+      this.director = new Director(this, target.id);
+      await this.director.events.start();
+      await this.save();
+      await this.directorActivity.pruneExcept([target.id]);
+      await this.director.events.emit({ kind: 'director-attached', fromThreadId: handoff.fromThreadId, threadId: target.id });
+      const native = await this.directorActivity.read(target.id);
+      if (native.state === 'idle') await this.director.events.flush();
+      return { status: 'attached', fromThreadId: handoff.fromThreadId, threadId: target.id, nativeStatus: native.state };
+    } catch (error) {
+      handoff.status = 'blocked'; handoff.blocker = error.message; await this.save();
+      return { status: 'handoff-pending', fromThreadId: handoff.fromThreadId, toThreadId: handoff.toThreadId, turnId: handoff.turnId ?? null, blocker: handoff.blocker };
+    }
   }
   async guard(job, options) {
     if (this.director) {
@@ -229,7 +349,7 @@ export class Coordinator extends EventEmitter {
     return git(this.repo.root, 'rev-parse', `origin/${this.config.baseBranch}`);
   }
   reviewInstructionRevision() {
-    return digest({ version: 1, defaultPolicy: 'actionable-findings-v1', instructions: this.config.reviewInstructions });
+    return digest({ version: 2, defaultPolicy: 'actionable-findings-v2', instructions: this.config.reviewInstructions });
   }
   async scan() {
     if (this.stopping) return;

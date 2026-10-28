@@ -168,6 +168,7 @@ export class Director {
       case 'ack': { const receipt = await this.events.acknowledge(request.ids); await this.events.flush(); return receipt; }
       case 'retry-wakeup': return this.events.retry(request.batchId, { confirmedNotQueued: request.confirmedNotQueued });
       case 'bind': return { threadId: c.state.director.threadId };
+      case 'attach': return c.attachThread(request.targetThreadId);
       case 'activate': c.state.admissionPaused = false; await c.save(); await this.events.emit({kind:'activated'}); return { admissionPaused: false };
       case 'dispatch': {
         if (!request.expectedRevision) throw new Error('Dispatch requires expectedRevision from current status.');

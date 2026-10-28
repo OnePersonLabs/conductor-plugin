@@ -28,12 +28,26 @@ export async function handleDirectorLifecycle(payload, { activityFactory = optio
 
   const director = state.director;
   const ownership = director?.threadHostOwnership;
-  if (config.version !== 2 || director?.threadId !== threadId || ownership?.host !== 'codex-desktop' || (ownership.threadId && ownership.threadId !== threadId)) return { handled: false };
+  const boundThread = director?.threadId === threadId && ownership?.host === 'codex-desktop' && (!ownership.threadId || ownership.threadId === threadId);
+  const pendingDestination = director?.handoff?.fromThreadId === director?.threadId && director.handoff.toThreadId === threadId && ownership?.host === 'codex-desktop' && (!ownership.threadId || ownership.threadId === director.threadId);
+  if (config.version !== 2 || (!boundThread && !pendingDestination)) return { handled: false };
 
   let activity;
   try {
     activity = activityFactory({ dir: join(repo.commonDir, 'conductor') });
-    const status = await activity.record({ threadId, turnId, event, wakeupMarker: event === 'UserPromptSubmit' ? wakeupMarker(payload.prompt) : null });
+    const handoff = director.handoff;
+    const oldThread = boundThread && handoff?.fromThreadId === threadId && ['waiting-turn', 'blocked'].includes(handoff.status);
+    const oldTurn = oldThread && handoff.turnId === turnId;
+    const destination = boundThread && event === 'PostToolUse' ? ownership?.lifecycleBaseline : null;
+    const activityInput = { threadId, turnId, event, wakeupMarker: event === 'UserPromptSubmit' ? wakeupMarker(payload.prompt) : null };
+    if (destination) activityInput.enrollmentBaseline = destination;
+    const status = await activity.record(activityInput);
+    if (pendingDestination) return { handled: true, status, hookOutput: event === 'Stop' || event === 'Interrupt' ? {} : null };
+    if (oldThread && (event === 'UserPromptSubmit' || (oldTurn && event === 'PostToolUse'))) {
+      const handoffContext = `Conductor is handing this director to Desktop chat ${handoff.toThreadId}. Finish only the current operation, do not begin another issue or queue another wake, summarize the handoff, and end this turn. Do not wait for the replacement chat.`;
+      const additionalContext = event === 'UserPromptSubmit' ? `${DIRECTOR_CONTEXT}\n\n${handoffContext}` : handoffContext;
+      return { handled: true, status, hookOutput: { hookSpecificOutput: { hookEventName: event, additionalContext } } };
+    }
     return event === 'UserPromptSubmit'
       ? { handled: true, status, hookOutput: { hookSpecificOutput: { hookEventName: event, additionalContext: DIRECTOR_CONTEXT } } }
       : { handled: true, status, hookOutput: event === 'Stop' || event === 'Interrupt' ? {} : null };

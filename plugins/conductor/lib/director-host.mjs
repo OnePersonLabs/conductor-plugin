@@ -308,6 +308,16 @@ export class DirectorHost extends EventEmitter {
     return queued.find(item => JSON.stringify(item).includes(marker)) ?? null;
   }
 
+  async validateDesktopThread(threadId) {
+    if (this.hostMode !== 'codex-desktop') throw new Error('Desktop chat validation is available only for a Desktop director.');
+    if (typeof threadId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(threadId)) throw new TypeError('threadId must be an existing chat UUID.');
+    const thread = await this.client.readThread({ threadId, includeTurns: false });
+    if (typeof thread.cwd !== 'string' || resolve(thread.cwd) !== this.cwd) throw new Error(`Desktop chat ${threadId} belongs to ${thread.cwd ?? 'an unknown working directory'}, not ${this.cwd}.`);
+    if (!['idle', 'active', 'interrupted', 'notLoaded'].includes(thread.status?.type)) throw new Error(`Desktop chat ${threadId} has an unknown native status; refusing to attach.`);
+    await this.client.listQueuedMessages({ threadId });
+    return { id: threadId, cwd: this.cwd, status: thread.status.type };
+  }
+
   async cancelQueuedWakeup(queueItemId) {
     if (this.hostMode !== 'codex-desktop') throw new Error('Queued wakeup cancellation is available only for a Codex Desktop director.');
     if (!this.threadId) throw new Error('No Desktop director thread is bound.');
