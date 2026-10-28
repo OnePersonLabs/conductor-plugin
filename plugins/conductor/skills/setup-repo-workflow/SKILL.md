@@ -67,6 +67,10 @@ The service can report status and reconcile events while admission is paused.
 
 ## Enable the Desktop director
 
+Complete any requested plugin refresh and host hook reload before starting the
+onboarding turn. Do not refresh the plugin while onboarding is active: changing
+bundle contents can invalidate that turn's loaded hook trust before Stop runs.
+
 Only do this when the user explicitly asks to enable Conductor. If this chat is
 already the saved director for this repository, reuse its thread ID. Otherwise,
 use Codex's native app thread creation to create a persistent local project chat
