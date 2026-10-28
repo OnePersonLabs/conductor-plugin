@@ -83,7 +83,12 @@ The included feedback receipt helper is for preserving a manually judged PR
 feedback batch across interruption. It validates local receipts and can inspect
 publication with read-only GitHub API requests; it never sends replies,
 resolves threads, merges, or changes issue state. The running coordinator uses
-its own persisted feedback/recovery state.
+its own persisted feedback/recovery state. The handoff expires after seven days.
+Fresh remote
+reconciliation is required before continuing a stale batch. Finalize and remove
+completed receipts after verifying remote replies, resolutions and checklist
+changes. Keep unresolved human residuals with their existing PR/issue owner; do
+not copy them into an indefinite archive.
 
 ## Environment and unsupported assumptions
 

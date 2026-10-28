@@ -21,7 +21,8 @@ python "$skillDir/scripts/pending-feedback.py" preflight --path '<handoff path>'
 
 If preflight fails, stop before edits. Do not replace a rejected path. Without
 `--path`, preflight creates a private scratch directory and returns its unused
-`pending.json` path; the caller owns its retention.
+`pending.json` path. The helper owns that directory; caller-supplied paths remain
+caller-owned, while the receipt remains subject to the same lifetime.
 
 After judgment, prepare a separate UTF-8 JSON input file. Capture the PR host,
 base repository, number and canonical URL, plus the actual head repository/ref
@@ -39,9 +40,10 @@ python "$skillDir/scripts/pending-feedback.py" create --input '<prepared JSON>' 
 python "$skillDir/scripts/pending-feedback.py" validate --path '<handoff path>'
 ```
 
-Creation validates original JSON bytes, rejects duplicate JSON keys, uses
-exclusive creation with private file permissions, fsyncs and reads the receipt
-back. Do not retype a received receipt before validation. A receipt has
+Creation validates the supplied JSON, rejects duplicate JSON keys, adds bounded
+retention metadata, uses exclusive creation with private file permissions,
+fsyncs and reads the receipt back. Do not retype a received receipt before
+validation. A receipt has
 `schema_version: 1`, `status: pending`, PR identity, `fix_commit` (full lowercase
 40-character SHA, or `null` for no code change), actual verification outcome,
 `actions`, `body_ticks`, and typed `residuals`. Action kinds are `thread`,
@@ -117,5 +119,39 @@ resolution and tick has been freshly verified; human threads intentionally left
 open do not block completion. Keep `pending` for incomplete or blocked work. If
 no valid receipt exists or observed progress cannot be checkpointed, return
 `incomplete-handoff` with actual remote successes and the exact recovery
-blocker. Return the validated receipt path to the root caller; a push alone
-does not finish the review conversation.
+blocker.
+
+The receipt records its purpose, creation, last verified progress and a fixed
+seven-day recovery deadline. Seven days without verified progress makes it
+stale: `validate` and `checkpoint` stop before any saved action can resume. Run
+`inspect-publication`, reconcile every source/reply/resolution and PR body from
+fresh remote state, then make a fresh judgment and create a new receipt before
+continuing. Inspection and reading do not extend the lifetime. Legacy receipts
+without retention metadata are stale and follow the same path.
+
+After a completed batch, or after an explicitly abandoned batch whose remote
+effects have been reconciled, finalize and delete the receipt:
+
+```powershell
+python "$skillDir/scripts/pending-feedback.py" finalize --path '<handoff path>' --disposition completed --reconciled
+python "$skillDir/scripts/pending-feedback.py" finalize --path '<handoff path>' --disposition cancelled --reconciled
+```
+
+The caller must have freshly verified publication, comments, replies,
+resolutions and checklist ticks before finalizing; uncertain remote writes mean
+keep the receipt and report the recovery blocker. The flag confirms that
+reconciliation occurred; it does not grant publication authority. Finalization
+deletes the receipt and
+removes only its empty helper-created scratch directory. It never removes a
+caller-owned parent directory. Each helper invocation cleans eligible expired
+scratch artifacts; use `cleanup` explicitly when no other feedback operation is
+running. Stale pending receipts remain as minimum recovery
+state until the remote outcome is reconciled and the receipt is explicitly
+finalized; never replay their saved actions. Cleanup reports these outstanding
+obligations. Keep no dated receipt archive: preserve the
+conclusion in its existing issue/PR or decision owner if it still has a
+consumer, then delete the raw handoff.
+
+If a receipt lock remains after an interrupted helper process, verify that its
+recorded process has stopped before removing that lock. The helper fails closed
+on stale or malformed locks so cleanup cannot race a new writer.

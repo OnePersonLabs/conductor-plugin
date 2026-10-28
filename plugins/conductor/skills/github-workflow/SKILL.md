@@ -60,6 +60,14 @@ hold receipt. Explicit release restores that state and rechecks eligibility;
 release does not accept a proposal. If applying holds partially fails, retain
 the local barrier and reconcile before permitting execution.
 
+Recovery artifacts have a named consumer and bounded lifetime. Delete completed
+handoffs after their remote effects are reconciled. The PR feedback helper
+expires receipts after seven days;
+stale receipts require fresh source, reply, resolution and checklist inspection
+and a new judgment before any saved action resumes. Retain unresolved human
+residuals only while they remain open with their existing PR/issue owner. Never
+retain raw diagnostics as a permanent evidence archive.
+
 ## Represent work once
 
 Use one issue per independently deliverable outcome. Keep its purpose and

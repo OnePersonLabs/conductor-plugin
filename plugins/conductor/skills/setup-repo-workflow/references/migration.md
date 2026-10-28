@@ -85,8 +85,12 @@ Migrate callers, native configuration and persistent data where required. Remove
 superseded instructions, duplicate backlogs, orphan routers, obsolete commands
 and replaced integration files. Follow the chosen retention policy: Git history
 can preserve a removed workflow; leaving a dormant copy in the active repository
-is not a clean removal. Preserve necessary evidence with clear historical scope.
-Keep recovery backups outside active repositories.
+is not a clean removal. Retain generated evidence only for a named consumer,
+with validity, disposal condition and cleanup owner. Remove it when that consumer
+is done. Keep rollback backups through verification and for at most seven days
+after success; preserve a failed migration's minimum recovery backup until it is
+recovered or explicitly abandoned. Keep recovery backups outside active
+repositories.
 
 Reinspect the effective instruction system after changes. Walk through ordinary
 work selection, bounded implementation, verification/delivery and interrupted-work

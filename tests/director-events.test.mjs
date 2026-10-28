@@ -29,6 +29,25 @@ test('settlement without native consumption cannot reuse an old idle receipt', a
   assert.equal(starts, 1);
 });
 
+test('settled terminal batches are deleted while uncertain or recovery-owned receipts remain', async () => {
+  const { events, state } = harness({ state: {
+    events: [
+      { id: 'event-a', acknowledgedAt: '2026-10-01T00:00:00.000Z' },
+      { id: 'event-b', acknowledgedAt: '2026-10-01T00:00:00.000Z' },
+      { id: 'event-c', acknowledgedAt: null },
+    ],
+    batches: [
+      { id: 'done', eventIds: ['event-a'], acknowledgedAt: '2026-10-01T00:00:00.000Z', turnStatus: 'completed', queueItemId: 'q1', nativeConsumed: true },
+      { id: 'repair', eventIds: ['event-b'], acknowledgedAt: '2026-10-01T00:00:00.000Z', turnStatus: 'completed', queueItemId: 'q2', nativeConsumed: true },
+      { id: 'uncertain', eventIds: ['event-c'], status: 'uncertain' },
+    ],
+    recoveryRequired: { batchId: 'repair', status: 'recovery-required' },
+  } });
+  events.pruneSettled();
+  assert.deepEqual(state.batches.map(item => item.id), ['repair', 'uncertain']);
+  assert.deepEqual(state.events.map(item => item.id), ['event-b', 'event-c']);
+});
+
 test('consumption resolves an uncertain submission without replaying it', async () => {
   let calls = 0;
   const { events } = harness({ execute: async () => {

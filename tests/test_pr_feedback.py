@@ -1,4 +1,5 @@
 import copy
+from datetime import timedelta
 import importlib.util
 import json
 import os
@@ -65,9 +66,11 @@ class PendingFeedbackTests(unittest.TestCase):
         path.write_text(json.dumps(value, ensure_ascii=False) + "\n", encoding="utf-8")
 
     def cli(self, *args):
+        environment = os.environ.copy()
+        environment.update(TEMP=str(self.directory), TMP=str(self.directory), TMPDIR=str(self.directory))
         return subprocess.run(
             [sys.executable, str(SCRIPT), *map(str, args)],
-            capture_output=True, text=True, check=False,
+            capture_output=True, text=True, check=False, env=environment,
         )
 
     def test_create_validates_and_preserves_exact_utf8_bytes(self):
@@ -75,10 +78,12 @@ class PendingFeedbackTests(unittest.TestCase):
         self.source.write_bytes(raw)
         result = self.cli("create", "--input", self.source, "--path", self.handoff)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.handoff.read_bytes(), raw)
+        saved = json.loads(self.handoff.read_text(encoding="utf-8"))
+        self.assertEqual({key: value for key, value in saved.items() if key != "retention"}, record())
+        self.assertEqual(saved["retention"]["purpose"], "resume a reviewed PR feedback batch")
         validated = self.cli("validate", "--path", self.handoff)
         self.assertEqual(validated.returncode, 0, validated.stderr)
-        self.assertEqual(json.loads(validated.stdout)["record"], record())
+        self.assertEqual(json.loads(validated.stdout)["record"], saved)
         if os.name != "nt":
             self.assertEqual(self.handoff.stat().st_mode & 0o777, 0o600)
 
@@ -92,8 +97,115 @@ class PendingFeedbackTests(unittest.TestCase):
         self.assertEqual(allocated.returncode, 0, allocated.stderr)
         saved = Path(json.loads(allocated.stdout)["handoff"])
         self.assertTrue(saved.is_absolute())
+        self.assertTrue((saved.parent / ".conductor-feedback-owner.json").is_file())
         if os.name != "nt":
             self.assertEqual(saved.parent.stat().st_mode & 0o777, 0o700)
+        self.assertTrue(pending_feedback.cleanup_owned_scratch(saved, temp_root=self.directory))
+
+    def test_retention_expires_after_inactivity_and_has_fixed_maximum(self):
+        created = pending_feedback.now()
+        retained = pending_feedback.attach_retention(record(), created)
+        self.assertFalse(pending_feedback.is_stale(retained, created + timedelta(days=6)))
+        self.assertTrue(pending_feedback.is_stale(retained, created + timedelta(days=7)))
+        retained["retention"]["expires_at"] = (created + timedelta(days=8)).isoformat()
+        with self.assertRaisesRegex(ValueError, "maximum recovery window"):
+            pending_feedback.validate(retained)
+
+    def test_legacy_receipts_are_stale_and_cleanup_never_deletes_pending_receipts(self):
+        legacy = record()
+        self.assertTrue(pending_feedback.is_stale(legacy))
+        scratch = self.directory / "conductor-pending-feedback-fixture"
+        scratch.mkdir()
+        (scratch / ".conductor-feedback-owner.json").write_text(json.dumps({"purpose": "temporary PR feedback handoff", "created_at": pending_feedback.now().isoformat()}), encoding="utf-8")
+        pending = scratch / "pending.json"
+        self.write_json(pending, pending_feedback.attach_retention(record()))
+        result = pending_feedback.cleanup_expired_scratch(pending_feedback.now() + timedelta(days=8), self.directory)
+        self.assertNotIn(str(pending), result["removed"])
+        self.assertTrue(pending.exists())
+
+    def test_cleanup_requires_terminal_proof_and_recovers_after_proof_before_unlink(self):
+        root = self.directory
+        scratch = root / "conductor-pending-feedback-terminal"
+        scratch.mkdir()
+        owner = {"purpose": "temporary PR feedback handoff", "owner": "Conductor github-workflow feedback helper", "created_at": pending_feedback.now().isoformat()}
+        (scratch / ".conductor-feedback-owner.json").write_text(json.dumps(owner), encoding="utf-8")
+        pending = scratch / "pending.json"
+        batch = pending_feedback.attach_retention(completed_record())
+        self.write_json(pending, batch)
+        result = pending_feedback.cleanup_expired_scratch(pending_feedback.now() + timedelta(days=8), root)
+        self.assertEqual(result["removed"], [])
+        self.assertTrue(pending.exists())
+
+        batch["finalization"] = {"disposition": "completed", "verified_at": pending_feedback.now().isoformat()}
+        self.write_json(pending, batch)
+        result = pending_feedback.cleanup_expired_scratch(pending_feedback.now() + timedelta(days=8), root)
+        self.assertEqual(result["removed"], [str(scratch)])
+        self.assertFalse(scratch.exists())
+
+    def test_cleanup_reclaims_old_empty_helper_named_directory(self):
+        scratch = self.directory / "conductor-pending-feedback-unowned"
+        scratch.mkdir()
+        result = pending_feedback.cleanup_expired_scratch(pending_feedback.now() + timedelta(days=100), self.directory)
+        self.assertIn(str(scratch), result["removed"])
+        self.assertFalse(scratch.exists())
+
+    def test_receipt_lock_suppresses_concurrent_cleanup_or_writer(self):
+        with pending_feedback.receipt_lock(self.handoff):
+            with self.assertRaisesRegex(ValueError, "verify it stopped, then remove the lock"):
+                with pending_feedback.receipt_lock(self.handoff):
+                    self.fail("second writer unexpectedly acquired the receipt lock")
+
+    def test_unreadable_receipt_lock_is_preserved_for_operator_recovery(self):
+        lock = self.directory / ".conductor-feedback.lock"
+        lock.write_text("partial write", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "lock is unreadable"):
+            with pending_feedback.receipt_lock(self.handoff):
+                self.fail("unreadable lock was ignored")
+        self.assertEqual(lock.read_text(encoding="utf-8"), "partial write")
+
+    def test_stale_owner_lock_fails_closed_until_explicitly_removed(self):
+        lock = self.directory / ".conductor-feedback.lock"
+        lock.write_text(json.dumps({"token": "old", "pid": 2147483647, "hostname": pending_feedback.socket.gethostname()}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "verify it stopped, then remove the lock"):
+            with pending_feedback.receipt_lock(self.handoff):
+                self.fail("stale lock was removed automatically")
+        self.assertTrue(lock.exists())
+        lock.unlink()
+        with pending_feedback.receipt_lock(self.handoff):
+            self.assertTrue(self.handoff.parent.exists())
+
+    def test_finalize_requires_reconciliation_and_removes_only_receipt(self):
+        completed = pending_feedback.attach_retention(completed_record())
+        self.write_json(self.handoff, completed)
+        with patch("sys.argv", [str(SCRIPT), "finalize", "--path", str(self.handoff), "--disposition", "completed"]):
+            with self.assertRaisesRegex(ValueError, "requires fresh remote reconciliation"):
+                pending_feedback.main(self.directory)
+        self.assertTrue(self.handoff.exists())
+        with patch("sys.argv", [str(SCRIPT), "finalize", "--path", str(self.handoff), "--disposition", "completed", "--reconciled"]):
+            with patch("builtins.print"):
+                pending_feedback.main(self.directory)
+        self.assertFalse(self.handoff.exists())
+
+    def test_finalize_preserves_unresolved_human_residuals(self):
+        batch = record()
+        context = {"quoted_feedback": "Change API?", "investigation": "Read callers.", "decision_reason": "User choice needed.", "options": [{"option": "A", "tradeoff": "Changes API."}], "recommendation": None}
+        batch["actions"][0].update(verdict="needs-human", resolve=False, decision_context=context)
+        batch["residuals"] = [{"type": "needs-human", "sources": [{"kind": "thread", "id": "PRRT_1"}], "decision_context": context, "thread_urls": [batch["actions"][0]["source"]["url"]]}]
+        self.write_json(self.handoff, pending_feedback.attach_retention(batch))
+        with patch("sys.argv", [str(SCRIPT), "finalize", "--path", str(self.handoff), "--disposition", "cancelled", "--reconciled"]):
+            with self.assertRaisesRegex(ValueError, "unresolved human residuals"):
+                pending_feedback.main(self.directory)
+        self.assertTrue(self.handoff.exists())
+
+    def test_cleanup_receipt_requires_matching_terminal_status_and_no_residuals(self):
+        invalid = pending_feedback.attach_retention(record())
+        invalid["finalization"] = {"disposition": "completed", "verified_at": pending_feedback.now().isoformat()}
+        with self.assertRaisesRegex(ValueError, "requires completed receipt status"):
+            pending_feedback.validate(invalid)
+        invalid = pending_feedback.attach_retention(completed_record())
+        invalid["finalization"] = {"disposition": "cancelled", "verified_at": pending_feedback.now().isoformat()}
+        with self.assertRaisesRegex(ValueError, "requires pending receipt status"):
+            pending_feedback.validate(invalid)
 
     def test_create_never_overwrites_existing_receipt(self):
         self.write_json(self.source, record())
@@ -132,7 +244,7 @@ class PendingFeedbackTests(unittest.TestCase):
         result = self.cli("checkpoint", "--input", self.source, "--path", self.handoff)
         self.assertEqual(result.returncode, 0, result.stderr)
         saved = json.loads(self.cli("validate", "--path", self.handoff).stdout)["record"]
-        self.assertEqual(saved, completed_record())
+        self.assertEqual({key: value for key, value in saved.items() if key != "retention"}, completed_record())
 
         invalid = completed_record()
         invalid["actions"][0]["progress"] = {"reply_id": 100, "resolved": False}
@@ -154,7 +266,8 @@ class PendingFeedbackTests(unittest.TestCase):
             "type": "needs-human", "sources": [{"kind": "thread", "id": "PRRT_1"}],
             "decision_context": context, "thread_urls": [action["source"]["url"]],
         }]
-        self.write_json(self.handoff, batch)
+        self.write_json(self.source, batch)
+        self.assertEqual(self.cli("create", "--input", self.source, "--path", self.handoff).returncode, 0)
         updated = copy.deepcopy(batch)
         updated["status"] = "completed"
         updated["actions"][0]["progress"] = {"reply_id": 101, "resolved": False}
@@ -162,7 +275,7 @@ class PendingFeedbackTests(unittest.TestCase):
         self.write_json(self.source, updated)
         result = self.cli("checkpoint", "--input", self.source, "--path", self.handoff)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["record"], updated)
+        self.assertEqual({key: value for key, value in json.loads(result.stdout)["record"].items() if key != "retention"}, updated)
 
     def test_publication_requires_fresh_fork_identity_and_reachable_saved_commit(self):
         batch = record()

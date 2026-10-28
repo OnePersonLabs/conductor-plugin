@@ -114,16 +114,27 @@ export class DirectorEvents {
       batch.acknowledgedAt ??= now;
     }
     this.state.acknowledged = this.state.acknowledged.slice(-MAX_RECEIPTS);
-    this.state.events = this.state.events.filter(item => {
-      if (!item.acknowledgedAt) return true;
-      const batches = this.state.batches.filter(batch => batch.eventIds.includes(item.id));
-      return batches.some(batch => !batch.acknowledgedAt);
-    });
-    const completedBatches = this.state.batches.filter(batch => batch.acknowledgedAt);
-    const keepCompleted = new Set(completedBatches.slice(-MAX_RECEIPTS).map(batch => batch.id));
-    this.state.batches = this.state.batches.filter(batch => !batch.acknowledgedAt || keepCompleted.has(batch.id));
+    this.pruneSettled();
     await this.save();
     return { acknowledged: ids };
+  }
+
+  pruneSettled() {
+    const recoveryBatch = this.state.recoveryRequired?.resolvedAt ? null : this.state.recoveryRequired?.batchId;
+    const removable = new Set(this.state.batches.filter(batch => {
+      const terminal = batch.turnStatus === 'completed' || batch.turnStatus === 'failed' || batch.turnStatus === 'interrupted' || batch.status === 'reconciled-ended';
+      const queueSettled = !batch.queueItemId || batch.nativeConsumed || batch.queueCancellationConfirmed;
+      return batch.acknowledgedAt && terminal && queueSettled && batch.id !== recoveryBatch;
+    }).map(batch => batch.id));
+    if (removable.size) {
+      const removedEvents = new Set(this.state.batches.filter(batch => removable.has(batch.id)).flatMap(batch => batch.eventIds));
+      this.state.batches = this.state.batches.filter(batch => !removable.has(batch.id));
+      this.state.events = this.state.events.filter(item => !removedEvents.has(item.id) || !item.acknowledgedAt);
+    }
+    const remainingEvents = new Set(this.state.batches.flatMap(batch => batch.eventIds));
+    this.state.events = this.state.events.filter(item => !item.acknowledgedAt || remainingEvents.has(item.id));
+    this.state.acknowledged = this.state.acknowledged.slice(-MAX_RECEIPTS);
+    return removable.size;
   }
 
   async settle(revision) {

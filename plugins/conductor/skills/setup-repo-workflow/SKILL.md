@@ -61,6 +61,11 @@ activate admission explicitly only after the reviewed issue states and scope are
 accepted. If ownership or classification is uncertain, leave execution stopped
 and report the exact items needing reconciliation.
 
+The legacy configuration backup exists only for rollback through verification
+and the seven-day recovery window. Remove it after that boundary; a failed
+migration retains only the backup needed for recovery and reports the unresolved
+recovery obligation.
+
 After reviewing a migration, start the bound director with admission still
 paused, inspect the fresh status snapshot, and explicitly activate admission.
 The service can report status and reconcile events while admission is paused.

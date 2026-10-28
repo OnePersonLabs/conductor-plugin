@@ -38,6 +38,7 @@ export class Coordinator extends EventEmitter {
     this.github = github ?? new GitHub(config.repository, { cwd: repo.root });
     this.clients = new Map(); this.tasks = new Map(); this.requests = new Map(); this.preparations = new Map();
     this.stopping = false; this.scanError = null;
+    this.lastCleanupAt = 0;
     this.delivery = Promise.resolve(); this.ready = false;
     this.loop = new WakeLoop(() => this.scan(), error => {
       this.scanError = error.message; this.emit('notice', `Reconciliation failed: ${error.message}`);
@@ -50,6 +51,8 @@ export class Coordinator extends EventEmitter {
     await this.store.acquire();
     try {
       this.state = await this.store.read();
+      await this.store.cleanupOwned();
+      await this.store.cleanupMigrationBackups(this.repo.root, Date.now(), this.config.version === 2);
       if (this.state.repository && this.state.repository !== this.config.repository) throw new Error('Recovery state belongs to another GitHub repository. Resolve configuration before proceeding.');
       const environment = { platform: process.platform, host: hostname(), codexHome: resolve(process.env.CODEX_HOME ?? join(homedir(), '.codex')) };
       if (this.state.environment && JSON.stringify(this.state.environment) !== JSON.stringify(environment) && this.state.jobs.some(job => !['complete','cancelled'].includes(job.phase))) throw new Error('Unfinished builders belong to a different OS or Codex home. Resume in that environment; no replacement builder was started.');
@@ -83,8 +86,9 @@ export class Coordinator extends EventEmitter {
         await this.director.events.start();
         this.directorHost.on('completed', turn => {
           if (this.stopping) return;
-          for (const batch of this.state.director.batches) if (batch.turnId === turn.id) batch.turnStatus = turn.status;
+          for (const batch of this.state.director.batches) if (batch.turnId === turn.id) { batch.turnStatus = turn.status; batch.terminalAt = new Date().toISOString(); }
           if (turn.status !== 'completed') this.state.director.recoveryRequired = { threadId: this.state.director.threadId, turnId: turn.id, status: turn.status, detectedAt: new Date().toISOString() };
+          this.director.events.pruneSettled();
           this.save().then(() => this.director.events.flush()).catch(error => this.emit('notice', error.message));
         });
         this.directorHost.on('status', status => {
@@ -131,7 +135,14 @@ export class Coordinator extends EventEmitter {
     await git(this.repo.root, 'check-ref-format', '--branch', this.config.baseBranch);
     await access(skillPath);
   }
-  wake() { return this.ready ? this.loop.wake() : Promise.resolve(); }
+  wake() {
+    if (!this.ready) return Promise.resolve();
+    const now = Date.now();
+    const cleanup = now - this.lastCleanupAt >= 60_000
+      ? (this.lastCleanupAt = now, this.store.cleanupOwned().catch(error => this.emit('notice', `Retention cleanup: ${error.message}`)))
+      : Promise.resolve();
+    return cleanup.then(() => this.loop.wake());
+  }
   async refreshDirectorActivity() {
     if (!this.directorActivity || this.stopping || this.activityRefreshing) return;
     this.activityRefreshing = true;
@@ -155,6 +166,12 @@ export class Coordinator extends EventEmitter {
           }
         }
       }
+      if (activity.state === 'idle' && activity.turnId) {
+        for (const batch of this.state.director.batches) if (batch.turnId === activity.turnId) {
+          batch.turnStatus = 'completed'; batch.terminalAt = new Date().toISOString();
+        }
+        this.director.events.pruneSettled();
+      }
       await this.save();
       if (activity.state === 'idle') await this.director.events.flush();
     } finally { this.activityRefreshing = false; }
@@ -167,13 +184,15 @@ export class Coordinator extends EventEmitter {
       // uncertain submission still needs its receipt reconciled before retry.
       if (this.directorHost && !this.directorActivity && (await this.directorHost.status()).type === 'idle') {
         for (const batch of this.state.director.batches) {
-          if (batch.acknowledgedAt || batch.status !== 'queued' || !batch.turnId) continue;
+          if (batch.status !== 'queued' || !batch.turnId) continue;
           const turn = await this.directorHost.inspectTurn(batch.turnId);
           if (turn && ['completed','interrupted','failed'].includes(turn.status)) {
             batch.turnStatus = turn.status;
+            batch.terminalAt = new Date().toISOString();
             batch.status = 'reconciled-ended';
           }
         }
+        this.director.events.pruneSettled();
         const recovery = this.state.director.recoveryRequired;
         if (recovery?.turnId && !recovery.resolvedAt) {
           const turn = await this.directorHost.inspectTurn(recovery.turnId);

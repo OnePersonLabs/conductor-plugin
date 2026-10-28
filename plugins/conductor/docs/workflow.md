@@ -238,6 +238,17 @@ branches and per-issue worktrees while diagnosing interruptions. Windows and
 WSL have distinct process, Git and Codex ownership; recover in the environment
 that created the work.
 
+Generated recovery receipts are temporary. Completed control receipts expire
+after their seven-day retry window; stale request IDs are rejected rather than
+replayed as new operations. Pending jobs, holds and uncertain delivery state
+remain until reconciled. The feedback receipt helper expires ordinary handoffs
+after seven days, and requires fresh remote checks before
+resuming stale work. Remove completed receipts after verifying the remote
+effects. Retain only unresolved human residuals with their existing issue/PR
+owner. Cleanup runs at service startup and during normal maintenance; stopped
+repositories are cleaned on the next invocation, so no off-process timer is
+promised.
+
 See [configuration](configuration.md) for repository labels, checks and
 migration. `$conductor:director` is the interactive entry point;
 `$conductor:github-workflow` documents issue and delivery rules.

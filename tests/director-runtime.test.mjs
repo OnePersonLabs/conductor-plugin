@@ -41,6 +41,8 @@ function fixture({ issues = [makeIssue(1)], jobs = [], agents = 1 } = {}) {
     acquire: async () => {},
     read: async () => structuredClone(initialState),
     save: async state => saved.push(structuredClone(state)),
+    cleanupOwned: async () => ({ removed: [], retained: 0 }),
+    cleanupMigrationBackups: async () => ({ removed: [], exceptions: [] }),
     release: async () => {},
   };
   const coordinator = new Coordinator({

@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline';
 import { watch, realpathSync } from 'node:fs';
-import { readFileSync, copyFileSync, openSync, closeSync, mkdirSync } from 'node:fs';
+import { readFileSync, copyFileSync, mkdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { hostname } from 'node:os';
 import { inspectRepository } from '../lib/worktrees.mjs';
 import { loadConfig } from '../lib/config.mjs';
-import { Store } from '../lib/state.mjs';
+import { Store, prepareServiceLog, appendServiceLog } from '../lib/state.mjs';
 import { Coordinator } from '../lib/coordinator.mjs';
 import { GitHub } from '../lib/github.mjs';
 import { applyMigration, previewMigration } from '../lib/migration.mjs';
@@ -25,7 +25,7 @@ Usage: conductor enable [--thread UUID]
        conductor start --thread UUID       (compatibility)
        conductor serve [--thread UUID]      (internal)
        conductor rpc --request-file PATH
-       conductor status | conductor stop | conductor migrate [--apply --mapping FILE]
+       conductor status | conductor cleanup [--preview] | conductor stop | conductor migrate [--apply --mapping FILE]
 
 Use enable to persistently enable the repository runner. Wakeup resumes
 observation and requests a check. Passive signals never re-enable a stopped runner.
@@ -35,7 +35,13 @@ Migration preview makes no changes; migrated configuration remains admission-pau
 export function parseArgs(args) {
   const result = { command: 'run', overrides: {} };
   if (args[0] && !args[0].startsWith('-')) result.command = args.shift();
-  if (!['run','signal','status','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
+  if (!['run','signal','status','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
+  if (result.command === 'cleanup') {
+    const option = args.shift();
+    if (option !== undefined && option !== '--preview') throw new Error('cleanup accepts only --preview.');
+    if (args.length) throw new Error('cleanup accepts only --preview.');
+    result.preview = option === '--preview'; return result;
+  }
   if (['cancel','resume'].includes(result.command)) {
     result.issue = Number(args.shift());
     if (!Number.isSafeInteger(result.issue) || result.issue < 1) throw new Error(`${result.command} requires a positive issue number.`);
@@ -66,15 +72,24 @@ async function main() {
   if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
   if (args.includes('--version')) { console.log('0.1.0'); return; }
   const options = parseArgs(args);
+  if (options.command === 'serve' && process.env.CONDUCTOR_SERVICE_LOG) {
+    const earlyLogPath = process.env.CONDUCTOR_SERVICE_LOG;
+    const writeLog = (chunk, encoding, callback) => {
+      const done = typeof encoding === 'function' ? encoding : callback;
+      try { appendServiceLog(earlyLogPath, Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk)); done?.(); return true; }
+      catch (error) { if (done) { done(error); return false; } throw error; }
+    };
+    process.stdout.write = writeLog;
+    process.stderr.write = writeLog;
+  }
   const repo = await inspectRepository(process.cwd());
   const store = new Store(repo.commonDir);
   const cliPath = fileURLToPath(import.meta.url);
   const launch = async (command, argv, spawnOptions) => {
     const logPath = resolve(store.dir, 'service.log');
     mkdirSync(store.dir, { recursive: true });
-    const logHandle = openSync(logPath, 'a');
-    try { return spawn(command, argv, { ...spawnOptions, stdio: ['ignore', logHandle, logHandle] }); }
-    finally { closeSync(logHandle); }
+    await prepareServiceLog(logPath);
+    return spawn(command, argv, { ...spawnOptions, env: { ...process.env, CONDUCTOR_SERVICE_LOG: logPath }, stdio: 'ignore' });
   };
   if (options.command === 'migrate') {
     const raw = JSON.parse(readFileSync(resolve(repo.root, 'conductor.json'), 'utf8'));
@@ -112,6 +127,16 @@ async function main() {
     const state = await store.read(); const owner = await store.owner();
     console.log(JSON.stringify({ owner, ...state, controls: await store.results() }, null, 2)); return;
   }
+  if (options.command === 'cleanup') {
+    let configVerified = false;
+    try { configVerified = (await loadConfig(repo.root)).version === 2; } catch { /* Expired migration backups remain available until valid configuration loads. */ }
+    if (options.preview) {
+      const result = await store.previewCleanup(), backups = await store.previewMigrationBackups(repo.root, Date.now(), configVerified);
+      console.log(JSON.stringify({ preview: true, ...result, backupCandidates: backups.candidates, exceptions: [...result.retained, ...backups.retained] }, null, 2)); return;
+    }
+    const result = await store.cleanupStopped(Date.now(), repo.root, configVerified);
+    console.log(JSON.stringify(result, null, 2)); return;
+  }
   if (['start','enable','wakeup'].includes(options.command)) {
     if (options.command === 'start' && !options.threadId) throw new Error('Start requires --thread with the existing director chat UUID. Use `conductor enable` to create or resume the configured director automatically.');
     const enabled = options.command === 'start' || options.command === 'enable';
@@ -143,6 +168,12 @@ async function main() {
     console.log(`${options.command} queued (${queued.id}); use status to inspect the resulting state.`); return;
   }
   if (options.command === 'run') throw new Error('The legacy foreground runner no longer starts work. Bind and start the conversational director with `conductor start --thread UUID`.');
+  if (options.command === 'serve') {
+    const serviceLog = resolve(store.dir, 'service.log');
+    console.log = (...values) => appendServiceLog(serviceLog, values.join(' '));
+    console.error = (...values) => appendServiceLog(serviceLog, values.join(' '));
+    console.warn = (...values) => appendServiceLog(serviceLog, values.join(' '));
+  }
   const config = await loadConfig(repo.root, options.overrides);
   const coordinator = new Coordinator({ repo, config, store });
   coordinator.on('notice', message => console.error(message));
