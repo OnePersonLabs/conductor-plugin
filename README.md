@@ -40,7 +40,7 @@ From the target repository, ask Codex to use `$conductor:setup-repo-workflow`.
 Review its proposed `conductor.json`, issue label mapping, checks, concurrency,
 delivery settings and genuine scope authority. In Desktop, reuse the existing
 bound director or create a persistent local project chat named
-`Conductor: owner/repository`, start it with `$conductor:director`, and bind it
+`Conductor: <product name>` (for example, `Conductor: Psychord`), start it with `$conductor:director`, and bind it
 when enabling the repository. A new director's initial instruction must run
 the enable command against its own thread UUID before inspecting issues or
 dispatching. Wait for the director to report completion and verify the saved

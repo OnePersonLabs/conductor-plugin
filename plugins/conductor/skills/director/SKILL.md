@@ -29,6 +29,12 @@ Desktop turn; its activity hook signals the service. Inspect current state in
 this turn and do not enqueue another wakeup prompt. Wakeup can restart
 observation after a stop, but never clears the resulting admission pause, a
 migration pause, an issue hold or another execution restriction.
+For any ordinary user request, ensure observation is available before issuing
+runtime controls. If the service is stopped or unavailable, run `conductor
+wakeup` from this repository and verify the saved binding, then handle the
+request in this same turn. Do not require the user to type a special word to
+begin issue management. The lifecycle hook records activity; it does not by
+itself launch a stopped observer.
 
 Inspect existing work before creating an issue. Keep enduring product meaning
 with the current decision/specification owner. GitHub owns acceptance, issue
@@ -182,8 +188,13 @@ never synthesize idle. If recovery reports `lifecycle-receipt-missing`, inspect
 the native chat and hook execution before manually resuming; event settlement
 does not prove that the native turn ended. Automatic wakes remain suspended
 until recovery. Trust the plugin hooks when Desktop requests review of them,
-then restart Desktop after hook changes so they load. Restart alone has not
-resolved the missing queued-turn receipts in the live trial.
+then reload Desktop after hook changes so they load. Installation and saved
+trust alone do not prove the running host reloaded its hooks. The verified
+recovery on Desktop 0.165.0-alpha.1.2 was, with the director idle, Settings >
+Hooks > Conductor, toggling UserPromptSubmit off and on, then a manual wake
+with matching active/terminal receipts. Subsequent automatic queue delivery
+also produced matching receipts. See the repository README for the procedure.
+This is installation recovery; the normal runner uses no UI automation.
 When Desktop is open, service wakeups are delivered through its native session
 queue only after the director is idle. If Desktop is closed, the wake remains
 queued for that session and is consumed when Desktop is available. The

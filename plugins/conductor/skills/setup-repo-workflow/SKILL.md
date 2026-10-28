@@ -70,7 +70,12 @@ The service can report status and reconcile events while admission is paused.
 Only do this when the user explicitly asks to enable Conductor. If this chat is
 already the saved director for this repository, reuse its thread ID. Otherwise,
 use Codex's native app thread creation to create a persistent local project chat
-in the configured repository, named `Conductor: owner/repository`. Start it
+in the configured repository. Name it `Conductor: <product name>` by default,
+using the established product name from repository guidance or README (for
+example, `Conductor: Psychord` or `Conductor: Steady Helm`). If no product name
+is established, use the repository name. Honor an explicit user name. Set the
+title in the native creation call so the chat is named before its first turn;
+do not leave the name to automatic prompt summarization. Start it
 with `$conductor:director` and an initial instruction that its first action is
 to run `conductor enable --host desktop --thread <its own UUID>`, then verify
 the saved binding before inspecting issues or dispatching work. Retain the
@@ -78,6 +83,14 @@ thread UUID returned by native thread creation. The parent setup conversation
 waits for the native thread's completion/status and confirms that this exact
 UUID is saved as the repository director before reporting enablement complete.
 Do not use the CLI's shared-daemon thread creation for the Desktop director.
+Resolve the registered project with the native project listing and use its
+local checkout. Keep admission paused when requested. A short onboarding turn
+binds the chat, inspects fresh status/issues/events, offers one useful next
+action, settles the inspected revision and ends. Verify the saved binding,
+admission state and native completion from the setup conversation. Report a
+missing lifecycle receipt explicitly; do not fabricate activity or start a
+second director. This setup workflow owns these steps; do not hand the user
+CLI commands to complete routine chat creation and binding themselves.
 
 The command starts the repository observer; verify status before reporting it is
 active. Preserve an existing binding. If the chat is already bound, do not

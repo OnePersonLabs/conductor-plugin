@@ -44,7 +44,8 @@ start another builder. Use `resume` for work whose PR has not landed.
 Set up the repository and review `conductor.json` first. In Codex Desktop,
 explicitly enable Conductor for this repository. If the current chat is already
 the saved director, reuse it. Otherwise create a persistent local project chat
-using Codex's native thread creation, name it `Conductor: owner/repository`,
+using Codex's native thread creation, name it `Conductor: <product name>`
+(for example, `Conductor: Steady Helm`),
 and start it with `$conductor:director`. Its initial instruction must make its
 first action `conductor enable --host desktop --thread <its own UUID>` before
 it inspects issues or dispatches work. Wait for that native thread's
