@@ -67,11 +67,15 @@ Closing a blocker makes an issue eligible for re-evaluation. It does not prove
 the blocker succeeded: rejected or abandoned prerequisites require acceptance
 and dependency reconciliation.
 
-When holding a set for revision, establish the local barrier and verify issue
-labels before making dependent edits. Preserve the prior primary state in the
-hold receipt. Explicit release restores that state and rechecks eligibility;
-release does not accept a proposal. If applying holds partially fails, retain
-the local barrier and reconcile before permitting execution.
+Do not introduce holds merely for routine reconciliation of idle issues. When a
+revision affects active work, establish the local barrier and verify issue labels
+before making dependent edits. Preserve the prior primary state in the hold
+receipt. User-requested holds require explicit user release. A temporary barrier
+introduced solely by the director for an authorized repair is released by that
+director after verified completion and reconciliation, using its exact hold ID.
+Release restores prior states and rechecks eligibility; it does not accept a
+proposal, release another hold or activate admission. If applying holds partially
+fails, retain the local barrier and reconcile before permitting execution.
 
 Recovery artifacts have a named consumer and bounded lifetime. Delete completed
 handoffs after their remote effects are reconciled. The PR feedback helper

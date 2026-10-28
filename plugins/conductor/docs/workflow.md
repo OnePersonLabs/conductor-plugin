@@ -37,6 +37,10 @@ Parent issues in proposal or on-hold state constrain implementation of their
 descendants. Holds can cover an explicit set or hierarchy. Conductor records the
 previous primary state when applying a hold and restores it on explicit release.
 Releasing a hold does not accept a proposal.
+Routine reconciliation of idle issues does not create holds. When the director
+needs a temporary barrier to revise active work safely, it owns releasing that
+barrier after verified repair and recovery. User-requested holds still require
+your explicit release; neither path activates paused admission.
 
 If a PR lands while a hold is being applied, the receipt reports that race.
 Release the hold and use the `reconcile` control with the issue's current

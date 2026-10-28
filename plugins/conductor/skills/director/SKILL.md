@@ -199,12 +199,17 @@ outcome. Use native sub-issues only when separate ownership, discussion or
 acceptance is needed. Keep future phases broad and prepare only the next
 connected work.
 
-For a request to revise a set, establish and verify the local hold barrier and
-GitHub `on-hold` states before editing. Reconcile running workers and delivery
-actions. Keep the hold through the revision. On explicit release, restore prior
-states and reevaluate scope, dependencies and input questions. If a partial
-write or uncertain worker operation occurs, retain the barrier and report exact
-recovery status.
+Routine triage and backlog repair are not requests to suspend a set. Do not add
+holds solely to edit idle issues, especially when admission is already paused.
+If a revision affects active implementation or delivery, establish and verify the
+local hold barrier and GitHub `on-hold` states before changing its contract, and
+reconcile the affected workers and delivery actions. Preserve user-requested holds
+until explicit release. For a temporary barrier introduced solely by the director
+for this authorized repair, retain its hold ID and prior states, verify completion
+and reconcile uncertain operations, then release that barrier through the existing
+control interface and apply the intended transitions. Never release another hold
+or activate admission as part of this cleanup. If recovery is unresolved, retain
+the barrier and report the exact remaining operation.
 
 Ask clear, consequential questions in the current chat. Store the question and
 source revision with its issue so it survives turn completion. Reject answers
