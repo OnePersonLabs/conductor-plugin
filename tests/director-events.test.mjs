@@ -211,3 +211,17 @@ test('dedupe keys, disabled state, and UUID binding are enforced', async () => {
   assert.throws(() => new DirectorEvents({ state: {}, threadId: 'not-a-uuid', save() {}, execute() {} }), /UUID/);
   assert.throws(() => new DirectorEvents({ state: { threadId: '019c6e27-e55b-73d1-87d8-4e01f1f75043' }, threadId: '111c6e27-e55b-73d1-87d8-4e01f1f75043', save() {}, execute() {} }), /binding/);
 });
+
+test('a target attachment event stays pending until the destination binding can acknowledge it', async () => {
+  const state = { threadId: THREAD, enabled: true, snapshots: {}, events: [], batches: [], acknowledged: [], checkRevision: 0, checkedRevision: 0 };
+  const { events } = harness({ state });
+  const attached = await events.emit({ kind: 'director-attached', threadId: '019c6e27-e55b-73d1-87d8-4e01f1f75044' });
+  assert.deepEqual(await events.acknowledge([attached.id]), { acknowledged: [] });
+  assert.equal(state.events[0].acknowledgedAt, null);
+  assert.equal(state.pendingCheck, true);
+  state.threadId = attached.event.threadId;
+  events.threadId = attached.event.threadId;
+  assert.deepEqual(await events.acknowledge([attached.id]), { acknowledged: [attached.id] });
+  assert.ok(state.acknowledged.some(item => item.id === attached.id));
+  assert.equal(state.events.length, 0, 'acknowledged unreferenced events are compacted');
+});

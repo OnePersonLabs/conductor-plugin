@@ -110,7 +110,10 @@ export async function ensureService({ store, root, threadId, enable = false, man
         const liveState = await store.read();
         if (liveState.serviceReady === true && liveState.ownerToken === current.token) {
           const handoff = liveState.director?.handoff;
-          if (attachThreadId && handoff?.toThreadId === attachThreadId) return { ...handoff, handoffStatus: handoff.status, status: 'handoff-pending', blocker: handoff.blocker ?? 'Waiting for the old native turn to finish.', pid: current.pid };
+          if (attachThreadId && liveState.director?.threadId !== attachThreadId) {
+            if (handoff?.toThreadId === attachThreadId) return { ...handoff, fromThreadId: liveState.director.threadId, handoffStatus: handoff.status, status: 'handoff-pending', blocker: handoff.blocker ?? 'Waiting for the old native turn to finish.', pid: current.pid };
+            throw new Error(`Conductor became ready without binding ${attachThreadId} or recording its pending handoff; inspect status before retrying.`);
+          }
           return { status: attachThreadId ? 'attached' : 'started', threadId: liveState.director?.threadId ?? threadId ?? null, nativeStatus: liveState.director?.nativeActivity?.state ?? 'unknown', pid: current.pid };
         }
       }

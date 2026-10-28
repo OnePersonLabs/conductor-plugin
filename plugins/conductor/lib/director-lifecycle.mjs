@@ -36,7 +36,7 @@ export async function handleDirectorLifecycle(payload, { activityFactory = optio
   try {
     activity = activityFactory({ dir: join(repo.commonDir, 'conductor') });
     const handoff = director.handoff;
-    const oldThread = boundThread && handoff?.fromThreadId === threadId && ['waiting-turn', 'blocked'].includes(handoff.status);
+    const oldThread = boundThread && handoff?.fromThreadId === threadId && ['waiting-turn', 'blocked', 'switching'].includes(handoff.status);
     const oldTurn = oldThread && handoff.turnId === turnId;
     const destination = boundThread && event === 'PostToolUse' ? ownership?.lifecycleBaseline : null;
     const activityInput = { threadId, turnId, event, wakeupMarker: event === 'UserPromptSubmit' ? wakeupMarker(payload.prompt) : null };

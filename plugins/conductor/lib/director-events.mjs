@@ -103,9 +103,12 @@ export class DirectorEvents {
     if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) throw new TypeError('Acknowledgement requires event IDs.');
     const selected = new Set(ids);
     const now = new Date().toISOString();
+    const acknowledgedIds = [];
     for (const item of this.state.events) if (selected.has(item.id) && !item.acknowledgedAt) {
+      if (item.event?.kind === 'director-attached' && item.event.threadId !== this.threadId) continue;
       item.acknowledgedAt = now;
       this.state.acknowledged.push({ id: item.id, acknowledgedAt: now });
+      acknowledgedIds.push(item.id);
     }
     for (const batch of this.state.batches) if (batch.eventIds.every(id => this.state.events.find(item => item.id === id)?.acknowledgedAt)) {
       // A manual Desktop turn can handle the work before its queued wake is
@@ -115,8 +118,9 @@ export class DirectorEvents {
     }
     this.state.acknowledged = this.state.acknowledged.slice(-MAX_RECEIPTS);
     this.pruneSettled();
+    this.state.pendingCheck = this.state.checkedRevision < this.state.checkRevision || this.state.events.some(item => !item.acknowledgedAt);
     await this.save();
-    return { acknowledged: ids };
+    return { acknowledged: acknowledgedIds };
   }
 
   pruneSettled() {
@@ -143,7 +147,7 @@ export class DirectorEvents {
     // change remains pending and is reconsidered on turn completion.
     await this.acknowledge(this.state.events.filter(item => (item.revision ?? 0) <= revision).map(item => item.id));
     this.state.checkedRevision = Math.max(this.state.checkedRevision, revision);
-    this.state.pendingCheck = this.state.checkedRevision < this.state.checkRevision;
+    this.state.pendingCheck = this.state.checkedRevision < this.state.checkRevision || this.state.events.some(item => !item.acknowledgedAt);
     await this.save();
     return { idle: !this.state.pendingCheck, checkRevision: this.state.checkRevision };
   }

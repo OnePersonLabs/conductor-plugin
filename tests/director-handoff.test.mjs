@@ -26,6 +26,11 @@ function fixture({ old = activity('idle', 'old-turn', 2), target = activity('unk
   const host = new EventEmitter();
   Object.assign(host, {
     hostMode: 'codex-desktop', threadId: OLD, threadEnsured: true, client, currentStatus: { type: 'idle', activeFlags: [] },
+    cancelQueuedWakeup: async (queueItemId) => {
+      const items = queue.get(OLD) ?? [], index = items.findIndex(item => item.id === queueItemId);
+      if (index < 0) return false;
+      items.splice(index, 1); return true;
+    },
     validateDesktopThread: async id => {
       if (id === OTHER) throw new Error('destination belongs to another repository');
       return { id, cwd: 'C:/repo', status: activities.get(id)?.state ?? 'unknown' };
@@ -67,6 +72,84 @@ test('idle attach switches only after reconciling old queued wakes and schedules
   assert.equal(h.writes.scans, 1, 'normal scans resume after the binding has changed');
 });
 
+test('an absent queue marker without a cancellation receipt or terminal consumption keeps the batch and binding', async () => {
+  const h = fixture();
+  const batch = { id: '550e8400-e29b-41d4-a716-446655440001', threadId: OLD, status: 'queued', queueItemId: 'vanished', eventIds: ['evt'] };
+  h.directorState.batches.push(batch);
+  const result = await h.coordinator.attachThread(NEXT);
+  assert.equal(result.status, 'handoff-pending');
+  assert.match(result.blocker, /absent from the queue without a matching terminal consumption receipt/);
+  assert.equal(batch.status, 'queued');
+  assert.equal(h.state.director.threadId, OLD);
+});
+
+test('queue disappearance after unconfirmed cancellation is not treated as delivery or cancellation', async () => {
+  const h = fixture();
+  const batch = { id: '550e8400-e29b-41d4-a716-446655440002', threadId: OLD, status: 'queued', queueItemId: 'raced', eventIds: ['evt'] };
+  h.directorState.batches.push(batch);
+  h.queue.set(OLD, [{ id: 'raced', input: [{ type: 'text', text: `<!-- conductor:director-wakeup:${batch.id} -->` }] }]);
+  h.host.cancelQueuedWakeup = async () => { h.queue.set(OLD, []); return false; };
+  const result = await h.coordinator.attachThread(NEXT);
+  assert.equal(result.status, 'handoff-pending');
+  assert.match(result.blocker, /Cancellation .* was not confirmed/);
+  assert.equal(batch.status, 'queued');
+  assert.equal(h.state.director.threadId, OLD);
+});
+
+test('a matching terminal consumption receipt permits cleanup when the queue marker is already gone', async () => {
+  const terminal = activity('idle', 'consumed-turn', 4);
+  const h = fixture({ old: terminal });
+  const batch = { id: '550e8400-e29b-41d4-a716-446655440003', threadId: OLD, status: 'queued', turnId: 'consumed-turn', nativeConsumed: true, eventIds: ['evt'] };
+  h.directorState.batches.push(batch);
+  const result = await h.coordinator.attachThread(NEXT);
+  assert.equal(result.status, 'attached');
+  assert.equal(h.state.director.threadId, NEXT);
+  assert.equal(batch.status, 'reconciled-not-queued');
+});
+
+test('a source turn that starts during queue reconciliation defers the handoff', async () => {
+  const h = fixture();
+  const batch = { id: '550e8400-e29b-41d4-a716-446655440004', threadId: OLD, status: 'queued', queueItemId: 'late-turn', eventIds: ['evt'] };
+  h.directorState.batches.push(batch);
+  h.queue.set(OLD, [{ id: 'late-turn', input: [{ type: 'text', text: `<!-- conductor:director-wakeup:${batch.id} -->` }] }]);
+  h.host.cancelQueuedWakeup = async queueItemId => {
+    h.activities.set(OLD, activity('active', 'late-turn-id', 3));
+    const items = h.queue.get(OLD), index = items.findIndex(item => item.id === queueItemId);
+    if (index >= 0) items.splice(index, 1);
+    return true;
+  };
+  const result = await h.coordinator.attachThread(NEXT);
+  assert.equal(result.status, 'handoff-pending');
+  assert.equal(result.turnId, 'late-turn-id');
+  assert.equal(h.state.director.handoff.status, 'waiting-turn');
+  assert.equal(h.state.director.threadId, OLD);
+});
+
+test('post-commit cleanup failure reports attached and keeps the durable destination event', async () => {
+  const h = fixture();
+  h.coordinator.directorActivity.pruneExcept = async () => { throw new Error('locked activity database'); };
+  const result = await h.coordinator.attachThread(NEXT);
+  assert.equal(result.status, 'attached');
+  assert.equal(h.state.director.threadId, NEXT);
+  assert.match(result.warning, /cleanup will retry at startup/);
+  assert.ok(h.state.director.events.some(item => item.event?.kind === 'director-attached' && item.event.threadId === NEXT && !item.acknowledgedAt));
+});
+
+test('pre-commit validation failure remains an explicit blocked handoff', async () => {
+  const h = fixture();
+  const validate = h.host.validateDesktopThread;
+  let calls = 0;
+  h.host.validateDesktopThread = async id => {
+    if (++calls > 1) throw new Error('destination chat is unavailable');
+    return validate(id);
+  };
+  const result = await h.coordinator.attachThread(NEXT);
+  assert.equal(result.status, 'handoff-pending');
+  assert.equal(result.blocker, 'destination chat is unavailable');
+  assert.equal(h.state.director.handoff.status, 'blocked');
+  assert.equal(h.state.director.threadId, OLD);
+});
+
 test('active handoff persists, suppresses signals, and switches only on the matching terminal receipt', async () => {
   const h = fixture({ old: activity('active', 'turn-live', 4), target: activity('idle', 'target-old', 3) });
   const pending = await h.coordinator.attachThread(NEXT);
@@ -106,6 +189,16 @@ test('handoff waits for an in-flight director control and rejects competing dest
   h.coordinator.directorControlCount = 0;
   const completed = await h.coordinator.progressHandoff(await h.coordinator.directorActivity.read(OLD));
   assert.equal(completed.status, 'attached');
+  assert.equal(h.state.director.threadId, NEXT);
+});
+
+test('a pending handoff retries on the same native activity revision', async () => {
+  const h = fixture({ busyControl: 1 });
+  await h.coordinator.attachThread(NEXT);
+  h.coordinator.directorControlCount = 0;
+  h.coordinator.activityRevision = 2;
+  const retried = await h.coordinator.refreshDirectorActivity();
+  assert.equal(retried, undefined);
   assert.equal(h.state.director.threadId, NEXT);
 });
 

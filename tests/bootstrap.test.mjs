@@ -146,6 +146,17 @@ test('attach restart launches against the saved director and returns pending nat
   assert.equal(result.threadId, undefined, 'a pending transfer must not claim the destination binding');
 });
 
+test('attach startup never reports ready as attached before the requested binding is persisted', async t => {
+  const target = '019c6e27-e55b-73d1-87d8-4e01f1f75044';
+  const { base, store } = await fixture(t, { runtimeEnabled: true, repository: 'owner/repo', director: { threadId: THREAD, enabled: true } });
+  await assert.rejects(ensureService({ store, root: base, attachThreadId: target, host: 'desktop', cliPath: 'conductor.mjs', timeoutMs: 500,
+    execute: async () => {
+      await atomicJSON(store.lockPath, { token: 'live', pid: process.pid, hostname: hostname(), platform: process.platform });
+      await atomicJSON(join(store.dir, 'state.json'), { version: 1, jobs: [], runtimeEnabled: true, ownerToken: 'live', serviceReady: true, director: { threadId: THREAD, enabled: true, attachProtocol: 1 } });
+      return { unref() {} };
+    } }), /ready without binding/);
+});
+
 test('host selection passes through to owned service startup', async t => {
   const { base, store } = await fixture(t);
   let argv;
