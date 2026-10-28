@@ -155,7 +155,9 @@ current issue revision, the integrated record with the same answer and verified
 `integration` evidence, the appropriate primary `state`, and whether any human
 input remains in `needsInput`. This operation verifies the prior answer and
 current revisions before writing; it preserves active holds. If another decision
-remains unresolved, keep the issue in `proposal` and set `needsInput` true. If an
+about the candidate direction remains unresolved, keep the issue in `proposal`
+and set `needsInput` true. Other human dependencies retain their appropriate
+primary state with `needsInput` true. If an
 accepted proposal is now bounded and authorized, it can move to `ready`; use
 `triage` when investigation remains. A rejected direction is updated or closed
 according to its outcome before integration, and must not become ready merely
@@ -190,7 +192,7 @@ is:
 ```
 
 Choose `state` and `needsInput` from the remaining work after reconciling the
-answer. For example, a different unresolved human choice keeps the issue in
+answer. For example, a different unresolved candidate-direction choice keeps the issue in
 `proposal` with `needsInput: true`. The accepted meaning owner remains the source
 of product decisions; this operation reconciles its issue status.
 

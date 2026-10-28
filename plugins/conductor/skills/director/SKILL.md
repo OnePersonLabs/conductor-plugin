@@ -244,7 +244,8 @@ For an interaction batch, use the runtime controls and issue records together:
 
 1. Start or rejoin with `interaction-begin` and a stable semantic `batchKey` for
    the unresolved decisions. Reuse it for the same unchanged batch. `status`
-   reports its `interactionId` and enrolled issues. Observer startup preserves
+   reports its `interaction.id` and enrolled issues. Pass that ID as
+   `interactionId` to complete. Observer startup preserves
    the gate; explicit `wakeup` is the user's request to release it early.
 2. For every issue, call `decision-read` (which enrolls it in the active phase),
    then persist each self-contained question through `decision-record` using its
@@ -273,6 +274,13 @@ reading. Ask one focused question or a small related group, allow corrections,
 and prepare follow-ups when a reply reveals another useful decision. Include
 clear steps for any action the user must perform outside chat and explain how its
 result will be verified.
+
+Use native question cards when available; otherwise ask in ordinary chat and
+end the turn with the question visible. Do not require a collaboration-mode
+change or keep a model turn alive waiting. Match internal wake messages against
+persisted event batch IDs and queue identities; they are reconciliation requests,
+not human answers or permission to end interaction. Never interpret the word
+"wakeup" inside Conductor's own message as a human wake request.
 
 Keep this foreground phase devoted to resolving those decisions. Existing
 independent workers can continue; queue their events and Conductor's internal

@@ -41,6 +41,14 @@ export class GitHub {
     }
   }
   async comments(number) { return this.pages(`repos/${this.repository}/issues/${number}/comments?per_page=100`); }
+  async setNeedsInput(number, needed, labels) {
+    const label = labels.needsInput;
+    const hasLabel = issue => (issue.labels ?? []).some(item => (typeof item === 'string' ? item : item.name).toLowerCase() === label.toLowerCase());
+    if (hasLabel(await this.issue(number)) !== needed) await this.gh(['issue', 'edit', String(number), '--repo', this.repository, needed ? '--add-label' : '--remove-label', label]);
+    const verified = await this.issue(number);
+    if (hasLabel(verified) !== needed) throw new Error(`Human-input label change for issue #${number} could not be verified.`);
+    return verified;
+  }
   async setWorkflowState(number, state, labels) {
     const primary = ['triage', 'proposal', 'ready', 'hold'];
     if (!primary.includes(state)) throw new Error(`Unknown primary workflow state: ${state}`);

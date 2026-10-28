@@ -22,6 +22,7 @@ Usage: conductor enable [--thread UUID]
        conductor enable --host desktop --thread UUID
        conductor attach --host desktop --thread UUID
        conductor wakeup
+       conductor observe                   (ensure observation without ending interaction)
        conductor signal                    (internal, passive)
        conductor start --thread UUID       (compatibility)
        conductor serve [--thread UUID]      (internal)
@@ -36,7 +37,7 @@ Migration preview makes no changes; migrated configuration remains admission-pau
 export function parseArgs(args) {
   const result = { command: 'run', overrides: {} };
   if (args[0] && !args[0].startsWith('-')) result.command = args.shift();
-  if (!['run','signal','status','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup','attach'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
+  if (!['run','signal','status','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup','observe','attach'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
   if (result.command === 'cleanup') {
     const option = args.shift();
     if (option !== undefined && option !== '--preview') throw new Error('cleanup accepts only --preview.');
@@ -142,11 +143,11 @@ async function main() {
     const result = await store.cleanupStopped(Date.now(), repo.root, configVerified);
     console.log(JSON.stringify(result, null, 2)); return;
   }
-  if (['start','enable','wakeup','attach'].includes(options.command)) {
+  if (['start','enable','wakeup','observe','attach'].includes(options.command)) {
     if (options.command === 'start' && !options.threadId) throw new Error('Start requires --thread with the existing director chat UUID. Use `conductor enable` to create or resume the configured director automatically.');
     const enabled = options.command === 'start' || options.command === 'enable' || options.command === 'attach';
     const result = await ensureService({ store, root: repo.root, threadId: options.threadId, attachThreadId: options.command === 'attach' ? options.threadId : undefined, host: options.host,
-      enable: enabled, manualWake: options.command === 'wakeup' || options.command === 'start' || options.command === 'enable',
+      enable: enabled, manualWake: options.command === 'wakeup',
       execute: launch, cliPath });
     if (result.status === 'disabled') throw new Error('Conductor is not enabled for this repository. Run `conductor enable` explicitly first.');
     console.log(JSON.stringify({ ...result, repository: (await loadConfig(repo.root)).repository, logPath: resolve(store.dir, 'service.log') })); return;

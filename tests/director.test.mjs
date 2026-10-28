@@ -19,6 +19,12 @@ function setup({ issues = [], jobs = [], execute = async () => ({ code: 0, stdou
     parents: async number => (parentMap.get(number) ?? []).map(n => structuredClone(records.get(n))),
     children: async number => (childrenMap.get(number) ?? []).map(n => structuredClone(records.get(n))),
     comments: async number => structuredClone(comments.get(number) ?? []),
+    setNeedsInput: async (number, needed, labels) => {
+      const issue = records.get(number);
+      issue.labels = issue.labels.filter(label => label !== labels.needsInput);
+      if (needed) issue.labels.push(labels.needsInput);
+      return structuredClone(issue);
+    },
     setWorkflowState: async (number, state, labels) => {
       const issue = records.get(number);
       const primary = ['triage','proposal','ready','hold'].map(key => labels[key]);
@@ -163,4 +169,96 @@ test('unchanged external observation does not send repeated director wakeups', a
   assert.deepEqual(first, second);
   assert.equal(queueCount, 1);
   assert.equal((await h.director.events.pending()).length, 1);
+});
+
+test('interaction gates new work, survives restart and settles without waking itself', async () => {
+  let wakes = 0;
+  const h = setup({ issues: [issue(1), issue(2)], jobs: [{ issue: 2, phase: 'building' }], execute: async () => { wakes++; return { code: 0 }; } });
+  const control = request => h.director.control({ repository: REPO, threadId: THREAD, ...request });
+  const phase = await control({ op: 'interaction-begin', batchKey: 'contracts-v1' });
+  const status = await control({ op: 'status' });
+  assert.equal(status.interaction.id, phase.id);
+  assert.equal(wakes, 0);
+  await assert.rejects(control({ op: 'dispatch', issue: 1, expectedRevision: status.issues[0].revision }), /Interactive resolution/);
+  await assert.rejects(control({ op: 'resume', issue: 2, expectedRevision: status.issues[1].revision }), /Interactive resolution/);
+  assert.equal(await h.director.checkJob(h.state.jobs[0]), true);
+  h.director = new Director(h.coordinator, THREAD);
+  assert.equal((await control({ op: 'settle', checkRevision: status.checkRevision })).idle, false);
+  await assert.rejects(control({ op: 'interaction-complete', interactionId: phase.id, checkRevision: -1 }), /current events/);
+  await control({ op: 'interaction-complete', interactionId: phase.id, checkRevision: h.state.director.checkRevision });
+  assert.equal(h.state.admissionPaused, false);
+  await control({ op: 'dispatch', issue: 1, expectedRevision: status.issues[0].revision });
+});
+
+test('manual wake bypasses a batch without changing admission and does not immediately reopen it', async () => {
+  const h = setup();
+  h.state.admissionPaused = true;
+  h.coordinator.requestCheck = async () => ({ status: 'checked' });
+  const control = request => h.director.control({ repository: REPO, threadId: THREAD, ...request });
+  await control({ op: 'interaction-begin', batchKey: 'decisions-v1' });
+  await control({ op: 'wakeup' });
+  assert.equal(h.state.director.interaction.active, false);
+  assert.equal(h.state.admissionPaused, true);
+  await assert.rejects(control({ op: 'interaction-begin', batchKey: 'decisions-v1' }), /bypassed/);
+  await control({ op: 'interaction-begin', batchKey: 'decisions-v2' });
+});
+
+test('a batch cannot finish before its recorded answers are integrated or explicitly deferred', async () => {
+  const h = setup({ issues: [issue(1, ['proposal', 'needs-input'])] });
+  const control = request => h.director.control({ repository: REPO, threadId: THREAD, ...request });
+  const phase = await control({ op: 'interaction-begin', batchKey: 'decision-1' });
+  let snapshot = await control({ op: 'decision-read', issue: 1 });
+  const record = { context: 'Choose behavior', question: 'Should saving retain the current session?', status: 'pending' };
+  snapshot = await control({ op: 'decision-record', issue: 1, decisionId: 'saving', expectedRevision: snapshot.revision, record });
+  await assert.rejects(control({ op: 'interaction-complete', interactionId: phase.id, checkRevision: 0 }), /pending decisions/);
+  snapshot = await control({ op: 'decision-record', issue: 1, decisionId: 'saving', expectedRevision: snapshot.revision, record: { ...record, status: 'answered', answer: 'Yes' } });
+  await assert.rejects(control({ op: 'interaction-complete', interactionId: phase.id, checkRevision: 0 }), /awaiting integration/);
+  const current = await h.director.snapshot(1);
+  await control({ op: 'decision-integrate', issue: 1, decisionId: 'saving', expectedRevision: snapshot.revision, expectedIssueRevision: current.revision, state: 'ready', needsInput: false, record: { ...record, status: 'integrated', answer: 'Yes', integration: 'Issue acceptance updated and verified.' } });
+  assert.equal(h.records.get(1).labels.includes('proposal'), false);
+  assert.equal(h.records.get(1).labels.includes('needs-input'), false);
+  await control({ op: 'interaction-complete', interactionId: phase.id, checkRevision: h.state.director.checkRevision });
+});
+
+test('reading a recovered unanswered decision enrolls its issue and prevents premature completion', async () => {
+  const h = setup({ issues: [issue(1)] });
+  const control = request => h.director.control({ repository: REPO, threadId: THREAD, ...request });
+  const saved = await control({ op: 'decision-read', issue: 1 });
+  await control({ op: 'decision-record', issue: 1, decisionId: 'unfinished', expectedRevision: saved.revision, record: { context: 'Existing decision', question: 'Which outcome?', status: 'pending' } });
+  const phase = await control({ op: 'interaction-begin', batchKey: 'recovered' });
+  await control({ op: 'decision-read', issue: 1 });
+  await assert.rejects(control({ op: 'interaction-complete', interactionId: phase.id, checkRevision: 0 }), /pending decisions/);
+});
+
+test('integration reconciles partial and rejected proposals and preserves explicit holds', async () => {
+  for (const [labels, state, needsInput] of [[['proposal', 'needs-input'], 'proposal', true], [['proposal', 'needs-input'], 'triage', false], [['on-hold', 'needs-input'], 'hold', false]]) {
+    const h = setup({ issues: [issue(1, labels)] });
+    const control = request => h.director.control({ repository: REPO, threadId: THREAD, ...request });
+    let decisions = await control({ op: 'decision-read', issue: 1 });
+    const record = { context: 'Candidate behavior', question: 'Keep this direction?', answer: state === 'triage' ? 'No; investigate another direction.' : 'Yes', status: 'answered' };
+    decisions = await control({ op: 'decision-record', issue: 1, decisionId: 'direction', expectedRevision: decisions.revision, record });
+    const current = await h.director.snapshot(1);
+    const request = { op: 'decision-integrate', issue: 1, decisionId: 'direction', expectedRevision: decisions.revision, expectedIssueRevision: current.revision, state, needsInput, record: { ...record, status: 'integrated', integration: 'Verified corresponding issue meaning and remaining decision scope.' } };
+    if (state === 'hold') await assert.rejects(control({ ...request, state: 'ready' }), /explicit hold/);
+    await control(request);
+    assert.equal(h.records.get(1).labels.includes(LABELS[state]), true);
+    assert.equal(h.records.get(1).labels.includes('needs-input'), needsInput);
+    assert.equal(h.records.get(1).labels.includes('proposal'), state === 'proposal');
+  }
+});
+
+test('failed label reconciliation leaves the answer recoverable; a fresh retry integrates it', async () => {
+  const h = setup({ issues: [issue(1, ['proposal', 'needs-input'])] });
+  const control = request => h.director.control({ repository: REPO, threadId: THREAD, ...request });
+  let saved = await control({ op: 'decision-read', issue: 1 });
+  const record = { context: 'Scope', question: 'Accept this scope?', status: 'answered', answer: 'Yes' };
+  saved = await control({ op: 'decision-record', issue: 1, decisionId: 'scope', expectedRevision: saved.revision, record });
+  const original = h.github.setNeedsInput;
+  h.github.setNeedsInput = async () => { throw new Error('label write failed'); };
+  const integrate = async () => control({ op: 'decision-integrate', issue: 1, decisionId: 'scope', expectedRevision: saved.revision, expectedIssueRevision: (await h.director.snapshot(1)).revision, state: 'ready', needsInput: false, record: { ...record, status: 'integrated', integration: 'Meaning updated and verified.' } });
+  await assert.rejects(integrate(), /label write failed/);
+  assert.equal((await control({ op: 'decision-read', issue: 1 })).decisions[0].record.status, 'answered');
+  h.github.setNeedsInput = original;
+  await integrate();
+  assert.equal((await control({ op: 'decision-read', issue: 1 })).decisions[0].record.status, 'integrated');
 });

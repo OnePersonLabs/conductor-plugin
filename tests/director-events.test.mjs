@@ -225,3 +225,20 @@ test('a target attachment event stays pending until the destination binding can 
   assert.ok(state.acknowledged.some(item => item.id === attached.id));
   assert.equal(state.events.length, 0, 'acknowledged unreferenced events are compacted');
 });
+
+test('interaction holds background events quietly and cancels only its own in-flight wake', async () => {
+  let finish, cancelled = [];
+  const host = { status: async () => ({ type: 'idle' }), startRunner: () => new Promise(resolve => { finish = resolve; }), cancelQueuedWakeup: async id => { cancelled.push(id); return true; } };
+  const { events, state } = harness({ host });
+  await events.emit({ kind: 'worker-progress' });
+  const flushing = events.flush();
+  await new Promise(resolve => setImmediate(resolve));
+  state.interaction = { id: 'phase', active: true };
+  finish({ queued: true, id: 'owned-wake' });
+  await flushing;
+  assert.deepEqual(cancelled, ['owned-wake']);
+  await events.emit({ kind: 'worker-completed' });
+  assert.equal((await events.flush()).status, 'awaiting-interaction');
+  assert.equal((await events.pending()).length, 2);
+  assert.equal((await events.settle(state.checkRevision)).idle, false);
+});

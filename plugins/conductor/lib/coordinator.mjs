@@ -129,6 +129,7 @@ export class Coordinator extends EventEmitter {
       this.state.serviceReady = true; await this.save();
       this.timer = setInterval(() => this.wake(), this.config.pollMs);
       if (!attachOnly && !handoffThreadId) {
+        if (manualWake) await this.director.releaseInteractionForWakeup();
         if (manualWake || enable) await this.requestCheck({ manual: true });
         else await this.wake();
       }
@@ -481,6 +482,7 @@ export class Coordinator extends EventEmitter {
     this.state.lastScan = new Date().toISOString(); await this.save();
   }
   async dispatchIssue(issue, base, eligibilityRevision) {
+    this.director?.assertInteractionReleased();
       if (this.stopping) return;
       const branch = `conductor/issue-${issue.number}`;
       if (await this.github.pullForBranch(branch)) throw new Error(`Issue #${issue.number} already has a PR on ${branch}; recover its owner before adoption.`);
@@ -874,6 +876,7 @@ export class Coordinator extends EventEmitter {
     await this.github.progress(job); this.wake();
   }
   async resume(issue, threadId, role) {
+    this.director?.assertInteractionReleased();
     const job = this.state.jobs.find(x => x.issue === issue);
     if (!job || !['blocked','stopped','uncertain'].includes(job.phase) || this.tasks.has(issue)) throw new Error('Only a stopped or blocked original issue can be resumed.');
     if (job.childPid && processExists(job.childPid)) throw new Error('Previous builder process is still alive; ownership remains uncertain.');

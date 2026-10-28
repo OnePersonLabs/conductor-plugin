@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eligibility, workflowState } from './workflow.mjs';
 import { DirectorEvents } from './director-events.mjs';
 import { occupied } from './scheduler.mjs';
+import { readDecisions, recordDecision } from './decisions.mjs';
 
 // Policy is judged by the director. This owner enforces a fresh, bounded command
 // and retains barriers before attempting any non-atomic GitHub mutation.
@@ -15,6 +16,52 @@ export class Director {
     coordinator.state.admissionPaused ??= coordinator.config.admissionPaused ?? false;
   }
   async snapshot(number) { return eligibility(this.c.github, number, this.c.config.labels); }
+  assertInteractionReleased() {
+    if (this.c.state.director.interaction?.active) throw new Error('Interactive resolution is active; finish the batch or explicitly wake up before starting or resuming work.');
+  }
+  async beginInteraction(request) {
+    const state = this.c.state.director;
+    if (typeof request.batchKey !== 'string' || !request.batchKey.trim()) throw new Error('Interaction requires a stable batchKey describing the unresolved decisions.');
+    if (state.interaction?.active) {
+      if (state.interaction.batchKey !== request.batchKey) throw new Error('An interaction is already active; continue its remaining decisions.');
+    } else {
+      if (state.interaction?.batchKey === request.batchKey && state.interaction?.outcome === 'wakeup') throw new Error('This batch was explicitly bypassed; do not reopen it without changed decisions or a user request.');
+      state.interaction = { id: randomUUID(), batchKey: request.batchKey, active: true, issues: [], startedAt: new Date().toISOString() };
+      await this.c.save();
+    }
+    // Close the in-flight queue race before asking. Only persisted Conductor
+    // batches are eligible for cancellation; user queue entries are untouched.
+    await this.events.flushing;
+    for (const batch of state.batches) if (batch.queueItemId && !batch.nativeConsumed && !batch.queueCancellationConfirmed) {
+      if (await this.events.cancelWake(batch)) batch.status = 'reconciled-not-queued';
+    }
+    await this.c.save();
+    if (state.recoveryRequired && !state.recoveryRequired.resolvedAt) throw new Error('Interaction is gated, but queue recovery must be reconciled before presenting a question.');
+    return structuredClone(state.interaction);
+  }
+  async completeInteraction(request) {
+    const state = this.c.state.director;
+    const phase = state.interaction;
+    if (!phase?.active || request.interactionId !== phase.id) throw new Error('Complete requires the active interactionId.');
+    for (const issue of phase.issues ?? []) {
+      const saved = await readDecisions(this.c.github, issue);
+      if (saved.decisions.some(item => ['pending', 'answered'].includes(item.record.status))) throw new Error(`Issue #${issue} still has pending decisions or answers awaiting integration.`);
+    }
+    if (request.checkRevision !== state.checkRevision) throw new Error('Inspect and reconcile current events before completing interaction.');
+    await this.events.settle(request.checkRevision);
+    // Settlement may await queue reconciliation while observations arrive.
+    if (request.checkRevision !== state.checkRevision) throw new Error('Events changed during settlement; reconcile before completing interaction.');
+    phase.active = false; phase.outcome = 'completed'; phase.endedAt = new Date().toISOString();
+    await this.c.save();
+    return structuredClone(phase);
+  }
+  async releaseInteractionForWakeup() {
+    const phase = this.c.state.director.interaction;
+    if (phase?.active) {
+      phase.active = false; phase.outcome = 'wakeup'; phase.endedAt = new Date().toISOString();
+      await this.c.save();
+    }
+  }
   async barrier(number, { admission = true } = {}) {
     if (admission && this.c.state.admissionPaused) return 'Repository admission is paused.';
     const parents = await this.c.github.parents(number);
@@ -159,10 +206,36 @@ export class Director {
     switch (request.op) {
       case 'status': {
         await this.observe();
-        return { checkRevision: c.state.director.checkRevision, jobs: c.state.jobs, holds: c.state.holds, admissionPaused: c.state.admissionPaused, issues: this.issues ?? [], requests: [...c.requests].map(([key,r]) => ({ key, issue:r.issue, method:r.method, params:r.params })) };
+        return { checkRevision: c.state.director.checkRevision, interaction: c.state.director.interaction ?? null, jobs: c.state.jobs, holds: c.state.holds, admissionPaused: c.state.admissionPaused, issues: this.issues ?? [], requests: [...c.requests].map(([key,r]) => ({ key, issue:r.issue, method:r.method, params:r.params })) };
       }
       case 'settle': return this.events.settle(request.checkRevision);
-      case 'wakeup': return c.requestCheck({ manual: true });
+      case 'wakeup': await this.releaseInteractionForWakeup(); return c.requestCheck({ manual: true });
+      case 'interaction-begin': return this.beginInteraction(request);
+      case 'interaction-complete': return this.completeInteraction(request);
+      case 'decision-read':
+      case 'decision-integrate':
+      case 'decision-record': {
+        const current = await readDecisions(c.github, request.issue);
+        if (c.state.director.interaction?.active) {
+          const issues = c.state.director.interaction.issues ??= [];
+          if (!issues.includes(request.issue)) { issues.push(request.issue); await c.save(); }
+        }
+        if (request.op === 'decision-read') return current;
+        if (request.op === 'decision-record' && request.record?.status === 'integrated') throw new Error('Use decision-integrate to reconcile labels before recording integration.');
+        if (request.op === 'decision-integrate' && request.record?.status !== 'integrated') throw new Error('Integration requires an integrated record.');
+        return recordDecision(c.github, c.config.repository, request, { beforeWrite: request.op !== 'decision-integrate' ? undefined : async saved => {
+          if (!['triage', 'proposal', 'ready', 'hold'].includes(request.state) || typeof request.needsInput !== 'boolean') throw new Error('Integration requires the judged primary state and needsInput boolean.');
+          const remaining = saved.decisions.filter(item => item.decisionId !== request.decisionId && ['pending', 'answered', 'deferred'].includes(item.record.status));
+          if (remaining.length && !request.needsInput) throw new Error('Other unresolved or deferred decisions still require needs-input.');
+          const source = await this.snapshot(request.issue);
+          if (!request.expectedIssueRevision || source.revision !== request.expectedIssueRevision) throw new Error('Issue revision changed; reconcile meaning and labels before integrating.');
+          const held = workflowState(source.issue, c.config.labels).state === 'hold' || await this.barrier(request.issue, { admission: false });
+          if (held && request.state !== workflowState(source.issue, c.config.labels).state) throw new Error('Preserve the explicit hold during decision integration.');
+          if (request.state === 'hold' && workflowState(source.issue, c.config.labels).state !== 'hold') throw new Error('Use hold to create an explicit hold.');
+          await c.github.setWorkflowState(request.issue, request.state, c.config.labels);
+          await c.github.setNeedsInput(request.issue, request.needsInput, c.config.labels);
+        } });
+      }
       case 'enable': c.state.runtimeEnabled = true; return c.requestCheck({ manual: true });
       case 'events': return this.events.pending();
       case 'ack': { const receipt = await this.events.acknowledge(request.ids); await this.events.flush(); return receipt; }
@@ -171,6 +244,7 @@ export class Director {
       case 'attach': return c.attachThread(request.targetThreadId);
       case 'activate': c.state.admissionPaused = false; await c.save(); await this.events.emit({kind:'activated'}); return { admissionPaused: false };
       case 'dispatch': {
+        this.assertInteractionReleased();
         if (!request.expectedRevision) throw new Error('Dispatch requires expectedRevision from current status.');
         const current = await this.assertEligible(request.issue, request.expectedRevision);
         if (c.state.jobs.some(j => j.issue === request.issue)) throw new Error('Issue already has an owner; resume that job.');
@@ -178,6 +252,7 @@ export class Director {
         return c.dispatchIssue(current.issue, await c.base(), current.revision);
       }
       case 'resume': {
+        this.assertInteractionReleased();
         if (!request.expectedRevision) throw new Error('Resume requires expectedRevision.');
         const current = await this.assertEligible(request.issue, request.expectedRevision);
         const job = c.state.jobs.find(j => j.issue === request.issue);

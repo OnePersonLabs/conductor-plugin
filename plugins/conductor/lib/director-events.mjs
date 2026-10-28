@@ -149,7 +149,7 @@ export class DirectorEvents {
     this.state.checkedRevision = Math.max(this.state.checkedRevision, revision);
     this.state.pendingCheck = this.state.checkedRevision < this.state.checkRevision || this.state.events.some(item => !item.acknowledgedAt);
     await this.save();
-    return { idle: !this.state.pendingCheck, checkRevision: this.state.checkRevision };
+    return { idle: !this.state.pendingCheck && !this.state.interaction?.active, interaction: this.state.interaction ?? null, checkRevision: this.state.checkRevision };
   }
 
   flush() {
@@ -160,6 +160,7 @@ export class DirectorEvents {
   }
 
   async _flush() {
+    if (this.state.interaction?.active) return { status: 'awaiting-interaction', interactionId: this.state.interaction.id };
     if (this.state.handoff) return { status: 'handoff-pending', handoff: structuredClone(this.state.handoff) };
     if (!this.state.enabled) return { status: 'disabled' };
     if (this.state.recoveryRequired && !this.state.recoveryRequired.resolvedAt) return { status: 'recovery-required', reason: this.state.recoveryRequired };
@@ -184,7 +185,7 @@ export class DirectorEvents {
         batch.queueItemId = turn.id; batch.clientMessageId = turn.clientMessageId;
         // A native manual turn can settle (or stop) while queue/add is in
         // flight, before acknowledgement has a queue ID it can remove.
-        if ((batch.acknowledgedAt || !this.state.enabled) && !batch.nativeConsumed) {
+        if ((batch.acknowledgedAt || !this.state.enabled || this.state.interaction?.active) && !batch.nativeConsumed) {
           await this.cancelWake(batch);
         }
       }
