@@ -43,6 +43,19 @@ recovery only.
 
 ## Hand Conductor to another chat
 
+For a plugin rollout, create replacement chats only after all bundle changes,
+required checks and publication are complete, installations are refreshed, hook
+trust is verified and required post-refresh configuration/instruction checks
+have finished. This order applies to skills and documentation as well as hook
+code: trust can depend on the whole installed bundle. Keep that bundle unchanged
+through the replacements' handoff and native start/Stop verification. If a later
+bundle change is necessary, finish and refresh it before creating the final
+replacement chats. Re-reading instructions in an existing chat does not establish
+that its retained hook configuration/trust has refreshed. Preserve the existing
+attach safeguards, jobs, holds and admission pauses. This rollout order is a
+precaution against retained state, not proof of a particular hook failure cause;
+missing receipts still require diagnosis rather than routine hook toggles.
+
 Handle ordinary requests such as “Move Conductor to a fresh chat” and “Make
 this the Conductor runner” through this skill. Read the saved binding first.
 An ordinary conversation in an old chat is not a request to reclaim ownership.

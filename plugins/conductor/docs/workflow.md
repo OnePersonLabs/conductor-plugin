@@ -151,6 +151,22 @@ responses; it is not required. An inbox draft is not a submitted answer.
 
 ## Move the director to another chat
 
+For a plugin rollout, use this order:
+
+1. Finish all bundle changes, checks and publication.
+2. Refresh the installed plugin, verify hook trust, and finish required
+   post-refresh configuration and global-instruction checks.
+3. Create the fresh replacement chats and use the attach procedure below.
+4. Verify the saved bindings and matching native start/Stop receipts. Preserve
+   jobs, holds and admission pauses throughout.
+
+Keep the installed bundle unchanged through handoff and verification. If a
+follow-up change is needed, finish and refresh it before creating replacements
+for that final bundle. Skills and documentation count as bundle changes too.
+Reading updated instructions in an existing chat does not verify its retained
+hook state. This ordering reduces exposure to retained configuration/trust;
+it does not establish the cause of a missing receipt or require routine toggles.
+
 Ask the current director “Move Conductor to a fresh chat”, or open a chat in
 the same project and say “Make this the Conductor runner”. Both requests use
 `$conductor:director`. A fresh chat is named `Conductor: <product>` and reads

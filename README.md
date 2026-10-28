@@ -90,6 +90,9 @@ current runner, or “Make this the Conductor runner” in another project chat.
 The [chat handoff](plugins/conductor/docs/workflow.md#move-the-director-to-another-chat)
 preserves worker ownership, holds and execution pauses and waits for an active
 director to finish before switching.
+For plugin rollouts, finish changes and checks, publish, refresh and verify trust
+before creating the replacement chats. Keep the installed bundle unchanged
+through handoff and lifecycle verification; see the same guide for the full order.
 
 ## How issue states work
 
