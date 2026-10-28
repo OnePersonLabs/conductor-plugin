@@ -314,6 +314,11 @@ test('review finding returns to builder, then the same isolated reviewer clears 
   assert.equal(job.reviewClearance.head, job.checkHead);
   assert.equal(job.reviewClearance.base, job.checkBase);
   assert.equal(job.reviewClearance.requestRevision, job.requestRevision);
+  const reviewedPrompt = world.prompts.filter(item => item.threadId === job.reviewerThreadId).at(-1).prompt;
+  for (const context of [`https://github.com/example/project/pull/${job.pr}`, job.branch,
+    'into main', `git merge-base ${job.checkBase} ${job.checkHead}`]) {
+    assert.ok(reviewedPrompt.includes(context), `Reviewer needs current PR comparison context: ${context}`);
+  }
 });
 
 test('base advancement during review refreshes checks and automatically resumes the same reviewer', async t => {

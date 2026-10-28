@@ -257,6 +257,12 @@ opening PRs, routing review and failed-check feedback, merging, and issue
 closure. Independent review is read-only. Builder completion or a successful
 push does not establish acceptance or delivery.
 
+The reviewer receives a direct review prompt with the PR, linked issue,
+worktree branch, merge target and checked commits. It checks actionable defects
+and acceptance, citing applicable repository rules when they support a finding.
+It does not depend on an additional review skill. The coordinator turns its
+structured result into readable PR feedback.
+
 The issue's acceptance, dependencies and project instructions are rechecked
 when relevant inputs change. The configured checks must pass on the current
 integrated branch; required review and approvals must be satisfied. Closure
