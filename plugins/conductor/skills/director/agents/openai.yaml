@@ -1,6 +1,6 @@
 interface:
   display_name: "Conductor Director"
-  short_description: "Direct issue work and project decisions in chat"
-  default_prompt: "Use $conductor:director to triage and manage work, mediate decisions, and coordinate eligible execution."
+  short_description: "Manage issue work or hand Conductor to another chat"
+  default_prompt: "Use $conductor:director to manage work, mediate decisions, coordinate eligible execution, or hand the runner to a fresh or current chat when requested."
 policy:
   allow_implicit_invocation: true

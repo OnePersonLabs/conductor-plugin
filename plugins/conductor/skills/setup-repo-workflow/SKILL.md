@@ -72,6 +72,12 @@ The service can report status and reconcile events while admission is paused.
 
 ## Enable the Desktop director
 
+For an already configured repository, a request to move the runner to a fresh
+chat or make the current chat its runner uses `$conductor:director` and
+`conductor attach --host desktop --thread <destination UUID>`. Follow that
+skill's handoff procedure instead of rerunning setup or stopping workers.
+Initial enablement below remains separate from replacing an existing director.
+
 Complete requested plugin installation before starting the onboarding turn.
 Do not infer a restart or hook-toggle requirement from missing receipts;
 diagnose event delivery and hook execution first.

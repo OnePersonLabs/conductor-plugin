@@ -82,6 +82,12 @@ while retaining recovery data. Run `conductor --help` for controls and the
 [workflow guide](plugins/conductor/docs/workflow.md) for holds, release, event
 handling and recovery.
 
+To get a fresh director context, say “Move Conductor to a fresh chat” in the
+current runner, or “Make this the Conductor runner” in another project chat.
+The [chat handoff](plugins/conductor/docs/workflow.md#move-the-director-to-another-chat)
+preserves worker ownership, holds and execution pauses and waits for an active
+director to finish before switching.
+
 ## How issue states work
 
 - `triage`: investigate incoming or unclassified work.

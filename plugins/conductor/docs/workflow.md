@@ -124,6 +124,38 @@ Use ordinary chat for questions, approvals and issue direction. The optional
 `$onepersonlabs:human-collaboration` inbox can carry longer reviews or phone
 responses; it is not required. An inbox draft is not a submitted answer.
 
+## Move the director to another chat
+
+Ask the current director “Move Conductor to a fresh chat”, or open a chat in
+the same project and say “Make this the Conductor runner”. Both requests use
+`$conductor:director`. A fresh chat is named `Conductor: <product>` and reads
+current instructions; it receives brief context and relevant links rather than
+inheriting the old conversation.
+
+The underlying command, run from the configured repository, is:
+
+```powershell
+conductor attach --host desktop --thread DESTINATION_CHAT_UUID
+```
+
+Conductor validates the destination and preserves workers, their workspaces,
+pending events, holds and admission pauses. Attaching the current director is
+a no-op. An idle or interrupted director can be replaced after its obsolete
+queued wakes are reconciled. An active director receives a lifecycle-hook
+instruction to finish its current operation and end the turn; the binding
+switches after that turn ends. New wakes wait during this handoff.
+
+Check the saved binding before using the replacement as director. If activity
+is unknown or queue cancellation cannot be reconciled, the handoff stays
+pending with the blocker reported. Fix that blocker and repeat the same
+command. Repeating the same destination resumes the handoff; a competing
+destination cannot silently replace it. Service restart retains the pending
+request, but a stopped service does not prove the old chat is idle.
+
+Do not use `conductor stop` for a chat handoff, because it also stops workers.
+The old chat remains available; archiving is separate. After replacement, its
+controls are rejected. Talking there does not automatically reclaim ownership.
+
 ## Idle behavior, wakeup and restart
 
 Worker outcomes, relevant issue changes and verified Conductor actions signal
