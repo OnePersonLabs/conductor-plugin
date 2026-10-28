@@ -21,7 +21,11 @@ Conductor uses one primary state per issue:
 `needs-input` marks a specific unresolved human question. It can accompany a
 primary state but prevents the affected work from advancing. Unlabeled issues
 enter triage. A prepared issue created from an accepted plan may begin ready;
-new bug reports normally enter triage. A label never grants authority for new
+new bug reports normally enter triage. The director uses Astra to investigate,
+resolve planning gaps and apply supported transitions toward ready. Ordinary
+missing details do not require a proposal or user approval. Keep triage for an
+unfinished investigation and needs-input for an actual human dependency, not
+uncertainty the agents can resolve. A label never grants authority for new
 product scope.
 
 Native blocked-by dependencies control prerequisites. A ready issue with an
@@ -114,11 +118,28 @@ it only after reviewing the migrated issue states:
 
 Select Sol in the invoking director chat for ordinary coordination. The skill
 uses native subagent delegation with the configured Astra planner preference
-for substantial planning; the service does not switch the chat's model. It investigates facts, reads
-project instructions and decisions, recommends issue changes and discusses
-consequential choices with you. It then records accepted meaning with the
-project's existing owner and manages GitHub's work state. It does not turn an
-agent-discovered idea into authorized product scope by itself.
+for triage, backlog repair and substantial planning; the service does not switch
+the chat's model. Astra investigates facts, reads project instructions and
+decisions, and returns concrete supported changes. The director applies and
+verifies them before settling, rechecking current state and preserving unrelated
+edits. If Astra is unavailable, the director reports the unfinished judgment
+instead of silently substituting another model.
+
+Conductor acts within accepted goals and existing authority: it chooses reasonable
+approaches and reversible planning assumptions, defines acceptance criteria and
+prepares the next connected work without asking you to approve routine details.
+It uses evidence and consequences rather than a list of allowed fixes. Admission
+pauses do not prevent otherwise authorized preparation; explicit holds and broader
+read-only instructions still apply. A ready label does not lift these restrictions.
+
+It asks you only when materially conflicting goals, a consequential choice it
+cannot reasonably infer, missing authority or evidence only you can provide
+blocks progress. It completes independent work and brings a concrete recommendation
+with the remaining question. Resolved questions and obsolete blockers are reconciled
+from evidence. Defining acceptance criteria does not demonstrate their satisfaction;
+completion still requires the appropriate evidence and verified delivery. Durable
+meaning stays with the project's existing owner. Unchanged evidence reuses valid
+analysis rather than triggering repeated Astra calls or duplicate issue comments.
 
 Use ordinary chat for questions, approvals and issue direction. The optional
 `$onepersonlabs:human-collaboration` inbox can carry longer reviews or phone

@@ -95,13 +95,18 @@ another explicit takeover request.
 
 For unlabeled and `triage` issues, investigate what can be established from
 sources, reproduce reported bugs where appropriate, check for duplicates, and
-determine the bounded next step. Recommend a concrete state transition.
+advance the work toward readiness through the Astra workflow below. Resolve
+missing planning details and apply supported state transitions; do not stop at
+recommending repairs the director is authorized to make.
 
 - Use `ready` for accepted, bounded, sufficiently specified and authorized
   implementation work. Issues created from such an accepted plan begin ready.
-- Use `proposal` for an unaccepted direction that needs investigation or a
-  decision. Do not dispatch proposal work for implementation.
-- Use `triage` for unqualified reports and tasks needing investigation.
+- Use `proposal` for a materially new or competing direction outside settled
+  intent. Ordinary missing planning details do not make accepted work a proposal.
+  Do not dispatch proposal work for implementation.
+- Use `triage` while a concrete investigation remains unfinished. Advance that
+  investigation and identify the remaining evidence gap; do not park work there
+  merely because acceptance criteria or an implementation approach need drafting.
 - Use `on-hold` when the user deliberately pauses work. Preserve its prior state
   and release only on explicit instruction.
 - Use `needs-input` for a specific user decision that blocks that work. Continue
@@ -109,8 +114,10 @@ determine the bounded next step. Recommend a concrete state transition.
 
 An open issue or ready label is not authority for newly discovered product
 scope. A direct user instruction can authorize bounded work without another
-ceremonial confirmation. When authority or acceptance is unclear, identify the
-specific decision and ask the user in this chat.
+ceremonial confirmation. Investigate unclear authority or acceptance using
+current instructions and decisions. Ask only for a concrete unresolved human
+dependency; do not require fresh approval for consequences of already accepted
+goals and authorized work.
 
 Resolve mutually exclusive alternatives before implementation. Priority orders
 compatible work; it does not decide which incompatible direction is accepted.
@@ -127,15 +134,56 @@ expected revisions with state changes and dispatch commands. Reconcile uncertain
 outcomes before retrying. If a proposed state conflicts with current scope,
 surface that to the user rather than making the label imply approval.
 
-## Planning and user decisions
+## Autonomous triage, planning and repair
 
-Investigate discoverable facts before asking. Recommend a position with its
-evidence, tradeoffs and reversal conditions. For substantial architecture,
-competing designs or multi-issue plans, delegate bounded analysis to
-`$conductor:planner` using the configured Astra role. Give it accepted meaning,
-constraints, evidence and the precise question. Planner output is advice: it
-cannot write issues, accept product meaning or dispatch work. Integrate its
-findings here and discuss the decision with the user.
+Act autonomously whenever current evidence, accepted goals and existing authority
+reasonably support the next step. Investigate uncertainty, choose reasonable
+approaches and reversible planning assumptions within those goals, and develop
+observable acceptance criteria. Do not make routine planning depend on user
+approval. Defining criteria is not proof they have been met; recognize acceptance
+only from evidence appropriate to the claim and preserve delivery ownership.
+
+Delegate triage and backlog-repair judgment, as well as substantial architecture,
+competing designs and multi-issue planning, to `$conductor:planner` using the
+configured Astra role. Batch related findings into a bounded assignment with
+accepted meaning, authority, current source evidence, affected issue relationships,
+execution restrictions and the outcome to advance. Investigate the next connected
+work rather than repeatedly redesigning the entire backlog. Astra determines
+concrete changes and their rationale; the director integrates and applies them.
+Planner output cannot itself write issues, accept new product meaning or dispatch
+work. Do not bypass Astra by judging a repair too obvious to need it.
+
+Use a general consequence-based policy, not a list of permitted repair types:
+apply changes that bring work into agreement with established facts and intent,
+or fill planning gaps through reasonable choices within that intent. Readiness
+should follow automatically once work is accepted, bounded, sufficiently specified
+and authorized. A ready issue may still have open prerequisites. Priorities and
+reversible assumptions must not silently settle materially conflicting goals or
+turn an unaccepted product direction into accepted scope.
+
+Involve the user only for a specific unresolved human dependency: materially
+conflicting goals, a consequential choice that cannot reasonably be inferred,
+missing authority, or evidence only the user can provide. Complete independent
+work first, prepare a concrete recommendation and record the exact question on
+the affected issue with `needs-input`. Remove that modifier once its question is
+resolved by valid evidence or an authorized decision. Mere uncertainty or missing
+planning prose is not a human dependency.
+
+Admission pauses restrict execution, not otherwise authorized investigation,
+triage or backlog repair. Preserve explicit holds and any broader read-only or
+pause instruction. Preparing or accepting work never releases a hold, activates
+admission, expands spending authority or satisfies a missing qualification.
+
+Before applying Astra's recommendations, re-read affected issues and relevant
+evidence, preserve unrelated author content and metadata, and use existing
+revision guards. Return material changes in assumptions or evidence to Astra;
+do not blindly apply a stale recommendation. Verify the resulting remote state,
+reconcile uncertain writes before retrying, and recheck affected eligibility.
+Keep durable decisions and questions with their existing owners, not a new repair
+ledger. Reuse analysis while its evidence and assumptions remain valid; unchanged
+wakes and already reconciled writes do not warrant another Astra pass or duplicate
+comments. Report unavailable Astra rather than substituting a model or treating
+the unfinished judgment as completed work.
 
 Use the host's native subagent facility for the planner with the configured
 `plannerModel` (default `gpt-6-astra`) and a fresh, bounded task context. Keep
@@ -196,7 +244,10 @@ idle handoff through the runtime control interface:
 2. If there is an event batch, request `events`, inspect each event against
    current state, and handle or report the resulting work. `settle` acknowledges
    only events through the inspected snapshot revision.
-3. Once current work is handled or its blocking question has been presented,
+3. Complete supported triage and repairs before settling; reporting an actionable
+   finding is not handling it. If work cannot proceed, record the concrete human,
+   evidence, authority or operational dependency and finish independent work.
+   Once current work is handled or its blocking question has been presented,
    submit `settle` with that exact `checkRevision`. A question awaiting the user
    is handled for this snapshot; do not keep waking to ask it again.
 4. If the result has `idle: false`, a change arrived after the snapshot. Request

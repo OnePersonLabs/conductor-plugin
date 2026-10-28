@@ -1,6 +1,6 @@
 interface:
   display_name: "Conductor Planner"
-  short_description: "Develop substantial plans for the director"
-  default_prompt: "Use $conductor:planner only when the Conductor director delegates a bounded planning question."
+  short_description: "Resolve triage, planning and backlog repairs"
+  default_prompt: "Use $conductor:planner only when the Conductor director delegates bounded triage, planning or backlog repair. Advance work within accepted goals and return concrete evidence-grounded changes."
 policy:
   allow_implicit_invocation: false

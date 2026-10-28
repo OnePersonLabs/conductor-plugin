@@ -41,6 +41,7 @@ product scope.
 `directorModel` is the setup preference for the invoking chat, not a runtime
 model switch. Select Sol in that chat. `plannerModel` instructs the director's
 native subagent delegation; the service does not create a second planner runner.
+It covers automatic triage and backlog repair as well as substantial planning.
 The director verifies host model availability and reports unsupported models.
 
 `labels` maps the primary issue states to labels already used or intentionally
@@ -49,7 +50,8 @@ and `on-hold`; `needs-input` is a separate modifier. An issue should carry one
 primary state. Preserve labels for type, area and priority. Do not add a second
 ready label such as `conductor:ready`.
 
-An unlabeled issue is surfaced for triage. A `proposal` can be investigated and
+An unlabeled issue enters automatic triage through Astra and the director. They
+resolve planning gaps and advance authorized work toward ready. A `proposal` can be investigated and
 discussed but does not dispatch implementation. An `on-hold` issue remains
 suspended until explicitly released. A `ready` issue can dispatch after current
 scope and dependency checks pass. Closing a prerequisite triggers re-evaluation;

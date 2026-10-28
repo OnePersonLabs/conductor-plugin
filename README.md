@@ -1,8 +1,11 @@
 # Conductor
 
 Conductor is a conversational director for issue-driven project work. In chat,
-it helps you triage reports, discuss proposals, choose priorities, manage holds
-and direct implementation. A small local service handles worker ownership,
+it autonomously triages reports, prepares accepted work, repairs the backlog,
+manages holds and directs implementation. Astra judges planning and triage;
+the director applies and verifies supported changes. It asks you when a concrete
+human dependency remains, with a recommendation, rather than requiring approval
+for routine planning within accepted goals. A small local service handles worker ownership,
 capacity, events, recovery and delivery. When nothing needs attention, the
 director ends its turn; an unchanged idle check does not call a model.
 
@@ -97,7 +100,12 @@ director to finish before switching.
 - `needs-input`: a specific unresolved decision blocks the affected work.
 
 Accepted implementation issues created from a plan can be ready immediately.
-Newly reported bugs normally enter triage. Open dependencies are checked
+Newly reported bugs normally enter triage. Conductor investigates and fills
+planning gaps to make authorized work ready, including defining acceptance
+criteria. It verifies satisfaction of those criteria from appropriate evidence;
+writing them does not establish success. An admission pause still permits
+authorized backlog preparation, but remains a barrier to implementation.
+Open dependencies are checked
 automatically; when a valid prerequisite completes, the ready issue is
 reconsidered on the next scan.
 
