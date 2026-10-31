@@ -18,6 +18,8 @@ test('director config has stable defaults and rejects colliding workflow labels'
   assert.equal(valid.labels.ready, 'ready');
   assert.throws(() => validateDirectorConfig(config({ labels: { triage: 'READY' } })), /must be distinct/);
   assert.throws(() => validateDirectorConfig(config({ labels: { hold: false } })), /nonempty string/);
+  assert.equal(validateDirectorConfig(config({ designHandoff: { command: 'node', args: ['conceptor.mjs', 'handoff', '--request', '-'] } })).designHandoff.command, 'node');
+  for (const designHandoff of [null, [], {}, { command: '', args: [] }, { command: 'node', args: [1] }]) assert.throws(() => validateDirectorConfig(config({ designHandoff })), /designHandoff/);
 });
 
 test('loadConfig refuses a legacy execution config until explicit migration', async t => {
@@ -64,6 +66,7 @@ test('control requests are idempotent after acknowledgement and do not replay af
   assert.equal(duplicate.completed, true);
   assert.equal((await first.drain()).length, 0);
   await assert.rejects(() => first.sendRequest({ ...payload, id: request.id, op: 'stop' }), /different completed operation/);
+  await assert.rejects(() => first.sendRequest({ ...payload, id: request.id, designHandoff: { review: 'different' } }), /different completed operation/);
   await first.release();
 });
 

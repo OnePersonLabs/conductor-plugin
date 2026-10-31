@@ -228,6 +228,20 @@ outcome. Use native sub-issues only when separate ownership, discussion or
 acceptance is needed. Keep future phases broad and prepare only the next
 connected work.
 
+When repository configuration contains `designHandoff`, prepare the Conceptor
+handoff in this native planning path before dispatching implementation. Use the
+current issue source identity and title/body request revision; Conductor's
+eligibility revision remains a separate control precondition. Run Conceptor's
+scope preparation and proposal check, then give the original governing sources
+and concrete proposal to an independent native reviewer. Supply the reviewed
+payload as `designHandoff` on dispatch or resume. Retain its compact review result
+with the existing issue/task owner; do not require the not-yet-started builder to
+produce its own launch prerequisite. A missing or stale handoff is an agent-owned
+planning/recovery task, not automatically a human decision. Repair it through its
+existing owner and resume the original job. Never release gates or spend another
+review call merely because a saved result has not yet been recovered. See
+[handoff configuration and recovery](../../docs/configuration.md#reviewed-design-handoffs).
+
 Routine triage and backlog repair are not requests to suspend a set. Do not add
 holds solely to edit idle issues, especially when admission is already paused.
 If a revision affects active implementation or delivery, establish and verify the

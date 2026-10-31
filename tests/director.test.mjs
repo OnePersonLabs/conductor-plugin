@@ -44,7 +44,7 @@ function setup({ issues = [], jobs = [], execute = async () => ({ code: 0, stdou
     repo: { root: 'C:/repo' }, state, github, execute,
     clients: new Map(), tasks: new Map(), requests: new Map(),
     save: async () => {}, base: async () => 'base-sha',
-    dispatchIssue: async (issue, base, eligibilityRevision) => { const job = { issue: issue.number, base, eligibilityRevision, phase: 'starting' }; state.jobs.push(job); return job; },
+    dispatchIssue: async (issue, base, eligibilityRevision, designHandoff) => { const job = { issue: issue.number, base, eligibilityRevision, designHandoff, phase: 'starting' }; state.jobs.push(job); return job; },
     resume: async (...args) => calls.push(['resume', ...args]),
     answer: async (...args) => calls.push(['answer', ...args]),
     haltClient: async (...args) => calls.push(['halt', ...args]),
@@ -124,8 +124,13 @@ test('dispatch rejects stale revision and accepts a fresh ready revision', async
   h.records.get(7).body += '\nnew acceptance';
   await assert.rejects(h.director.control({ op: 'dispatch', issue: 7, repository: REPO, threadId: THREAD, expectedRevision: snapshot.revision }), /revision changed/);
   const fresh = await h.director.snapshot(7);
-  const result = await h.director.control({ op: 'dispatch', issue: 7, repository: REPO, threadId: THREAD, expectedRevision: fresh.revision });
+  const payload = { review: { verdict: 'clear' }, increment: { id: 'first' } };
+  const result = await h.director.control({ op: 'dispatch', issue: 7, repository: REPO, threadId: THREAD, expectedRevision: fresh.revision, designHandoff: payload });
   assert.equal(result.eligibilityRevision, fresh.revision);
+  assert.deepEqual(result.designHandoff, payload);
+  h.state.jobs[0].phase = 'blocked';
+  await h.director.control({ op: 'resume', issue: 7, repository: REPO, threadId: THREAD, expectedRevision: fresh.revision, designHandoff: payload });
+  assert.deepEqual(h.calls.at(-1), ['resume', 7, undefined, undefined, payload]);
 });
 
 test('parent hold pauses a running child and waits for its worker turn to stop', async () => {

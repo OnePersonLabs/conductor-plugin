@@ -118,6 +118,7 @@ export class Director {
     const c = this.c, job = c.state.jobs.find(j => j.issue === number);
     if (!job || ['complete','cancelled'].includes(job.phase)) return { issue: number, state: job?.phase ?? 'not-started' };
     job.intent = 'pause'; job.summary = reason; await c.save();
+    c.handoffChecks?.get(number)?.abort();
     if (job.pr) {
       try { await c.deliveryAction(() => c.disarm(job)); }
       catch (error) {
@@ -249,7 +250,7 @@ export class Director {
         const current = await this.assertEligible(request.issue, request.expectedRevision);
         if (c.state.jobs.some(j => j.issue === request.issue)) throw new Error('Issue already has an owner; resume that job.');
         if (occupied(c.state.jobs) >= c.config.agents) throw new Error('No issue capacity is available.');
-        return c.dispatchIssue(current.issue, await c.base(), current.revision);
+        return c.dispatchIssue(current.issue, await c.base(), current.revision, request.designHandoff);
       }
       case 'resume': {
         this.assertInteractionReleased();
@@ -261,7 +262,7 @@ export class Director {
         if (job.phase === 'paused' && occupied(c.state.jobs) >= c.config.agents) throw new Error('No issue capacity is available.');
         job.eligibilityRevision = current.revision; job.intent = null;
         if (job.phase === 'paused') job.phase = 'blocked';
-        await c.resume(request.issue, request.workerThreadId, request.role); return { resumed: request.issue };
+        await c.resume(request.issue, request.workerThreadId, request.role, request.designHandoff); return { resumed: request.issue };
       }
       case 'pause': return this.pause(request.issue, request.reason);
       case 'reconcile': {

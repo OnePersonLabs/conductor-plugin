@@ -51,6 +51,13 @@ Identify unresolved gaps and the concrete next action, including a recommendatio
 for any necessary user choice. Choose among reasonable compatible approaches
 within accepted goals rather than handing routine decisions back to the user.
 The director owns writes, verification, delivery controls and the conversation.
+For a repository with `designHandoff` configured, return the concrete design and
+selected implementation increment through Conceptor's prepared scope and checked
+proposal contract. The director obtains independent design review and supplies
+the resulting payload before builder launch. Your proposal or structural check
+does not supply independent semantic clearance. Preserve the full affected
+capability and explain how deferred scenarios remain compatible; do not reduce
+the design to the implementation increment.
 Its interaction batch should persist each answer and integration status on the
 owning issue, so replacement chats do not repeat completed decisions. Labels must
 match the outstanding decision: remove `proposal` when its candidate direction is

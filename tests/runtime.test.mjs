@@ -173,7 +173,7 @@ test('saved review result is superseded when mutable request revision advanced a
   assert.equal(world.publishedReviews.length, 0);
 });
 
-async function fixture(t, { agents = 1, hold = false, maxTurns, reviewEnabled = false } = {}) {
+async function fixture(t, { agents = 1, hold = false, maxTurns, reviewEnabled = false, designHandoff } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'conductor-runtime-'));
   const root = join(dir, 'source'), remote = join(dir, 'remote.git');
   await mkdir(root); await git(dir, 'init', '--bare', '--initial-branch=main', remote);
@@ -252,13 +252,83 @@ async function fixture(t, { agents = 1, hold = false, maxTurns, reviewEnabled = 
     closeIssue: async n => { if (world.issues.find(i => i.number === n).state === 'closed') return; world.closed.push(n); world.issues.find(i => i.number === n).state = 'closed'; if (world.closeUncertain) { world.closeUncertain = false; throw new Error('Injected lost close response.'); } },
   };
   function coordinator() {
-    const c = new Coordinator({ repo, config: { ...config(), agents, maxTurns, reviewEnabled }, store: new Store(repo.commonDir), github, Client });
+    const c = new Coordinator({ repo, config: { ...config(), agents, maxTurns, reviewEnabled, designHandoff }, store: new Store(repo.commonDir), github, Client });
     c.preflight = async () => {};
     c.on('notice', message => { world.notice = message; }); world.coordinators.push(c); return c;
   }
   t.after(async () => { for (const c of world.coordinators) if (c.state) await c.stop(); await rm(dir, { recursive: true, force: true }); });
   return { root, remote, repo, world, github, coordinator };
 }
+
+async function designAdapter(root) {
+  const file = join(root, 'design-adapter.mjs');
+  await writeFile(file, `import fs from 'node:fs'; import {execFileSync} from 'node:child_process';
+let text='';for await(const chunk of process.stdin)text+=chunk;
+const request=JSON.parse(text);
+if(request.approvedRevision!==request.requestRevision||fs.existsSync('stale-design')){console.log(JSON.stringify({status:'stale',reason:'Governing design or request changed'}));process.exit(2);}
+console.log(JSON.stringify({format:'conceptor-design-handoff/1',status:'ready',bindings:{repository:{kind:'git',commonDir:execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim()},sourceIdentity:request.sourceIdentity,requestRevision:request.requestRevision,targetRoot:fs.realpathSync(process.cwd()),scopeHash:'scope',designHash:'design',incrementHash:'increment',plannerId:'planner'},implementation:{capabilities:[{id:'saved-source'}],sources:[],context:{sections:[{body:'Original saved music remains authoritative.'}],governing:[]},proposal:{summary:'Preserve source ownership'},increment:{id:'audition',summary:'Audition only'}},review:{reviewerId:'independent-reviewer',summary:'Simultaneous use preserves the saved source.'}}));`);
+  return { command: process.execPath, args: [file] };
+}
+
+test('design prerequisite blocks before a model turn and survives restart with its original owner', async t => {
+  const h = await fixture(t, { hold: true }); h.world.issues = h.world.issues.slice(0, 1);
+  const adapter = await designAdapter(h.root);
+  const c = h.coordinator(); c.config.designHandoff = adapter; await c.start();
+  await until(() => c.state.jobs[0]?.phase === 'blocked' && !c.tasks.size, 'missing design block');
+  const job = c.state.jobs[0], originalThread = job.builderThreadId;
+  assert.ok(originalThread); assert.equal(h.world.turns, 0); assert.equal(job.turnCount ?? 0, 0);
+  assert.match(job.summary, /reviewed designHandoff payload is required/);
+  await c.stop();
+  const restored = h.coordinator(); restored.config.designHandoff = adapter; await restored.start();
+  assert.equal(restored.state.jobs[0].builderThreadId, originalThread);
+  await restored.resume(1, undefined, undefined, { approvedRevision: createRequestRevision(h.world.issues[0]) });
+  await until(() => h.world.turns === 1, 'validated original builder');
+  assert.equal(h.world.starts, 1);
+  assert.equal(restored.state.jobs[0].builderThreadId, originalThread);
+  assert.match(h.world.prompts[0].prompt, /Original saved music remains authoritative/);
+  assert.match(h.world.prompts[0].prompt, /Audition only/);
+  assert.equal(restored.state.jobs[0].designHandoff.approvedRevision, createRequestRevision(h.world.issues[0]));
+  await restored.stop();
+});
+
+test('stale handoff blocks changed requests and publication after implementation', async t => {
+  const h = await fixture(t, { hold: true }); h.world.issues = h.world.issues.slice(0, 1);
+  const c = h.coordinator(); c.config.designHandoff = await designAdapter(h.root); await c.start();
+  await until(() => c.state.jobs[0]?.phase === 'blocked' && !c.tasks.size, 'initial handoff prerequisite');
+  const job = c.state.jobs[0];
+  const oldRevision = createRequestRevision(h.world.issues[0]);
+  h.world.issues[0].body = 'Changed request requires renewed review.';
+  await c.resume(1, undefined, undefined, { approvedRevision: oldRevision });
+  await until(() => job.phase === 'blocked' && !c.tasks.size, 'stale request block');
+  assert.equal(h.world.turns, 0);
+  assert.match(job.summary, /Design handoff adapter failed|Design handoff is not ready/);
+  await c.resume(1, undefined, undefined, { approvedRevision: createRequestRevision(h.world.issues[0]) });
+  await until(() => h.world.turns === 1, 'builder after renewed handoff');
+  await writeFile(join(job.worktree, 'stale-design'), 'Changed governing meaning.');
+  await git(job.worktree, 'add', 'stale-design'); await git(job.worktree, 'commit', '-m', 'Changed governing meaning');
+  h.world.hold = false;
+  const active = h.world.clients.find(client => client.threadId === job.builderThreadId && !client.closed);
+  await active.finish(job.turnId);
+  await until(() => job.phase === 'blocked' && !c.tasks.size, 'publication design block');
+  assert.equal(h.world.pulls.size, 0);
+  assert.equal(job.designHandoffValidation, null);
+  assert.equal(job.builderThreadId, 'thread-1');
+});
+
+test('stop cancels a running design adapter before any builder turn', async t => {
+  const h = await fixture(t); h.world.issues = h.world.issues.slice(0, 1);
+  const adapter = join(h.root, 'waiting-adapter.mjs');
+  await writeFile(adapter, "import fs from 'node:fs'; for await(const chunk of process.stdin){} fs.writeFileSync('adapter-started','started'); setInterval(()=>{},1000);");
+  const c = h.coordinator(); c.config.designHandoff = { command: process.execPath, args: [adapter] }; await c.start();
+  await until(() => c.state.jobs[0]?.phase === 'blocked' && !c.tasks.size, 'initial handoff prerequisite');
+  const job = c.state.jobs[0];
+  await c.resume(1, undefined, undefined, { reviewed: true });
+  await until(async () => { try { return await readFile(join(job.worktree, 'adapter-started'), 'utf8') === 'started'; } catch { return false; } }, 'adapter awaiting completion');
+  await c.stop();
+  assert.equal(h.world.turns, 0);
+  assert.ok(job.builderThreadId);
+  assert.equal(c.handoffChecks.size, 0);
+});
 
 test('parallel owners retain slots while idle; dependencies skip; serialized landing refreshes accepted base', async t => {
   const { world, remote, coordinator } = await fixture(t, { agents: 2 });

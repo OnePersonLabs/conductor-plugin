@@ -77,6 +77,50 @@ Retain project-specific review and delivery controls where configured:
 | `implementationInstructions` | Project instructions supplied to builders. |
 | `reviewEnabled` | Requires independent Conductor review by default. |
 | `reviewInstructions` | Additional review criteria. |
+| `designHandoff` | Optional executable adapter that validates a reviewed Conceptor design before implementation and publication. |
+
+## Reviewed design handoffs
+
+To require Conceptor's planning-to-implementation handoff, configure its actual
+packaged CLI path and the Node executable available to this service:
+
+```json
+{
+  "designHandoff": {
+    "command": "node",
+    "args": ["C:/path/to/conceptor/runtime/cli.mjs", "handoff", "--request", "-"]
+  }
+}
+```
+
+The adapter runs without a shell in the issue worktree. Conductor supplies JSON
+on stdin and requires a ready `conceptor-design-handoff/1` result on stdout.
+It supplies the current issue's source identity and title/body request revision;
+the director must use those values when preparing Conceptor's design review.
+The result must belong to this Git repository and target worktree and contain
+the reviewed design, selected increment and governing source context.
+
+The director/native planning path prepares the scope and proposal, obtains an
+independent design review, and supplies the resulting request payload as
+`designHandoff` on `dispatch`. A blocked job can receive a replacement payload
+on `resume`. Both controls still require the current eligibility revision.
+Use the existing JSON RPC transport; the payload is an object, not a filename.
+Conductor retains it with the original job for recovery and revalidates it before
+each builder turn, branch/PR publication and merge request. It does not start a
+planner or accept a product decision on the adapter's behalf.
+
+A missing, stale, malformed or unavailable handoff blocks dependent execution.
+The original builder thread remains recorded, and validation failure does not
+consume a model turn. Recover the source/design review through the director,
+then resume that same job. Ordinary implementation edits do not invalidate a
+design merely by changing code; Conceptor checks the governing meaning, request,
+design and increment. Existing checks and independent code review still qualify
+the delivered commit.
+
+Without this configuration, Conductor retains its existing execution behavior.
+Configuring it does not release an interaction gate, hold or admission pause.
+Changing an installed bundle during a live director rollout still requires the
+coordinated refresh described in the repository's rollout instructions.
 
 ## Before starting
 

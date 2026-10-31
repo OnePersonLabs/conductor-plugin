@@ -18,6 +18,12 @@ holds and current issue contents. It retains original builder sessions through
 repair, verifies checks and reviews, and closes work only after acceptance and
 landing are confirmed.
 
+Repositories can also require a reviewed Conceptor design before builder
+execution. The director prepares it through native planning and independent
+review; Conductor validates and supplies the resulting design and implementation
+increment to the original builder. Missing or stale handoffs block that job
+without starting a model turn. See [design handoff configuration](plugins/conductor/docs/configuration.md#reviewed-design-handoffs).
+
 Once you explicitly enable Conductor for a configured repository, it keeps one
 Desktop director chat bound to that repository. Relevant changes wake that
 chat when it is idle. If it is already working, Conductor records that there is

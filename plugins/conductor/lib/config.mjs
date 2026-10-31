@@ -34,6 +34,7 @@ export function validateConfig(raw) {
     if (raw[key] !== undefined && typeof raw[key] !== 'string') throw new Error(`${key} must be a string.`);
   }
   if (raw.reviewEnabled !== undefined && typeof raw.reviewEnabled !== 'boolean') throw new Error('reviewEnabled must be a boolean.');
+  if (raw.designHandoff !== undefined && (!raw.designHandoff || typeof raw.designHandoff !== 'object' || Array.isArray(raw.designHandoff) || typeof raw.designHandoff.command !== 'string' || !raw.designHandoff.command.trim() || !Array.isArray(raw.designHandoff.args) || raw.designHandoff.args.some(arg => typeof arg !== 'string'))) throw new Error('designHandoff needs a command and an array of string args.');
   return { ...raw, agents, implementationInstructions: raw.implementationInstructions ?? '', reviewEnabled: raw.reviewEnabled ?? true, reviewInstructions: raw.reviewInstructions ?? '', readyLabel: raw.readyLabel ?? 'conductor:ready', priorityLabels: raw.priorityLabels ?? [], pollMs: duration(raw.pollInterval ?? '5m'), requiredApprovals, mergeMethod, prepare: raw.prepare ?? [] };
 }
 

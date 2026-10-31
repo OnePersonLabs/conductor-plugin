@@ -14,6 +14,7 @@ import { Director } from './director.mjs';
 import { DirectorHost } from './director-host.mjs';
 import { watch } from 'node:fs';
 import { builderPrompt, createRequestRevision, parseResult, parseReviewResult, reviewPrompt, resultSchema, reviewResultSchema } from './prompts.mjs';
+import { validateDesignHandoff } from './design-handoff.mjs';
 
 const skillPath = fileURLToPath(new URL('../skills/github-workflow/SKILL.md', import.meta.url));
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -37,6 +38,7 @@ export class Coordinator extends EventEmitter {
     super(); Object.assign(this, { repo, config, store, Client, Host, execute, workspace });
     this.github = github ?? new GitHub(config.repository, { cwd: repo.root });
     this.clients = new Map(); this.tasks = new Map(); this.requests = new Map(); this.preparations = new Map();
+    this.handoffChecks = new Map();
     this.stopping = false; this.scanError = null;
     this.lastCleanupAt = 0;
     this.delivery = Promise.resolve(); this.ready = false;
@@ -453,6 +455,7 @@ export class Coordinator extends EventEmitter {
               const ahead = await run('git', ['merge-base', '--is-ancestor', pull.headRefOid, head], { cwd: job.worktree, allowFailure: true });
               if (ahead.code !== 0) throw new Error('PR head differs from the local issue branch; reconcile publication before review.');
               if (this.director) await this.guard(job);
+              if ((await this.designContext(job)).status === 'blocked') continue;
               await git(job.worktree, 'push', 'origin', job.branch);
               if ((await this.github.pull(job.pr)).headRefOid !== head) throw new Error('Could not confirm the issue branch push before review.');
             }
@@ -481,7 +484,7 @@ export class Coordinator extends EventEmitter {
     }
     this.state.lastScan = new Date().toISOString(); await this.save();
   }
-  async dispatchIssue(issue, base, eligibilityRevision) {
+  async dispatchIssue(issue, base, eligibilityRevision, designHandoff) {
     this.director?.assertInteractionReleased();
       if (this.stopping) return;
       const branch = `conductor/issue-${issue.number}`;
@@ -490,6 +493,7 @@ export class Coordinator extends EventEmitter {
       const path = join(dirname(dirname(this.repo.commonDir)), '.conductor-worktrees', digest(this.repo.commonDir).slice(0, 16), `issue-${issue.number}`);
       const job = { issue: issue.number, sourceIdentity: issue.node_id ?? `${this.config.repository}#${issue.number}`, requestRevision: createRequestRevision(issue), branch, worktree: path, baseBranch: this.config.baseBranch, phase: 'preparing', activeRole: 'builder', nextRole: 'builder', builderThreadId: null, reviewerThreadId: null, threadId: null, turnId: null, childPid: null, acceptanceComplete: false, createdAt: new Date().toISOString() };
       if (eligibilityRevision) job.eligibilityRevision = eligibilityRevision;
+      if (designHandoff !== undefined) job.designHandoff = structuredClone(designHandoff);
       this.state.jobs.push(job); await this.save();
       const prepareAndLaunch = async () => {
       try {
@@ -529,6 +533,33 @@ export class Coordinator extends EventEmitter {
       await access(npm); executable = process.execPath; args = [npm, ...args];
     }
     return this.execute(executable, args, { cwd });
+  }
+  async designContext(job) {
+    if (!this.config.designHandoff) return { status: 'disabled' };
+    const abort = new AbortController();
+    this.handoffChecks.set(job.issue, abort);
+    try {
+      const issue = await this.github.issue(job.issue);
+      const result = await validateDesignHandoff({ config: this.config.designHandoff, payload: job.designHandoff,
+        sourceIdentity: issue.node_id ?? `${this.config.repository}#${issue.number}`, requestRevision: createRequestRevision(issue),
+        worktree: job.worktree, commonDir: this.repo.commonDir, execute: this.execute, signal: abort.signal });
+      if (job.intent || this.stopping) return { status: 'blocked', reason: 'Execution stopped while validating the design handoff.' };
+      if (this.director) await this.guard(job);
+      job.designHandoffValidation = { bindings: result.bindings, reviewerId: result.review.reviewerId };
+      job.designHandoffError = null; await this.save();
+      return result;
+    } catch (error) {
+      job.designHandoffValidation = null; job.designHandoffError = error.message;
+      if (!job.intent && !this.stopping) {
+        // A prerequisite failure is known not to have launched a model turn.
+        // Keep the durable original thread, so normal resume can recover it.
+        if (job.mergeArmed) await this.disarm(job);
+        job.phase = 'blocked'; job.activeRole = null; job.nextRole = 'builder';
+        job.summary = `Design handoff blocked: ${error.message}`; job.lastError = job.summary;
+        await this.save(); await this.github.progress(job);
+      }
+      return { status: 'blocked', reason: error.message };
+    } finally { if (this.handoffChecks.get(job.issue) === abort) this.handoffChecks.delete(job.issue); }
   }
   launch(job, issue, reason, feedback = [], role = job.nextRole ?? 'builder') {
     if (this.tasks.has(job.issue) || this.stopping) return;
@@ -601,10 +632,12 @@ export class Coordinator extends EventEmitter {
         if (head !== pull.headRefOid || head !== job.checkHead || base !== job.checkBase || await git(job.worktree, 'status', '--porcelain', '--untracked-files=all')) throw new Error('Verified base/head changed or worktree is dirty before review; reconcile and re-verify before starting the reviewer.');
       }
       if (this.director) await this.guard(job);
+      const designHandoff = role === 'builder' ? await this.designContext(job) : null;
+      if (designHandoff?.status === 'blocked' || this.stopping || job.intent) return;
       job.phase = 'launching'; job.turnCount = (job.turnCount ?? 0) + 1; await this.save();
       const turn = role === 'reviewer'
         ? await client.startTurn({ threadId, cwd: job.worktree, prompt: reviewPrompt({ config: this.config, job, issue, base, head, previous: job.reviewFindings ?? [] }), outputSchema: reviewResultSchema })
-        : await client.startTurn({ threadId, cwd: job.worktree, prompt: builderPrompt({ config: this.config, job, issue, reason, feedback }), skillPath, outputSchema: resultSchema });
+        : await client.startTurn({ threadId, cwd: job.worktree, prompt: builderPrompt({ config: this.config, job, issue, reason, feedback, designHandoff: designHandoff?.status === 'ready' ? designHandoff : null }), skillPath, outputSchema: resultSchema });
       job.turnId = turn.id;
       if (this.stopping || job.intent) { await client.interrupt({ threadId, turnId: turn.id }); return; }
       job.phase = role === 'reviewer' ? 'reviewing' : 'building'; await this.save();
@@ -636,9 +669,11 @@ export class Coordinator extends EventEmitter {
       catch (error) { await this.repair(job, error); return; }
       if (this.stopping || job.intent) return;
       if (this.director) await this.guard(job);
+      if ((await this.designContext(job)).status === 'blocked') return;
       await git(job.worktree, 'push', '-u', 'origin', job.branch);
       if (this.stopping || job.intent) return;
       if (this.director) await this.guard(job);
+      if ((await this.designContext(job)).status === 'blocked') return;
       const pull = await this.github.createPull(job, issue); job.pr = pull.number;
       // Do not swallow feedback arriving while the builder was active: only evidence sent
       // to that turn is acknowledged by reconcilePull before launching it.
@@ -664,6 +699,7 @@ export class Coordinator extends EventEmitter {
   }
   async publishReviewResult(job) {
     if (this.director) await this.guard(job);
+    if ((await this.designContext(job)).status === 'blocked') return;
     const result = job.reviewResult;
     if (!result || !['clear', 'findings'].includes(result.status) || !Number.isSafeInteger(job.reviewAttempt) || !job.reviewHead) throw new Error('Saved review publication intent is incomplete; no PR comment was sent.');
     if (!await this.revalidateReviewRequest(job)) return;
@@ -727,6 +763,7 @@ export class Coordinator extends EventEmitter {
       if (receipt) job.reviewPublication = receipt;
     }
     job.requestRevision = revision; job.acceptanceComplete = false; job.reviewStatus = 'stale'; job.reviewClearance = null;
+    job.designHandoffValidation = null;
     job.reviewResultStatus = 'superseded'; job.reviewResult = null; job.reviewFindings = [];
     if (job.reviewPublicationStatus === 'pending') job.reviewPublicationStatus = 'superseded';
     job.checkBase = null; job.checkHead = null; job.pendingFeedback = [];
@@ -767,7 +804,9 @@ export class Coordinator extends EventEmitter {
       }
       if (this.director) await this.guard(job, { allowCompleted: true });
       await this.github.closeIssue(job.issue, `Delivered by PR #${job.pr}; accepted base contains ${pull.mergeCommit.oid}.\n\n${job.summary}`);
-      job.phase = 'complete'; job.mergedCommit = pull.mergeCommit.oid; await this.save(); await this.github.progress(job); return;
+      job.phase = 'complete'; job.mergedCommit = pull.mergeCommit.oid;
+      delete job.designHandoff; delete job.designHandoffValidation;
+      await this.save(); await this.github.progress(job); return;
     }
     if (pull.state === 'CLOSED') { job.phase = 'blocked'; job.summary = 'PR closed without merge; acceptance remains open.'; await this.save(); await this.github.progress(job); return; }
     const currentIssue = await this.github.issue(job.issue);
@@ -778,6 +817,7 @@ export class Coordinator extends EventEmitter {
       await this.supersedeReviewIntent(job, currentRevision, 'The issue request changed. Reassess the revised acceptance against current source and preserve useful work.');
       this.launch(job, currentIssue, job.repairReason, [], 'builder'); return;
     }
+    if ((await this.designContext(job)).status === 'blocked') return;
     const feedback = await this.github.feedback(job.pr, pull.headRefOid);
     const unseen = feedback.items.filter(item => !(job.feedbackSeen ?? []).includes(digest(item)));
     const checks = checkState(pull);
@@ -799,6 +839,7 @@ export class Coordinator extends EventEmitter {
     if (head !== pull.headRefOid) {
       const localContainsRemote = await run('git', ['merge-base', '--is-ancestor', pull.headRefOid, head], { cwd: job.worktree, allowFailure: true });
       if (localContainsRemote.code !== 0) throw new Error('PR contains changes not present in the issue worktree; reconcile before updating it.');
+      if ((await this.designContext(job)).status === 'blocked') return;
       await git(job.worktree, 'push', 'origin', job.branch);
       const pushed = await this.github.pull(job.pr);
       if (pushed.headRefOid !== head) throw new Error('Updated issue branch push is not confirmed by the PR.');
@@ -828,6 +869,7 @@ export class Coordinator extends EventEmitter {
     job.mergeArmed = true; await this.save();
     if (this.stopping || job.intent) return;
     if (this.director) await this.guard(job);
+    if ((await this.designContext(job)).status === 'blocked') return;
     await this.github.merge(job.pr, fresh.headRefOid, this.config.mergeMethod);
   }
   async disarm(job) {
@@ -858,6 +900,7 @@ export class Coordinator extends EventEmitter {
     if (job.phase === 'complete') throw new Error('Delivered issues cannot be cancelled.');
     if (job.phase === 'cancelled') return;
     job.intent = 'cancel';
+    this.handoffChecks.get(job.issue)?.abort();
     job.phase = 'cancelling'; await this.save();
     try {
       await this.deliveryAction(async () => { if (job.pr) await this.disarm(job); });
@@ -872,10 +915,12 @@ export class Coordinator extends EventEmitter {
     const client = this.clients.get(issue);
     if (client) await this.haltClient(job, client);
     await this.tasks.get(issue);
-    job.phase = 'cancelled'; job.summary = 'Cancelled by the operator; unfinished branch and worktree retained, automatic redispatch disabled.'; await this.save();
+    job.phase = 'cancelled'; job.summary = 'Cancelled by the operator; unfinished branch and worktree retained, automatic redispatch disabled.';
+    delete job.designHandoff; delete job.designHandoffValidation;
+    await this.save();
     await this.github.progress(job); this.wake();
   }
-  async resume(issue, threadId, role) {
+  async resume(issue, threadId, role, designHandoff) {
     this.director?.assertInteractionReleased();
     const job = this.state.jobs.find(x => x.issue === issue);
     if (!job || !['blocked','stopped','uncertain'].includes(job.phase) || this.tasks.has(issue)) throw new Error('Only a stopped or blocked original issue can be resumed.');
@@ -904,6 +949,7 @@ export class Coordinator extends EventEmitter {
         await client.setThreadName({ threadId: selected.id, name: expectedName }); await this.save();
       } finally { await client.close(); }
     } else if (threadId && threadId !== savedThread) throw new Error(`This issue already owns a different ${targetRole} thread.`);
+    if (designHandoff !== undefined) { job.designHandoff = structuredClone(designHandoff); job.designHandoffValidation = null; }
     job.intent = null;
     if (!job.prepared) {
       try {
@@ -919,6 +965,7 @@ export class Coordinator extends EventEmitter {
     job.activeRole = targetRole; job.nextRole = targetRole; job.phase = 'stopped'; job.repairAttempts = 0; await this.save(); this.wake();
   }
   async haltClient(job, client) {
+    this.handoffChecks.get(job.issue)?.abort();
     const threadId = job.activeRole === 'reviewer' ? job.reviewerThreadId : job.builderThreadId ?? job.threadId;
     if (job.turnId && threadId) await client.interrupt({ threadId, turnId: job.turnId }).catch(error => this.emit('notice', error.message));
     // EOF also resolves pending startup RPCs. The client waits for process exit;
@@ -938,6 +985,7 @@ export class Coordinator extends EventEmitter {
       }
       for (const job of this.state.jobs) {
         if (!['complete','cancelled'].includes(job.phase)) job.intent = 'stop';
+        this.handoffChecks.get(job.issue)?.abort();
         const client = this.clients.get(job.issue);
         if (client) await this.haltClient(job, client);
       }
