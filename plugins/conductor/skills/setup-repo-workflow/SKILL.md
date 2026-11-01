@@ -39,8 +39,11 @@ Prepare version 2 configuration from observed repository facts. It includes
 `pollInterval`, `directorModel`, `plannerModel`, `checks`, and any applicable
 existing review and delivery settings. Defaults are `triage`, `proposal`,
 `ready`, `on-hold`, `needs-input`, 30-minute external reconciliation, Sol
-director, and Astra planner. Confirm selected models are supported in the
-intended environment; never silently substitute another model.
+director, and Astra planner preference for deliberately delegated hard decisions.
+Routine triage does not require a planner call. These defaults do not choose the
+model or effort for every builder, reviewer or native helper. Confirm selected
+models are supported in the intended environment; never silently substitute
+another model.
 
 Explain that `triage` is intake and `proposal` is discussion, not implementation.
 Only accepted, bounded, authorized `ready` issues can enter execution. Open

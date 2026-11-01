@@ -2,8 +2,9 @@
 
 Conductor is a conversational director for issue-driven project work. In chat,
 it autonomously triages reports, prepares accepted work, repairs the backlog,
-manages holds and directs implementation. Astra judges planning and triage;
-the director applies and verifies supported changes. It asks you when a concrete
+manages holds and directs implementation. The director handles routine triage
+and uses the configured planner (default Astra) for hard decisions when justified.
+It applies and verifies supported changes. It asks you when a concrete
 human dependency remains, with a recommendation, rather than requiring approval
 for routine planning within accepted goals. It batches useful questions in chat
 and records answers on their issues so interrupted or replaced chats can continue
@@ -17,6 +18,12 @@ bounded work from `ready` issues after it checks authorization, dependencies,
 holds and current issue contents. It retains original builder sessions through
 repair, verifies checks and reviews, and closes work only after acceptance and
 landing are confirmed.
+
+OnePersonLabs can guide task, model and context judgment independently. With
+Conductor enabled, Conductor owns durable issues, dependencies, dispatch and
+delivery. Builders may delegate bounded local steps within their assigned job;
+they integrate and reconcile helpers before completing or handing off the work.
+The parent's model alone does not select a helper's model.
 
 Repositories can also require a reviewed Conceptor design before builder
 execution. The director prepares it through native planning and independent

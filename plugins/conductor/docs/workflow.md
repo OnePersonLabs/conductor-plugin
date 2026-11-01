@@ -26,7 +26,7 @@ labeled. It explains the situation, terms, options and consequences in the chat
 so the user does not need to know the agent's investigation or open issue links
 to answer. Unlabeled issues enter triage. A prepared issue created from an
 accepted plan may begin ready; new bug reports normally enter triage. The director
-uses Astra to investigate, resolve planning gaps and apply supported transitions
+investigates, resolves planning gaps and applies supported transitions
 toward ready. Ordinary missing details do not require a proposal or user approval. Keep triage for an
 unfinished investigation and needs-input for an actual human dependency, not
 uncertainty the agents can resolve. A label never grants authority for new
@@ -230,14 +230,24 @@ it only after reviewing the migrated issue states:
 }
 ```
 
-Select Sol in the invoking director chat for ordinary coordination. The skill
-uses native subagent delegation with the configured Astra planner preference
-for triage, backlog repair and substantial planning; the service does not switch
-the chat's model. Astra investigates facts, reads project instructions and
-decisions, and returns concrete supported changes. The director applies and
-verifies them before settling, rechecking current state and preserving unrelated
-edits. If Astra is unavailable, the director reports the unfinished judgment
-instead of silently substituting another model.
+Select Sol in the invoking director chat for ordinary coordination; the service
+does not switch that chat's model. The director handles routine triage and backlog
+repair. For a concrete hard architecture or substantial planning decision that
+needs stronger reasoning, it deliberately selects the configured planner
+(default Astra) through native subagent delegation. The assignment names the
+unresolved decision, model, effort, context and required evidence. The director
+applies and verifies supported changes, rechecking current state and preserving
+unrelated edits. If a required planner model is unavailable, it reports the
+unfinished judgment and continues independent authorized work.
+
+Native helpers can execute bounded local steps within an assigned builder job.
+Choose model, effort and context for the helper's task and integration cost;
+an Astra parent alone does not select an Astra child. The builder integrates and
+reconciles its descendants before completion or handoff. Conductor keeps durable
+issue decomposition, dependencies, dispatch and delivery; helpers do not create
+another project coordinator. OnePersonLabs can supply general task judgment on
+its own or within this optional Conductor workflow. Optional Conceptor continues
+to own product meaning and configured design handoffs.
 
 Conductor acts within accepted goals and existing authority: it chooses reasonable
 approaches and reversible planning assumptions, defines acceptance criteria and
@@ -261,7 +271,7 @@ evidence for outcomes that still require testing or human qualification. Definin
 acceptance criteria does not demonstrate their satisfaction; completion still
 requires the appropriate evidence and verified delivery. Durable meaning stays
 with the project's existing owner. Unchanged evidence reuses valid
-analysis rather than triggering repeated Astra calls or duplicate issue comments.
+analysis rather than triggering repeated planner calls or duplicate issue comments.
 
 Use ordinary chat for questions, approvals and issue direction. The optional
 `$onepersonlabs:human-collaboration` inbox can carry longer reviews or phone

@@ -117,11 +117,35 @@ or its outcome is uncertain, inspect archive state before retrying, report the
 remaining cleanup and reuse the existing handoff context at the next normal
 check. Do not add another ledger or keep a polling turn alive for cleanup.
 
+## Coordination and bounded helpers
+
+OnePersonLabs can guide task, model and context judgment on its own. When it is
+available, apply that guidance within Conductor's ownership boundaries. Conductor
+owns durable issue decomposition, dependencies, admission, dispatch and delivery.
+Optional Conceptor owns product meaning and configured design handoffs.
+
+An assigned builder may plan local steps and delegate settled, bounded work within
+its job. Each helper needs explicit outcome, write ownership, model and effort,
+context choice, required evidence and stop condition. Choose the smallest model
+and effort supported by the task's ambiguity and consequences, accounting for
+handoff, correction and integration cost. Follow effective host model and context
+constraints; do not assume that naming a model proves the host selected it.
+An Astra parent alone is no reason to select an Astra child.
+
+Keep one coordinator for project work. Helpers must not create another issue
+queue, dispatch other issues or take over Conductor delivery. The assigning agent
+integrates results and reconciles descendants and outstanding operations before
+completion, cancellation or handoff. Reuse a relevant helper while its context is
+valid. Prefer native completion notifications and bounded waits; a wait timeout
+does not establish that the helper stopped. Stop the old writer and reconcile its
+operations before transferring ownership. Independent Conductor reviewers remain
+read-only and must not spawn helpers.
+
 ## Triage and direct work
 
 For unlabeled and `triage` issues, investigate what can be established from
 sources, reproduce reported bugs where appropriate, check for duplicates, and
-advance the work toward readiness through the Astra workflow below. Resolve
+advance the work toward readiness through the planning policy below. Resolve
 missing planning details and apply supported state transitions; do not stop at
 recommending repairs the director is authorized to make.
 
@@ -172,15 +196,20 @@ observable acceptance criteria. Do not make routine planning depend on user
 approval. Defining criteria is not proof they have been met; recognize acceptance
 only from evidence appropriate to the claim and preserve delivery ownership.
 
-Delegate triage and backlog-repair judgment, as well as substantial architecture,
-competing designs and multi-issue planning, to `$conductor:planner` using the
-configured Astra role. Batch related findings into a bounded assignment with
-accepted meaning, authority, current source evidence, affected issue relationships,
-execution restrictions and the outcome to advance. Investigate the next connected
-work rather than repeatedly redesigning the entire backlog. Astra determines
-concrete changes and their rationale; the director integrates and applies them.
-Planner output cannot itself write issues, accept new product meaning or dispatch
-work. Do not bypass Astra by judging a repair too obvious to need it.
+Handle routine triage and backlog repair in the director when current evidence
+supports a bounded decision. Delegate when independent judgment, specialization
+or context isolation justifies preparation and integration cost. For a concrete
+hard architecture or substantial planning decision that needs stronger reasoning,
+use `$conductor:planner` with the configured `plannerModel` (default
+`gpt-6-astra`). Name the unresolved decision and the evidence that the planner can
+change. The invoking chat's model alone never selects an Astra helper.
+
+Give each planner assignment accepted meaning, authority, current source evidence,
+affected issue relationships, execution restrictions and the outcome to advance.
+Investigate the next connected work rather than repeatedly redesigning the entire
+backlog. The planner returns concrete changes and reasons; the director integrates
+and applies them. Planner output cannot itself write issues, accept new product
+meaning or dispatch work.
 
 Use a general consequence-based policy, not a list of permitted repair types:
 apply changes that bring work into agreement with established facts and intent,
@@ -203,19 +232,25 @@ triage or backlog repair. Preserve explicit holds and any broader read-only or
 pause instruction. Preparing or accepting work never releases a hold, activates
 admission, expands spending authority or satisfies a missing qualification.
 
-Before applying Astra's recommendations, re-read affected issues and relevant
+Before applying a planner's recommendations, re-read affected issues and relevant
 evidence, preserve unrelated author content and metadata, and use existing
-revision guards. Return material changes in assumptions or evidence to Astra;
+revision guards. Return material changes in assumptions or evidence to that planner;
 do not blindly apply a stale recommendation. Verify the resulting remote state,
 reconcile uncertain writes before retrying, and recheck affected eligibility.
 Keep durable decisions and questions with their existing owners, not a new repair
 ledger. Reuse analysis while its evidence and assumptions remain valid; unchanged
-wakes and already reconciled writes do not warrant another Astra pass or duplicate
-comments. Report unavailable Astra rather than substituting a model or treating
-the unfinished judgment as completed work.
+wakes and already reconciled writes do not warrant another planner pass or duplicate
+comments. If a decision requires the configured planner and that model is
+unavailable, report the unfinished judgment instead of silently substituting a
+model or treating it as completed work. Continue independent authorized work.
 
-Use the host's native subagent facility for the planner with the configured
-`plannerModel` (default `gpt-6-astra`) and a fresh, bounded task context. Keep
+Use the host's native subagent facility for the selected planner. State its model,
+reasoning effort and context choice explicitly in the assignment. Choose effort
+for the unresolved decision; model size alone does not justify maximum effort.
+Use fresh context for independent judgment or a self-contained question. Preserve
+relevant parent history for a collaborator continuing the same consequential work
+when the host supports that combination. If an explicit model override requires
+fresh context, supply the requirements, reasons and evidence it needs. Keep
 its native completion notification attached to this director; do not create a
 second user-facing chat or a polling model loop. Verify that the host offers
 the requested model before dispatch and report an unavailable model instead of

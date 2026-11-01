@@ -25,7 +25,7 @@ question. Unlabeled issues enter triage. An open issue, label, issue creator or
 GitHub authentication does not alone authorize implementation of new scope.
 Newly discovered speculative ideas are proposals; proven, already authorized
 bugs can be marked ready after triage establishes their repair scope and
-acceptance. Through the director's Astra planning workflow, actively resolve
+acceptance. Through the director's planning policy, actively resolve
 missing details, define observable acceptance criteria and apply supported
 transitions. Routine planning within accepted goals does not require fresh user
 approval. Keep triage only for a concrete unfinished investigation and proposal
@@ -44,7 +44,7 @@ otherwise resolved; retain that state only while the decision remains open.
 Rejection resolves the decision but does not authorize implementation. Partial
 answers leave only the unresolved decision and its corresponding state in place.
 Judge issue text, relationships and labels against current facts and accepted
-intent through the same Astra workflow; report repairs as
+intent through the same planning policy; report repairs as
 completed only after verifying the writes. Preserve explicit holds and admission
 pauses. Defining acceptance is planning; declaring it satisfied requires evidence
 appropriate to the complete claim and the existing delivery requirements.

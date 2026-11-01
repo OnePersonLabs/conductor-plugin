@@ -41,8 +41,17 @@ product scope.
 `directorModel` is the setup preference for the invoking chat, not a runtime
 model switch. Select Sol in that chat. `plannerModel` instructs the director's
 native subagent delegation; the service does not create a second planner runner.
-It covers automatic triage and backlog repair as well as substantial planning.
-The director verifies host model availability and reports unsupported models.
+It is the preference for deliberately delegated hard architecture or substantial
+planning decisions. Routine triage and backlog repair can stay with the director.
+The director verifies host model availability and reports unsupported required
+models. An Astra invoking chat alone does not select Astra helpers.
+
+Builder and reviewer threads use the host's configured model and effort defaults;
+Conductor supplies no role-specific override. They retain their original threads
+for repair. Native helpers inside a builder job follow task-specific model,
+effort and context judgment. They do not inherit a project-coordination role.
+OnePersonLabs supplies general judgment when available; Conductor remains usable
+without it and owns durable issue/dependency coordination, dispatch and delivery.
 
 `labels` maps the primary issue states to labels already used or intentionally
 created in the repository. The default names are `triage`, `proposal`, `ready`
@@ -50,8 +59,9 @@ and `on-hold`; `needs-input` is a separate modifier. An issue should carry one
 primary state. Preserve labels for type, area and priority. Do not add a second
 ready label such as `conductor:ready`.
 
-An unlabeled issue enters automatic triage through Astra and the director. They
-resolve planning gaps and advance authorized work toward ready. A `proposal` can be investigated and
+An unlabeled issue enters automatic triage through the director. It resolves
+planning gaps and advances authorized work toward ready, delegating hard decisions
+when justified. A `proposal` can be investigated and
 discussed but does not dispatch implementation. An `on-hold` issue remains
 suspended until explicitly released. A `ready` issue can dispatch after current
 scope and dependency checks pass. Closing a prerequisite triggers re-evaluation;
