@@ -42,9 +42,11 @@ export class DirectorHost extends EventEmitter {
   async connect() {
     try { await this.client.connect(); }
     catch (firstError) {
+      if (this.closing) throw firstError;
       if (!(this.client instanceof CodexClient) || this.client.transport !== 'proxy') throw firstError;
       await this.client.close();
       const version = await this.execute('codex', ['app-server', 'daemon', 'version'], { cwd: this.cwd, allowFailure: true });
+      if (this.closing) throw firstError;
       let running = false;
       if (version.code === 0) {
         try { running = JSON.parse(version.stdout).status === 'running'; } catch { throw new Error('Codex daemon version returned malformed status; refusing to start a second server.'); }
@@ -53,6 +55,7 @@ export class DirectorHost extends EventEmitter {
       const started = await this.execute('codex', ['app-server', 'daemon', 'start'], { cwd: this.cwd });
       if (started.code !== 0) throw new Error(`Could not start the Codex App Server daemon: ${started.stderr || started.stdout || started.code}`);
       await this.client.close();
+      if (this.closing) throw firstError;
       this.client = new CodexClient({ cwd: this.cwd, transport: 'proxy', experimentalApi: this.hostMode === 'codex-desktop' });
       await this.client.connect();
     }
@@ -203,11 +206,12 @@ export class DirectorHost extends EventEmitter {
     return structuredClone(recovery);
   }
 
-  async startRunner({ prompt = 'Check the configured repository for actionable Conductor work. Reconcile current state, work only within existing authority, and go idle when there is nothing actionable.', revision = null } = {}) {
+  async startRunner({ prompt = 'Check the configured repository for actionable Conductor work. Reconcile current state, work only within existing authority, and go idle when there is nothing actionable.', revision = null, canStart = () => true } = {}) {
     if (!this.threadEnsured) await this.ensureThread();
     const threadId = this.threadId;
     if (this.state.recoveryRequired && !this.state.recoveryRequired.resolvedAt) throw Object.assign(new Error(`Director recovery is required for turn ${this.state.recoveryRequired.turnId ?? 'unknown'} (${this.state.recoveryRequired.status ?? 'uncertain'}). Inspect the saved turn before continuing.`), { code: 'DIRECTOR_RECOVERY_REQUIRED' });
     const status = await this.status();
+    if (!canStart()) throw Object.assign(new Error('Director wake was gated before submission.'), { code: 'DIRECTOR_GATED' });
     if (status.type !== 'idle') throw Object.assign(new Error(status.type === 'unknown' || status.type === 'systemError' ? 'Director status is unavailable; refusing to send a duplicate wakeup.' : `Director is ${status.type}; wakeup was suppressed.`), { code: status.type === 'unknown' || status.type === 'systemError' ? 'DIRECTOR_UNAVAILABLE' : 'DIRECTOR_BUSY' });
     if (this.inflightRevision !== null && this.inflightRevision === revision) throw Object.assign(new Error('This director wakeup revision is already in flight.'), { code: 'DIRECTOR_BUSY' });
     this.inflightRevision = revision ?? randomUUID();
@@ -237,6 +241,7 @@ export class DirectorHost extends EventEmitter {
   }
 
   async close() {
+    this.closing = true;
     this.client.off('notification', this._onNotification);
     this.client.off('error', this._onClientError);
     await this.client.close();

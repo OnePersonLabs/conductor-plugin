@@ -31,10 +31,10 @@ function normalize(state, threadId) {
 }
 
 export class DirectorEvents {
-  constructor({ state, save, execute, cwd, threadId, host }) {
+  constructor({ state, save, execute, cwd, threadId, host, runnerPause = () => null, stopping = () => false }) {
     if (!UUID.test(threadId ?? '')) throw new TypeError('A valid director thread UUID is required.');
     if (typeof save !== 'function' || typeof execute !== 'function') throw new TypeError('save and execute functions are required.');
-    Object.assign(this, { state, save, execute, cwd, threadId, host });
+    Object.assign(this, { state, save, execute, cwd, threadId, host, runnerPause, stopping });
     normalize(this.state, threadId);
     this.state.checkRevision ??= 0;
     this.state.checkedRevision ??= 0;
@@ -152,54 +152,61 @@ export class DirectorEvents {
     return { idle: !this.state.pendingCheck && !this.state.interaction?.active, interaction: this.state.interaction ?? null, checkRevision: this.state.checkRevision };
   }
 
-  flush() {
+  flush({ observation } = {}) {
     // All callers share one submission. An acknowledgement is not a turn-end.
     if (this.flushing) return this.flushing;
-    this.flushing = this._flush().finally(() => { this.flushing = null; });
+    this.flushing = this._flush(observation).finally(() => { this.flushing = null; });
     return this.flushing;
   }
 
-  async _flush() {
+  async _flush(observation) {
+    const canWake = () => !this.stopping() && !this.state.interaction?.active && !this.state.handoff
+      && (this.runnerPause() ? this.runnerPause() === observation : this.state.enabled);
     if (this.state.interaction?.active) return { status: 'awaiting-interaction', interactionId: this.state.interaction.id };
     if (this.state.handoff) return { status: 'handoff-pending', handoff: structuredClone(this.state.handoff) };
-    if (!this.state.enabled) return { status: 'disabled' };
+    if (!canWake()) return { status: this.runnerPause() ? 'runner-paused' : 'disabled' };
     if (this.state.recoveryRequired && !this.state.recoveryRequired.resolvedAt) return { status: 'recovery-required', reason: this.state.recoveryRequired };
     if (this.host) {
       const status = await this.host.status();
       if (status.type !== 'idle') return { status: status.type === 'active' ? 'busy' : 'unavailable', hostStatus: status };
     }
+    if (!canWake()) return { status: this.runnerPause() ? 'runner-paused' : 'disabled' };
     if (this.state.batches.some(batch => batch.status === 'uncertain' && !batch.acknowledgedAt)) return { status: 'uncertain', batch: this.state.batches.find(batch => batch.status === 'uncertain' && !batch.acknowledgedAt) };
     const waiting = this.state.batches.find(batch => ['submitting','queued'].includes(batch.status) && !batch.acknowledgedAt);
     if (waiting) return { status: waiting.status === 'queued' ? 'awaiting-acknowledgement' : 'submitting', batch: structuredClone(waiting) };
     const deliveryStates = new Set(['submitting', 'queued', 'uncertain']);
     const unsent = this.state.events.filter(item => !item.acknowledgedAt && !this.state.batches.some(batch => deliveryStates.has(batch.status) && batch.eventIds.includes(item.id)));
     if (!unsent.length) return { status: 'idle' };
-    const batch = { id: randomUUID(), eventIds: unsent.map(item => item.id), status: 'submitting', createdAt: new Date().toISOString(), threadId: this.threadId };
+    const batch = { id: randomUUID(), eventIds: observation ? [] : unsent.map(item => item.id), status: 'submitting', createdAt: new Date().toISOString(), threadId: this.threadId, ...(observation ? { observation: true } : {}) };
     this.state.batches.push(batch);
     await this.save();
-    const message = `Conductor event batch ${batch.id}. Reconcile these persisted event IDs before acting: ${batch.eventIds.join(', ')}. Acknowledge them only after handling.`;
+    const message = observation
+      ? `Conductor event batch ${batch.id}. The runner is paused. Inspect current status and report what needs attention. Keep this check read-only and leave the runner paused.`
+      : `Conductor event batch ${batch.id}. Reconcile these persisted event IDs before acting: ${batch.eventIds.join(', ')}. Acknowledge them only after handling.`;
     try {
-      const turn = this.host ? await this.host.startRunner({ prompt: message, revision: batch.id }) : null;
+      if (!canWake()) throw Object.assign(new Error('Director wake was gated before submission.'), { code: 'DIRECTOR_GATED' });
+      const turn = this.host ? await this.host.startRunner({ prompt: message, revision: batch.id, canStart: canWake }) : null;
       const result = this.host ? { code: 0, stdout: turn.id } : await this.execute('codex', ['queue', '--thread', this.threadId, '--message', message], { cwd: this.cwd });
       if (turn?.queued) {
         batch.queueItemId = turn.id; batch.clientMessageId = turn.clientMessageId;
         // A native manual turn can settle (or stop) while queue/add is in
         // flight, before acknowledgement has a queue ID it can remove.
-        if ((batch.acknowledgedAt || !this.state.enabled || this.state.interaction?.active) && !batch.nativeConsumed) {
+        if ((batch.acknowledgedAt || !canWake()) && !batch.nativeConsumed) {
           await this.cancelWake(batch);
         }
       }
       else if (turn) batch.turnId = turn.id;
       if (result?.code !== 0) throw Object.assign(new Error(result?.stderr || `codex queue failed (${result?.code}).`), { result });
-      batch.status = 'queued'; batch.queuedAt = new Date().toISOString(); batch.receipt = String(result?.stdout ?? '').slice(0, 1000);
+      batch.status = batch.queueCancellationConfirmed ? 'reconciled-not-queued' : 'queued';
+      batch.queuedAt = new Date().toISOString(); batch.receipt = String(result?.stdout ?? '').slice(0, 1000);
       await this.save();
       return { status: 'queued', batch: structuredClone(batch) };
     } catch (error) {
-      if (['DIRECTOR_BUSY', 'DIRECTOR_UNAVAILABLE', 'DIRECTOR_RECOVERY_REQUIRED'].includes(error.code)) {
+      if (['DIRECTOR_BUSY', 'DIRECTOR_UNAVAILABLE', 'DIRECTOR_RECOVERY_REQUIRED', 'DIRECTOR_GATED'].includes(error.code)) {
         batch.status = 'reconciled-not-queued';
         batch.error = error.message;
         await this.save();
-        return { status: error.code === 'DIRECTOR_BUSY' ? 'busy' : error.code === 'DIRECTOR_RECOVERY_REQUIRED' ? 'recovery-required' : 'unavailable' };
+        return { status: error.code === 'DIRECTOR_GATED' ? 'runner-paused' : error.code === 'DIRECTOR_BUSY' ? 'busy' : error.code === 'DIRECTOR_RECOVERY_REQUIRED' ? 'recovery-required' : 'unavailable' };
       }
       batch.status = 'uncertain'; batch.error = String(error.message ?? error).slice(0, 1000); batch.uncertainAt = new Date().toISOString();
       await this.save();
@@ -234,11 +241,14 @@ export class DirectorEvents {
 
   async stop() {
     this.state.enabled = false; await this.save();
+    await this.flushing;
     for (const batch of this.state.batches) if (batch.queueItemId && !batch.nativeConsumed && !batch.acknowledgedAt) {
       const removed = await this.cancelWake(batch);
       if (removed) batch.status = 'reconciled-not-queued';
     }
     await this.save();
+    const uncertain = this.state.batches.find(batch => batch.status === 'uncertain' && !batch.acknowledgedAt);
+    if (uncertain) throw new Error(`Director wake ${uncertain.id} has an uncertain submission receipt. Inspect the original chat before retrying.`);
   }
-  async start() { this.state.enabled = true; await this.save(); }
+  async start() { this.state.enabled = !this.runnerPause() && !this.stopping(); await this.save(); }
 }

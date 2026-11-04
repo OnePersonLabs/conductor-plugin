@@ -9,12 +9,13 @@ import { GitHub, checkState } from './github.mjs';
 import { git, run } from './process.mjs';
 import { createWorktree, copyWorktreeIncludes, refreshBranch } from './worktrees.mjs';
 import { processExists } from './state.mjs';
-import { WakeLoop, admission } from './scheduler.mjs';
+import { WakeLoop, admission, occupied } from './scheduler.mjs';
 import { Director } from './director.mjs';
 import { DirectorHost } from './director-host.mjs';
 import { watch } from 'node:fs';
 import { builderPrompt, createRequestRevision, parseResult, parseReviewResult, reviewPrompt, resultSchema, reviewResultSchema } from './prompts.mjs';
 import { validateDesignHandoff } from './design-handoff.mjs';
+import { runnerPause, RUNNER_PAUSED_MESSAGE } from './runner-state.mjs';
 
 const skillPath = fileURLToPath(new URL('../skills/github-workflow/SKILL.md', import.meta.url));
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -36,8 +37,9 @@ export function reviewerIsolationConfig(effectiveConfig) {
 export class Coordinator extends EventEmitter {
   constructor({ repo, config, store, github, Client = CodexClient, Host = DirectorHost, execute = run, workspace = { createWorktree, copyWorktreeIncludes, refreshBranch } }) {
     super(); Object.assign(this, { repo, config, store, Client, Host, execute, workspace });
-    this.github = github ?? new GitHub(config.repository, { cwd: repo.root });
+    this.github = github ?? new GitHub(config.repository, { cwd: repo.root, beforeWrite: () => this.assertRunning() });
     this.clients = new Map(); this.tasks = new Map(); this.requests = new Map(); this.preparations = new Map();
+    this.controls = new Set();
     this.handoffChecks = new Map();
     this.stopping = false; this.scanError = null;
     this.lastCleanupAt = 0;
@@ -49,10 +51,19 @@ export class Coordinator extends EventEmitter {
     });
   }
   async save() { await this.store.save(this.state); this.emit('status', this.state); }
-  async start({ beforeScan, threadId, enable = false, manualWake = false, host, attachOnly = false, handoffThreadId } = {}) {
+  async start({ beforeScan, threadId, enable = false, manualWake = false, host, attachOnly = false, handoffThreadId, resumeRunner = false } = {}) {
+    const previousOwner = await this.store.owner?.() ?? null;
     await this.store.acquire();
     try {
       this.state = await this.store.read();
+      const pause = runnerPause(this.state, previousOwner);
+      if (pause) {
+        this.state.runnerPause ??= { reason: pause.reason, at: new Date().toISOString() };
+        if (this.state.director) this.state.director.enabled = false;
+        this.state.serviceReady = false;
+        this.recordInterruptedJobs();
+        await this.save();
+      }
       await this.store.cleanupOwned();
       await this.store.cleanupMigrationBackups(this.repo.root, Date.now(), this.config.version === 2);
       if (this.state.repository && this.state.repository !== this.config.repository) throw new Error('Recovery state belongs to another GitHub repository. Resolve configuration before proceeding.');
@@ -62,7 +73,9 @@ export class Coordinator extends EventEmitter {
       this.state.repository = this.config.repository; this.state.root = this.repo.root;
       this.state.serviceReady = false;
       this.state.ownerToken = this.store.token;
+      delete this.state.startupError;
       await this.preflight();
+      if (this.stopping) return;
       if (this.config.version === 2) {
         this.state.director ??= {};
         this.state.director.attachProtocol = 1;
@@ -72,25 +85,37 @@ export class Coordinator extends EventEmitter {
         this.state.runtimeEnabled ??= Boolean(this.state.director.threadId);
         if (enable) this.state.runtimeEnabled = true;
         if (!this.state.runtimeEnabled) throw new Error('Repository runtime is not enabled. Use conductor enable.');
-        if (!enable && !manualWake && this.state.director.enabled === false) throw new Error('Conductor was deliberately stopped; use wakeup to inspect or enable to restart observation.');
         if (threadId && (!this.state.director.threadId || threadId === this.state.director.threadId)) this.state.director.threadId = threadId;
         if (hostMode === 'codex-desktop') {
           if (!this.state.director.threadId) throw new Error('Create the director with the native Desktop task tool, then enable with its thread UUID.');
           this.state.director.threadHostOwnership = { threadId: this.state.director.threadId, host: hostMode, codexHome: environment.codexHome };
           const { DirectorActivity } = await import('./director-activity.mjs');
+          if (this.stopping) return;
           this.directorActivity = new DirectorActivity({ dir: this.store.dir });
         }
+        if (this.stopping) return;
         await this.save();
+        if (this.stopping) return;
         this.directorHost = new this.Host({ cwd: this.repo.root, repository: this.config.repository,
           model: this.config.directorModel, state: this.state.director, save: () => this.save(), execute: this.execute, activity: this.directorActivity });
-        await this.directorHost.connect();
-        const bound = await this.directorHost.ensureThread();
+        this.hostStartup = (async () => {
+          await this.directorHost.connect();
+          if (this.stopping) return null;
+          return this.directorHost.ensureThread();
+        })();
+        const bound = await this.hostStartup;
+        this.hostStartup = null;
+        if (this.stopping) return;
         if (this.directorActivity) await this.directorActivity.pruneExcept([bound, ...(this.state.director.handoff?.toThreadId ? [this.state.director.handoff.toThreadId] : [])]);
+        if (this.stopping) return;
         this.director = new Director(this, bound);
         await this.director.events.start();
         this.directorHost.on('completed', turn => {
           if (this.stopping) return;
-          for (const batch of this.state.director.batches) if (batch.turnId === turn.id) { batch.turnStatus = turn.status; batch.terminalAt = new Date().toISOString(); }
+          for (const batch of this.state.director.batches) if (batch.turnId === turn.id) {
+            batch.turnStatus = turn.status; batch.terminalAt = new Date().toISOString();
+            if (batch.observation) batch.acknowledgedAt = batch.terminalAt;
+          }
           if (turn.status !== 'completed') this.state.director.recoveryRequired = { threadId: this.state.director.threadId, turnId: turn.id, status: turn.status, detectedAt: new Date().toISOString() };
           this.director.events.pruneSettled();
           this.save().then(() => this.director.events.flush()).catch(error => this.emit('notice', error.message));
@@ -99,10 +124,14 @@ export class Coordinator extends EventEmitter {
           if (!this.stopping && status.type === 'idle') this.director.events.flush().catch(error => this.emit('notice', error.message));
         });
       }
+      if (this.stopping) return;
       this.state.running = true; this.state.pid = process.pid; this.state.pollMs = this.config.pollMs; this.state.agents = this.config.agents;
       for (const job of this.state.jobs) {
         job.intent = job.phase === 'cancelling' ? 'cancel' : job.phase === 'paused' || job.intent === 'pause' ? 'pause' : null;
-        if (this.director && job.phase === 'stopped') { job.phase = 'paused'; job.intent = 'pause'; }
+        if (job.runnerInterrupted) {
+          this.settleRunnerInterruption(job);
+          continue;
+        }
         if (activePhases.has(job.phase)) {
           job.recoveryPhase = job.phase;
           job.builderThreadId ??= job.threadId ?? null;
@@ -114,11 +143,13 @@ export class Coordinator extends EventEmitter {
         }
       }
       await this.save();
+      if (this.stopping) return;
       if (handoffThreadId) await this.attachThread(handoffThreadId);
       await beforeScan?.();
       if (this.stopping) return;
       this.ready = false;
       this.state.serviceReady = false; await this.save();
+      if (this.stopping) return;
       if (this.directorActivity) {
         const refresh = () => this.refreshDirectorActivity().catch(error => this.emit('notice', `Director activity: ${error.message}`));
         this.activityWatcher = watch(this.store.dir, (_event, name) => { if (String(name).startsWith('director-activity.sqlite')) refresh(); });
@@ -127,15 +158,18 @@ export class Coordinator extends EventEmitter {
         this.activityTimer = setInterval(refresh, 1000);
       }
       if (this.directorActivity) await this.refreshDirectorActivity();
+      if (this.stopping) return;
       this.ready = true;
       this.state.serviceReady = true; await this.save();
+      if (this.stopping) return;
       this.timer = setInterval(() => this.wake(), this.config.pollMs);
-      if (!attachOnly && !handoffThreadId) {
-        if (manualWake) await this.director.releaseInteractionForWakeup();
-        if (manualWake || enable) await this.requestCheck({ manual: true });
+      if (resumeRunner) await this.resumeRunner();
+      else if (!attachOnly && !handoffThreadId) {
+        if (manualWake && !runnerPause(this.state)) await this.director.releaseInteractionForWakeup();
+        if (manualWake || (enable && !runnerPause(this.state))) await this.requestCheck({ manual: true });
         else await this.wake();
       }
-    } catch (error) { this.activityWatcher?.close(); clearInterval(this.activityTimer); this.directorActivity?.close(); await this.directorHost?.close().catch(() => {}); if (this.state) { this.state.running = false; this.state.serviceReady = false; this.state.startupError = error.message; await this.save().catch(() => {}); } await this.store.release(); throw error; }
+    } catch (error) { if (this.stopping) return; this.activityWatcher?.close(); clearInterval(this.activityTimer); this.directorActivity?.close(); await this.directorHost?.close().catch(() => {}); if (this.state) { this.state.running = false; this.state.serviceReady = false; this.state.startupError = error.message; await this.save().catch(() => {}); } await this.store.release(); throw error; }
   }
   async preflight() {
     const remote = await git(this.repo.root, 'remote', 'get-url', 'origin');
@@ -146,7 +180,7 @@ export class Coordinator extends EventEmitter {
     await access(skillPath);
   }
   wake() {
-    if (!this.ready || this.state?.director?.handoff) return Promise.resolve();
+    if (!this.ready || this.stopping || runnerPause(this.state) || this.state?.director?.handoff) return Promise.resolve();
     const now = Date.now();
     const cleanup = now - this.lastCleanupAt >= 60_000
       ? (this.lastCleanupAt = now, this.store.cleanupOwned().catch(error => this.emit('notice', `Retention cleanup: ${error.message}`)))
@@ -158,6 +192,7 @@ export class Coordinator extends EventEmitter {
     this.activityRefreshing = true;
     try {
       const activity = await this.directorActivity.read(this.state.director.threadId);
+      if (this.stopping) return;
       if (this.activityRevision === activity.revision) {
         if (this.state.director.handoff) await this.progressHandoff(activity);
         return;
@@ -183,6 +218,7 @@ export class Coordinator extends EventEmitter {
       if (activity.state === 'idle' && activity.turnId) {
         for (const batch of this.state.director.batches) if (batch.turnId === activity.turnId) {
           batch.turnStatus = 'completed'; batch.terminalAt = new Date().toISOString();
+          if (batch.observation) batch.acknowledgedAt = batch.terminalAt;
         }
         this.director.events.pruneSettled();
       }
@@ -193,6 +229,9 @@ export class Coordinator extends EventEmitter {
   }
   async requestCheck({ manual = false, reason } = {}) {
     if (!this.director) throw new Error('Director is not bound.');
+    if (this.stopping || this.runnerStopRequested) return { status: 'runner-paused' };
+    const pause = runnerPause(this.state);
+    if (pause && !manual) return { status: 'runner-paused' };
     if (this.state.director.handoff) return { status: 'handoff-pending', handoff: structuredClone(this.state.director.handoff) };
     if (manual) {
       await this.refreshDirectorActivity();
@@ -206,6 +245,7 @@ export class Coordinator extends EventEmitter {
             batch.turnStatus = turn.status;
             batch.terminalAt = new Date().toISOString();
             batch.status = 'reconciled-ended';
+            if (batch.observation) batch.acknowledgedAt = batch.terminalAt;
           }
         }
         this.director.events.pruneSettled();
@@ -220,11 +260,18 @@ export class Coordinator extends EventEmitter {
     } else if (!this.state.runtimeEnabled || !this.state.director.enabled) return { status: 'disabled' };
     await this.director.events.emit({ kind: 'check-requested', reason });
     // Scan first so the director receives a current tracker snapshot.
-    await this.wake();
-    return this.director.events.flush();
+    if (pause) await this.director.observe();
+    else await this.wake();
+    return this.director.events.flush({ observation: pause });
   }
-  async control(request) {
+  control(request) {
+    const pending = this._control(request).finally(() => this.controls.delete(pending));
+    this.controls.add(pending);
+    return pending;
+  }
+  async _control(request) {
     if (!this.director) throw new Error('Migrate to version 2 and bind a director first.');
+    if (request.op !== 'stop' && (this.stopping || this.runnerStopRequested)) throw new Error(RUNNER_PAUSED_MESSAGE);
     if (request.op === 'attach') return this.director.control(request);
     this.directorControlCount = (this.directorControlCount ?? 0) + 1;
     try {
@@ -233,7 +280,7 @@ export class Coordinator extends EventEmitter {
       return result;
     } finally {
       this.directorControlCount--;
-      if (!this.directorControlCount && this.state.director.handoff) this.progressHandoff(await this.directorActivity.read(this.state.director.handoff.fromThreadId)).catch(error => this.emit('notice', `Director handoff: ${error.message}`));
+      if (!this.stopping && !this.directorControlCount && this.state.director.handoff) this.progressHandoff(await this.directorActivity.read(this.state.director.handoff.fromThreadId)).catch(error => this.emit('notice', `Director handoff: ${error.message}`));
     }
   }
   async attachThread(targetThreadId) {
@@ -265,10 +312,10 @@ export class Coordinator extends EventEmitter {
     return result;
   }
   async progressHandoff(activity) {
-    if (this.handoffProgressing) return { status: 'handoff-pending', handoff: structuredClone(this.state.director.handoff) };
-    this.handoffProgressing = true;
-    try { return await this._progressHandoff(activity); }
-    finally { this.handoffProgressing = false; }
+    if (this.stopping || this.handoffProgress) return { status: 'handoff-pending', handoff: structuredClone(this.state.director.handoff) };
+    this.handoffProgress = this._progressHandoff(activity);
+    try { return await this.handoffProgress; }
+    finally { this.handoffProgress = null; }
   }
   async _progressHandoff(activity) {
     const director = this.state.director, handoff = director?.handoff;
@@ -397,11 +444,120 @@ export class Coordinator extends EventEmitter {
     return { status: 'attached', fromThreadId: handoff.fromThreadId, threadId: target.id, nativeStatus: native?.state ?? 'unknown', ...(warnings.length ? { warning: warnings.join(' ') } : {}) };
   }
   async guard(job, options) {
+    this.assertRunning();
     if (this.director) {
       try { await this.director.assertEligible(job.issue, job.eligibilityRevision, options); }
-      catch (error) { job.intent = 'pause'; job.phase = 'paused'; job.summary = error.message; await this.save(); throw error; }
+      catch (error) {
+        this.assertRunning();
+        job.intent = 'pause'; job.phase = 'paused'; job.summary = error.message; await this.save(); throw error;
+      }
     }
-    if (this.stopping || job.intent) throw new Error('Execution stopped or held before delivery.');
+    this.assertRunning();
+    if (job.intent) throw new Error('Execution stopped or held before delivery.');
+  }
+  executionBlocked() {
+    return this.stopping || this.runnerStopRequested || this.runnerResuming || Boolean(this.state && runnerPause(this.state));
+  }
+  assertRunning() {
+    if (this.executionBlocked()) throw Object.assign(new Error(RUNNER_PAUSED_MESSAGE), { code: 'RUNNER_PAUSED' });
+  }
+  recordInterruptedJobs() {
+    for (const job of this.state.jobs) {
+      if (activePhases.has(job.phase) && !['pause', 'cancel'].includes(job.intent)) {
+        job.runnerInterrupted ??= { phase: job.phase, role: job.activeRole ?? job.nextRole ?? 'builder', turnId: job.turnId ?? null };
+      }
+      if (job.mergeArmed && !['complete', 'cancelled'].includes(job.phase)) job.deliveryReconciliationRequired = true;
+    }
+  }
+  settleRunnerInterruption(job) {
+    if (!job.runnerInterrupted || job.intent || !activePhases.has(job.phase)) return;
+    const { role } = job.runnerInterrupted;
+    job.builderThreadId ??= job.threadId ?? null;
+    const threadId = role === 'reviewer' ? job.reviewerThreadId : job.builderThreadId;
+    if (!job.prepared || !threadId || (job.childPid && processExists(job.childPid))) {
+      job.phase = 'uncertain';
+      job.summary = `Interrupted ${role} preparation or thread ownership requires issue-specific recovery.`;
+      return;
+    }
+    job.phase = 'stopped'; job.activeRole = role; job.nextRole = role;
+    job.childPid = null; job.turnId = null;
+  }
+  async pauseRunner(reason = 'Stopped by the operator') {
+    this.runnerStopRequested = true;
+    this.state.runnerPause ??= { reason, at: new Date().toISOString() };
+    if (this.state.director) this.state.director.enabled = false;
+    this.state.serviceReady = false;
+    this.recordInterruptedJobs();
+    this.runnerPauseSave ??= this.save().catch(error => { this.runnerPauseSave = null; throw error; });
+    await this.runnerPauseSave;
+    return { stopping: true, runnerPause: structuredClone(this.state.runnerPause) };
+  }
+  async resumeRunner() {
+    if (this.stopping || this.runnerStopRequested) throw new Error('Conductor is shutting down. Retry resume when it stops.');
+    if (this.runnerResuming) return { status: 'resuming' };
+    if (!runnerPause(this.state)) return { status: 'running' };
+    const pause = this.state.runnerPause;
+    this.runnerResuming = true;
+    delete this.state.runnerPause;
+    if (this.state.director) this.state.director.enabled = true;
+    try { await this.save(); }
+    catch (error) {
+      this.state.runnerPause ??= pause;
+      if (this.state.director) this.state.director.enabled = false;
+      throw error;
+    } finally { this.runnerResuming = false; }
+    if (this.director) await this.requestCheck({ manual: true, reason: 'Runner resumed by the operator.' });
+    else await this.wake();
+    return { status: this.executionBlocked() ? 'runner-paused' : 'resumed' };
+  }
+  async recoverRunnerJob(job) {
+    if (job.intent || ['complete', 'cancelled', 'paused', 'cancelling'].includes(job.phase) || this.tasks.has(job.issue)) return false;
+    if (job.pullCreationPending && !job.pr) {
+      const receipt = await this.github.pullForBranch(job.branch);
+      this.assertRunning();
+      if (!receipt) {
+        job.phase = 'uncertain';
+        job.summary = 'PR creation was interrupted without a GitHub receipt. Inspect the original branch before resuming the issue.';
+        await this.save();
+        return false;
+      }
+      job.pr = receipt.number;
+      job.phase = this.config.reviewEnabled ? 'review' : 'waiting';
+      job.activeRole = null; job.nextRole = this.config.reviewEnabled ? 'reviewer' : null;
+      delete job.pullCreationPending;
+      await this.save();
+    }
+    if (job.pr) {
+      const pull = await this.github.pull(job.pr);
+      this.assertRunning();
+      if (pull.state === 'MERGED') {
+        if (this.director) await this.director.assertEligible(job.issue, job.eligibilityRevision, { allowCompleted: true });
+        job.deliveryReconciliationRequired = true;
+        await this.save();
+        await this.deliveryAction(() => this.reconcilePull(job));
+        return false;
+      }
+      if (job.mergeArmed) await this.disarm(job);
+      if (job.deliveryReconciliationRequired) {
+        delete job.deliveryReconciliationRequired;
+        await this.save();
+      }
+    }
+    if (job.phase === 'uncertain' || job.phase === 'blocked') return false;
+    if (job.runnerInterrupted && job.phase === 'stopped') {
+      const activeJobs = this.state.jobs.filter(other => !(other.runnerInterrupted && other.phase === 'stopped'));
+      if (occupied(activeJobs) >= this.config.agents || this.state.director?.interaction?.active) return false;
+      // Retain the saved interruption while a hold, admission, or changed
+      // revision blocks it. The normal checkJob failure would pause the issue.
+      if (this.director) await this.director.assertEligible(job.issue, job.eligibilityRevision);
+    } else if (job.runnerInterrupted) {
+      delete job.runnerInterrupted;
+      await this.save();
+    }
+    return true;
+  }
+  async progress(job) {
+    if (!this.executionBlocked()) await this.github.progress(job);
   }
   deliveryAction(action) {
     const task = this.delivery.catch(() => {}).then(action);
@@ -415,16 +571,18 @@ export class Coordinator extends EventEmitter {
     return digest({ version: 2, defaultPolicy: 'actionable-findings-v2', instructions: this.config.reviewInstructions });
   }
   async scan() {
-    if (this.stopping) return;
+    if (this.executionBlocked()) return;
     this.scanError = null;
     if (this.director) {
       await this.director.observe();
       if (this.state.director.snapshots['service-error']) await this.director.events.observe('service-error', null, {kind:'service-recovered'});
     }
+    if (this.executionBlocked()) return;
     const base = !this.director || this.state.jobs.some(j => !['paused','blocked','uncertain','complete','cancelled'].includes(j.phase)) ? await this.base() : null;
     for (const job of this.state.jobs) {
-      if (this.stopping) return;
+      if (this.executionBlocked()) return;
       try {
+        if ((job.runnerInterrupted || job.deliveryReconciliationRequired || job.pullCreationPending) && !await this.recoverRunnerJob(job)) continue;
         if (this.director && !['complete','cancelled','cancelling'].includes(job.phase) && !await this.director.checkJob(job)) continue;
         if (job.phase === 'cancelling') await this.cancel(job.issue);
         else if (job.phase === 'stopped' || job.phase === 'repair') {
@@ -456,6 +614,7 @@ export class Coordinator extends EventEmitter {
               if (ahead.code !== 0) throw new Error('PR head differs from the local issue branch; reconcile publication before review.');
               if (this.director) await this.guard(job);
               if ((await this.designContext(job)).status === 'blocked') continue;
+              this.assertRunning();
               await git(job.worktree, 'push', 'origin', job.branch);
               if ((await this.github.pull(job.pr)).headRefOid !== head) throw new Error('Could not confirm the issue branch push before review.');
             }
@@ -466,9 +625,9 @@ export class Coordinator extends EventEmitter {
           }
           else { job.reviewStatus = 'skipped'; job.phase = 'waiting'; await this.save(); }
         } else if (job.phase === 'waiting') await this.deliveryAction(() => this.reconcilePull(job, base));
-      } catch (error) { job.lastError = error.message; await this.save(); this.emit('notice', `Issue #${job.issue}: ${error.message}`); }
+      } catch (error) { if (error.code !== 'RUNNER_PAUSED') { job.lastError = error.message; await this.save(); this.emit('notice', `Issue #${job.issue}: ${error.message}`); } }
     }
-    if (this.stopping) return;
+    if (this.executionBlocked()) return;
     // Version 2 never admits from a polling tick: the director supplies a fresh
     // revision-bound dispatch command. Legacy fixtures retain their old lane.
     if (this.director) { this.state.lastScan = new Date().toISOString(); await this.save(); return; }
@@ -486,9 +645,10 @@ export class Coordinator extends EventEmitter {
   }
   async dispatchIssue(issue, base, eligibilityRevision, designHandoff) {
     this.director?.assertInteractionReleased();
-      if (this.stopping) return;
+      this.assertRunning();
       const branch = `conductor/issue-${issue.number}`;
       if (await this.github.pullForBranch(branch)) throw new Error(`Issue #${issue.number} already has a PR on ${branch}; recover its owner before adoption.`);
+      this.assertRunning();
       // Ordinary worktrees stay outside all source checkouts; their explicit paths survive restart.
       const path = join(dirname(dirname(this.repo.commonDir)), '.conductor-worktrees', digest(this.repo.commonDir).slice(0, 16), `issue-${issue.number}`);
       const job = { issue: issue.number, sourceIdentity: issue.node_id ?? `${this.config.repository}#${issue.number}`, requestRevision: createRequestRevision(issue), branch, worktree: path, baseBranch: this.config.baseBranch, phase: 'preparing', activeRole: 'builder', nextRole: 'builder', builderThreadId: null, reviewerThreadId: null, threadId: null, turnId: null, childPid: null, acceptanceComplete: false, createdAt: new Date().toISOString() };
@@ -499,9 +659,13 @@ export class Coordinator extends EventEmitter {
       try {
         if (this.director) await this.guard(job);
         await this.prepare(job, base);
-        if (this.stopping || job.intent) { job.phase = job.intent === 'pause' ? 'paused' : job.intent === 'cancel' ? 'cancelled' : 'stopped'; await this.save(); }
+        if (this.executionBlocked() || job.intent) { if (!job.runnerInterrupted) job.phase = job.intent === 'pause' ? 'paused' : job.intent === 'cancel' ? 'cancelled' : 'stopped'; await this.save(); }
         else this.launch(job, issue, 'Start the authorized issue. Read its acceptance and relevant project instructions before changing source.', [], 'builder');
-      } catch (error) { if (job.intent !== 'cancel') job.phase = job.intent === 'pause' ? 'paused' : 'blocked'; job.summary = `Workspace preparation failed: ${error.message}`; await this.save(); await this.github.progress(job); }
+      } catch (error) {
+        if (this.executionBlocked()) return;
+        if (job.intent !== 'cancel') job.phase = job.intent === 'pause' ? 'paused' : 'blocked';
+        job.summary = `Workspace preparation failed: ${error.message}`; await this.save(); await this.progress(job);
+      }
       };
       if (this.director) {
         const pending = prepareAndLaunch().catch(error => this.emit('notice', error.message)).finally(() => { this.preparations.delete(job.issue); if (!this.stopping) this.wake(); });
@@ -510,19 +674,23 @@ export class Coordinator extends EventEmitter {
       return { issue: job.issue, phase: job.phase, branch: job.branch };
   }
   async prepare(job, base) {
+    this.assertRunning();
     if (!job.worktreeCreated) {
       await mkdir(dirname(job.worktree), { recursive: true });
+      this.assertRunning();
       await this.workspace.createWorktree({ repoRoot: this.repo.root, path: job.worktree, branch: job.branch, baseRef: base });
       job.worktreeCreated = true; await this.save();
     }
+    this.assertRunning();
     job.includes = await this.workspace.copyWorktreeIncludes({ repoRoot: this.repo.root, worktreePath: job.worktree });
     for (let i = job.preparedCommands ?? 0; i < this.config.prepare.length; i++) {
-      if (this.stopping || job.intent) return;
+      if (this.executionBlocked() || job.intent) return;
       job.preparationInFlight = i; await this.save();
+      this.assertRunning();
       await this.command(this.config.prepare[i], job.worktree);
       job.preparedCommands = i + 1; job.preparationInFlight = null; await this.save();
     }
-    job.prepared = true; await this.save(); await this.github.progress(job);
+    job.prepared = true; await this.save(); await this.progress(job);
   }
   async command(command, cwd) {
     let executable = command.command;
@@ -532,9 +700,11 @@ export class Coordinator extends EventEmitter {
       const npm = process.env.npm_execpath ?? join(resolve(process.execPath, '..'), 'node_modules', 'npm', 'bin', 'npm-cli.js');
       await access(npm); executable = process.execPath; args = [npm, ...args];
     }
+    this.assertRunning();
     return this.execute(executable, args, { cwd });
   }
   async designContext(job) {
+    this.assertRunning();
     if (!this.config.designHandoff) return { status: 'disabled' };
     const abort = new AbortController();
     this.handoffChecks.set(job.issue, abort);
@@ -543,31 +713,32 @@ export class Coordinator extends EventEmitter {
       const result = await validateDesignHandoff({ config: this.config.designHandoff, payload: job.designHandoff,
         sourceIdentity: issue.node_id ?? `${this.config.repository}#${issue.number}`, requestRevision: createRequestRevision(issue),
         worktree: job.worktree, commonDir: this.repo.commonDir, execute: this.execute, signal: abort.signal });
-      if (job.intent || this.stopping) return { status: 'blocked', reason: 'Execution stopped while validating the design handoff.' };
+      if (job.intent || this.executionBlocked()) return { status: 'blocked', reason: 'Execution stopped while validating the design handoff.' };
       if (this.director) await this.guard(job);
       job.designHandoffValidation = { bindings: result.bindings, reviewerId: result.review.reviewerId };
       job.designHandoffError = null; await this.save();
       return result;
     } catch (error) {
       job.designHandoffValidation = null; job.designHandoffError = error.message;
-      if (!job.intent && !this.stopping) {
+      if (!job.intent && !this.executionBlocked()) {
         // A prerequisite failure is known not to have launched a model turn.
         // Keep the durable original thread, so normal resume can recover it.
         if (job.mergeArmed) await this.disarm(job);
         job.phase = 'blocked'; job.activeRole = null; job.nextRole = 'builder';
         job.summary = `Design handoff blocked: ${error.message}`; job.lastError = job.summary;
-        await this.save(); await this.github.progress(job);
+        await this.save(); await this.progress(job);
       }
       return { status: 'blocked', reason: error.message };
     } finally { if (this.handoffChecks.get(job.issue) === abort) this.handoffChecks.delete(job.issue); }
   }
   launch(job, issue, reason, feedback = [], role = job.nextRole ?? 'builder') {
-    if (this.tasks.has(job.issue) || this.stopping) return;
+    if (this.tasks.has(job.issue) || this.executionBlocked()) return;
     const task = this.build(job, issue, reason, feedback, role).catch(async error => {
+      if (job.runnerInterrupted && this.executionBlocked()) return;
       const threadId = role === 'reviewer' ? job.reviewerThreadId : job.builderThreadId ?? job.threadId;
       job.activeRole = role; job.nextRole = role;
       job.phase = job.intent === 'pause' ? 'paused' : job.intent === 'cancel' ? job.cancelConfirmed ? 'cancelled' : 'cancelling' : this.stopping ? 'stopped' : ['starting','launching'].includes(job.phase) || !threadId ? 'uncertain' : 'blocked'; job.summary = error.message; job.lastError = error.message;
-      await this.save(); await this.github.progress(job).catch(e => this.emit('notice', e.message));
+      await this.save(); await this.progress(job).catch(e => this.emit('notice', e.message));
     }).finally(() => { this.tasks.delete(job.issue); if (!this.stopping) this.wake(); });
     this.tasks.set(job.issue, task);
   }
@@ -602,28 +773,34 @@ export class Coordinator extends EventEmitter {
     client.on('exit', ({ code }) => terminalReject(new Error(`Codex process exited (${code}) before a terminal turn result.`)));
     client.on('error', terminalReject);
     try {
-      if (job.intent || this.stopping) return;
+      if (job.intent || this.executionBlocked()) return;
       if (!job.prepared) throw new Error('Workspace preparation is incomplete; use explicit resume after inspecting preparation state.');
       job.activeRole = role; job.nextRole = role;
       const field = role === 'reviewer' ? 'reviewerThreadId' : 'builderThreadId';
       threadId = job[field] ?? (role === 'builder' ? job.threadId : null);
       job[field] = threadId;
       if (role === 'builder') job.threadId = threadId;
-      job.phase = threadId ? role === 'reviewer' ? 'reviewing' : 'building' : 'starting'; await this.save();
+      job.phase = threadId ? role === 'reviewer' ? 'reviewing' : 'building' : 'starting';
+      delete job.runnerInterrupted;
+      await this.save();
+      this.assertRunning();
       await client.connect(); job.childPid = client.pid; await this.save();
-      if (job.intent || this.stopping) return;
+      if (job.intent || this.executionBlocked()) return;
       const reviewerConfig = role === 'reviewer' ? reviewerIsolationConfig(await client.readConfig({ cwd: job.worktree })) : undefined;
       if (threadId) {
         const recovered = await client.readThread({ threadId });
         if (recovered.turns?.some(turn => turn.status === 'inProgress')) throw new Error(`Original ${role} thread still has an active turn; reconcile its owner before resuming.`);
+        this.assertRunning();
         await client.resumeThread({ threadId, cwd: job.worktree, ...(role === 'reviewer' ? { sandbox: 'read-only', approvalPolicy: 'never', config: reviewerConfig } : {}) });
       }
       else {
+        this.assertRunning();
         const thread = await client.startThread({ cwd: job.worktree, ...(role === 'reviewer' ? { sandbox: 'read-only', approvalPolicy: 'never', config: reviewerConfig } : {}) });
         threadId = thread.id; job[field] = threadId; if (role === 'builder') job.threadId = threadId; await this.save();
       }
+      this.assertRunning();
       await client.setThreadName({ threadId, name: `${this.config.repository} #${issue.number} - ${role}` });
-      if (this.stopping || job.intent) return;
+      if (this.executionBlocked() || job.intent) return;
       if (this.config.maxTurns && this.state.jobs.reduce((n, j) => n + (j.turnCount ?? 0), 0) >= this.config.maxTurns) throw new Error('Configured total Codex turn budget exhausted; work is retained.');
       const base = role === 'reviewer' ? await this.base() : null;
       const head = role === 'reviewer' ? await git(job.worktree, 'rev-parse', 'HEAD') : null;
@@ -633,16 +810,21 @@ export class Coordinator extends EventEmitter {
       }
       if (this.director) await this.guard(job);
       const designHandoff = role === 'builder' ? await this.designContext(job) : null;
-      if (designHandoff?.status === 'blocked' || this.stopping || job.intent) return;
+      if (designHandoff?.status === 'blocked' || this.executionBlocked() || job.intent) return;
       job.phase = 'launching'; job.turnCount = (job.turnCount ?? 0) + 1; await this.save();
+      this.assertRunning();
       const turn = role === 'reviewer'
         ? await client.startTurn({ threadId, cwd: job.worktree, prompt: reviewPrompt({ config: this.config, job, issue, base, head, previous: job.reviewFindings ?? [] }), outputSchema: reviewResultSchema })
         : await client.startTurn({ threadId, cwd: job.worktree, prompt: builderPrompt({ config: this.config, job, issue, reason, feedback, designHandoff: designHandoff?.status === 'ready' ? designHandoff : null }), skillPath, outputSchema: resultSchema });
       job.turnId = turn.id;
-      if (this.stopping || job.intent) { await client.interrupt({ threadId, turnId: turn.id }); return; }
+      if (this.executionBlocked() || job.intent) {
+        if (job.runnerInterrupted) { job.runnerInterrupted.turnId = turn.id; await this.save(); }
+        if (!this.stopping) await client.interrupt({ threadId, turnId: turn.id });
+        return;
+      }
       job.phase = role === 'reviewer' ? 'reviewing' : 'building'; await this.save();
       const done = await terminal;
-      if (job.intent === 'cancel') return;
+      if (job.intent === 'cancel' || job.runnerInterrupted && this.executionBlocked()) return;
       if (done.status === 'interrupted' || this.stopping) { job.phase = 'stopped'; job.nextRole = role; await this.save(); return; }
       if (done.status !== 'completed') throw new Error(`${role === 'reviewer' ? 'Reviewer' : 'Builder'} turn ${done.status}: ${JSON.stringify(done.error ?? {})}`);
       const result = role === 'reviewer' ? parseReviewResult(finalText) : parseResult(finalText);
@@ -658,46 +840,61 @@ export class Coordinator extends EventEmitter {
         if (afterHead !== head || job.checkHead !== head || job.checkBase !== base) throw new Error('The issue head changed during review; its result is stale and must be reviewed again.');
         job.reviewResult = result; job.reviewHead = head; job.reviewBase = base; job.reviewInstructionRevision = this.reviewInstructionRevision(); job.reviewFindings = result.findings;
         job.reviewResultRevision = job.requestRevision;
-        if (result.status === 'blocked') { job.phase = 'blocked'; job.nextRole = 'reviewer'; job.summary = result.summary; job.lastError = null; await this.save(); await this.github.progress(job); return; }
+        if (result.status === 'blocked') { job.phase = 'blocked'; job.nextRole = 'reviewer'; job.summary = result.summary; job.lastError = null; await this.save(); await this.progress(job); return; }
         job.reviewAttempt = (job.reviewAttempt ?? 0) + 1; job.reviewPublicationStatus = 'pending'; job.nextRole = 'reviewer'; await this.save();
         await this.publishReviewResult(job); return;
       }
       Object.assign(job, result); job.acceptanceComplete = result.acceptanceComplete;
-      if (result.disposition === 'blocked' || !result.acceptanceComplete) { job.phase = 'blocked'; await this.save(); await this.github.progress(job); return; }
+      if (result.disposition === 'blocked' || !result.acceptanceComplete) { job.phase = 'blocked'; await this.save(); await this.progress(job); return; }
       if (await git(job.worktree, 'status', '--porcelain')) throw new Error('Builder left uncommitted or untracked work; finish the owned change before delivery.');
       try { await this.verify(job); }
       catch (error) { await this.repair(job, error); return; }
-      if (this.stopping || job.intent) return;
+      if (this.executionBlocked() || job.intent) return;
       if (this.director) await this.guard(job);
       if ((await this.designContext(job)).status === 'blocked') return;
+      this.assertRunning();
       await git(job.worktree, 'push', '-u', 'origin', job.branch);
-      if (this.stopping || job.intent) return;
+      if (this.executionBlocked() || job.intent) return;
       if (this.director) await this.guard(job);
       if ((await this.designContext(job)).status === 'blocked') return;
-      const pull = await this.github.createPull(job, issue); job.pr = pull.number;
+      if (!job.pr) {
+        job.pullCreationPending = true; await this.save();
+        if (this.executionBlocked()) { delete job.pullCreationPending; await this.save(); return; }
+      }
+      let pull;
+      try { pull = await this.github.createPull(job, issue); }
+      catch (error) {
+        if (error.code === 'RUNNER_PAUSED') delete job.pullCreationPending;
+        throw error;
+      }
+      job.pr = pull.number; delete job.pullCreationPending;
       // Do not swallow feedback arriving while the builder was active: only evidence sent
       // to that turn is acknowledged by reconcilePull before launching it.
       job.phase = this.config.reviewEnabled ? 'review' : 'waiting'; job.activeRole = null; job.nextRole = this.config.reviewEnabled ? 'reviewer' : null; job.lastError = null; job.repairReason = null; job.pendingFeedback = [];
       job.reviewStatus = this.config.reviewEnabled ? null : 'skipped'; job.reviewClearance = null;
-      await this.save(); await this.github.progress(job);
+      await this.save(); await this.progress(job);
     } finally {
       await client.close(); this.clients.delete(job.issue); job.childPid = null; job.turnId = null;
       if (job.intent === 'cancel') job.phase = job.cancelConfirmed ? 'cancelled' : 'cancelling';
       else if (job.intent === 'pause') job.phase = 'paused';
+      else if (job.runnerInterrupted) this.settleRunnerInterruption(job);
       else if (this.stopping && activePhases.has(job.phase)) { job.phase = 'stopped'; job.nextRole = role; }
       for (const [key, request] of this.requests) if (request.issue === job.issue) this.requests.delete(key);
       await this.save();
     }
   }
   async repair(job, error) {
+    this.assertRunning();
     const fingerprint = digest({ error: error.message, head: await git(job.worktree, 'rev-parse', 'HEAD') });
+    this.assertRunning();
     job.repairAttempts = job.repairFingerprint === fingerprint ? (job.repairAttempts ?? 0) + 1 : 1;
     job.repairFingerprint = fingerprint;
     job.phase = job.repairAttempts >= 2 ? 'blocked' : 'repair';
     job.repairReason = `Repair local verification in this original issue: ${error.message}`;
-    job.lastError = error.message; await this.save(); await this.github.progress(job);
+    job.lastError = error.message; await this.save(); await this.progress(job);
   }
   async publishReviewResult(job) {
+    this.assertRunning();
     if (this.director) await this.guard(job);
     if ((await this.designContext(job)).status === 'blocked') return;
     const result = job.reviewResult;
@@ -714,6 +911,7 @@ export class Coordinator extends EventEmitter {
       await this.supersedeReviewPublication(job, 'The checked base or PR head changed before review publication. Integrate, recheck, and review the current branch.');
       return;
     }
+    this.assertRunning();
     const published = await this.github.submitReview(job.pr, { attempt: job.reviewAttempt, head: job.reviewHead, result });
     job.reviewPublication = published; job.reviewPublicationStatus = 'published'; job.reviewStatus = result.status; job.summary = result.summary; job.lastError = null;
     if (result.status === 'findings') {
@@ -723,7 +921,7 @@ export class Coordinator extends EventEmitter {
       job.phase = 'waiting'; job.activeRole = null; job.nextRole = null;
       job.reviewClearance = { head: job.reviewHead, base: job.reviewBase, instructionRevision: job.reviewInstructionRevision, requestRevision: job.reviewResultRevision };
     }
-    await this.save(); await this.github.progress(job);
+    await this.save(); await this.progress(job);
   }
   async supersedeReviewPublication(job, reason) {
     // A saved pending intent may already have reached GitHub. Reconcile its marker
@@ -734,7 +932,7 @@ export class Coordinator extends EventEmitter {
     job.reviewResultStatus = 'superseded'; job.reviewResult = null;
     job.reviewStatus = 'stale'; job.reviewClearance = null;
     job.phase = 'review'; job.activeRole = null; job.nextRole = 'reviewer'; job.reviewReason = reason;
-    job.lastError = null; await this.save(); await this.github.progress(job);
+    job.lastError = null; await this.save(); await this.progress(job);
   }
   async revalidateReviewRequest(job) {
     const issue = await this.github.issue(job.issue);
@@ -746,7 +944,7 @@ export class Coordinator extends EventEmitter {
       }
       job.phase = 'blocked'; job.activeRole = null; job.nextRole = 'reviewer'; job.reviewStatus = 'stale'; job.reviewClearance = null;
       job.summary = 'The issue closed during review; the saved review result was not newly published.';
-      await this.save(); await this.github.progress(job); return false;
+      await this.save(); await this.progress(job); return false;
     }
     const revision = createRequestRevision(issue);
     if (!job.requestRevision) { job.requestRevision = revision; return true; }
@@ -768,14 +966,16 @@ export class Coordinator extends EventEmitter {
     if (job.reviewPublicationStatus === 'pending') job.reviewPublicationStatus = 'superseded';
     job.checkBase = null; job.checkHead = null; job.pendingFeedback = [];
     job.phase = 'repair'; job.activeRole = null; job.nextRole = 'builder'; job.repairReason = reason;
-    job.lastError = null; await this.save(); await this.github.progress(job);
+    job.lastError = null; await this.save(); await this.progress(job);
   }
   async findSavedReviewReceipt(job) {
     if (!job.pr || !Number.isSafeInteger(job.reviewAttempt) || !job.reviewHead) throw new Error('Saved review publication intent lacks its PR, attempt, or reviewed head; preserve it and reconcile before continuing.');
     return this.github.findReviewReceipt(job.pr, { attempt: job.reviewAttempt, head: job.reviewHead });
   }
   async verify(job) {
+    this.assertRunning();
     const base = await this.base();
+    this.assertRunning();
     const refreshed = await this.workspace.refreshBranch({ repoRoot: this.repo.root, worktreePath: job.worktree, baseRef: base });
     if (refreshed.conflict) throw new Error('Base integration conflicts require repair in the original builder.');
     const head = await git(job.worktree, 'rev-parse', 'HEAD');
@@ -787,8 +987,9 @@ export class Coordinator extends EventEmitter {
     job.checkHead = head; job.checkBase = base; await this.save();
   }
   async reconcilePull(job, base) {
-    if (job.intent || this.stopping) return;
+    if (job.intent || this.executionBlocked()) return;
     const pull = await this.github.pull(job.pr);
+    this.assertRunning();
     if (pull.baseRefName !== this.config.baseBranch) throw new Error('PR targets a different base branch; operator reconciliation required.');
     if (pull.state === 'MERGED') {
       const acceptedBase = await this.base();
@@ -800,15 +1001,18 @@ export class Coordinator extends EventEmitter {
       if (deliveredRevision !== job.requestRevision) {
         job.phase = 'blocked'; job.landedRequestRevision = job.requestRevision; job.currentRequestRevision = deliveredRevision;
         job.summary = `PR #${job.pr} landed for an older issue revision. The issue remains open for reconciliation; no follow-up implementation was started on the merged branch.`;
-        await this.save(); await this.github.progress(job); return;
+        await this.save(); await this.progress(job); return;
       }
       if (this.director) await this.guard(job, { allowCompleted: true });
+      this.assertRunning();
       await this.github.closeIssue(job.issue, `Delivered by PR #${job.pr}; accepted base contains ${pull.mergeCommit.oid}.\n\n${job.summary}`);
       job.phase = 'complete'; job.mergedCommit = pull.mergeCommit.oid;
+      job.deliveredHead = pull.headRefOid && pull.headRefOid === job.checkHead ? pull.headRefOid : null;
+      delete job.runnerInterrupted; delete job.deliveryReconciliationRequired; job.mergeArmed = false;
       delete job.designHandoff; delete job.designHandoffValidation;
-      await this.save(); await this.github.progress(job); return;
+      await this.save(); await this.progress(job); return;
     }
-    if (pull.state === 'CLOSED') { job.phase = 'blocked'; job.summary = 'PR closed without merge; acceptance remains open.'; await this.save(); await this.github.progress(job); return; }
+    if (pull.state === 'CLOSED') { job.phase = 'blocked'; job.summary = 'PR closed without merge; acceptance remains open.'; await this.save(); await this.progress(job); return; }
     const currentIssue = await this.github.issue(job.issue);
     const currentRevision = createRequestRevision(currentIssue);
     if (!job.requestRevision) job.requestRevision = currentRevision;
@@ -840,6 +1044,7 @@ export class Coordinator extends EventEmitter {
       const localContainsRemote = await run('git', ['merge-base', '--is-ancestor', pull.headRefOid, head], { cwd: job.worktree, allowFailure: true });
       if (localContainsRemote.code !== 0) throw new Error('PR contains changes not present in the issue worktree; reconcile before updating it.');
       if ((await this.designContext(job)).status === 'blocked') return;
+      this.assertRunning();
       await git(job.worktree, 'push', 'origin', job.branch);
       const pushed = await this.github.pull(job.pr);
       if (pushed.headRefOid !== head) throw new Error('Updated issue branch push is not confirmed by the PR.');
@@ -865,11 +1070,12 @@ export class Coordinator extends EventEmitter {
     if (fresh.headRefOid !== job.checkHead || (await this.base()) !== job.checkBase) return;
     const freshChecks = checkState(fresh);
     const freshApprovals = await this.github.approvals(job.pr, fresh.headRefOid);
-    if (this.stopping || job.intent || fresh.state !== 'OPEN' || fresh.isDraft || freshChecks.pending || freshChecks.failed.length || fresh.reviewDecision === 'CHANGES_REQUESTED' || freshApprovals.changesRequested || freshApprovals.approved < this.config.requiredApprovals) return;
+    if (this.executionBlocked() || job.intent || fresh.state !== 'OPEN' || fresh.isDraft || freshChecks.pending || freshChecks.failed.length || fresh.reviewDecision === 'CHANGES_REQUESTED' || freshApprovals.changesRequested || freshApprovals.approved < this.config.requiredApprovals) return;
     job.mergeArmed = true; await this.save();
-    if (this.stopping || job.intent) return;
+    if (this.executionBlocked() || job.intent) return;
     if (this.director) await this.guard(job);
     if ((await this.designContext(job)).status === 'blocked') return;
+    this.assertRunning();
     await this.github.merge(job.pr, fresh.headRefOid, this.config.mergeMethod);
   }
   async disarm(job) {
@@ -882,6 +1088,7 @@ export class Coordinator extends EventEmitter {
     job.mergeArmed = false; await this.save();
   }
   async answer(key, value) {
+    this.assertRunning();
     const request = this.requests.get(key);
     if (!request) throw new Error('That request is no longer pending.');
     if (request.issue && this.state.jobs.find(job => job.issue === request.issue)?.activeRole === 'reviewer') throw new Error('Reviewer sessions are read-only and cannot receive approval. Stop and reconcile the review instead.');
@@ -895,6 +1102,7 @@ export class Coordinator extends EventEmitter {
     await request.client.respond(request.id, response); this.requests.delete(key);
   }
   async cancel(issue) {
+    this.assertRunning();
     const job = this.state.jobs.find(x => x.issue === issue);
     if (!job) throw new Error(`No owned issue #${issue}.`);
     if (job.phase === 'complete') throw new Error('Delivered issues cannot be cancelled.');
@@ -918,12 +1126,26 @@ export class Coordinator extends EventEmitter {
     job.phase = 'cancelled'; job.summary = 'Cancelled by the operator; unfinished branch and worktree retained, automatic redispatch disabled.';
     delete job.designHandoff; delete job.designHandoffValidation;
     await this.save();
-    await this.github.progress(job); this.wake();
+    await this.progress(job); this.wake();
   }
-  async resume(issue, threadId, role, designHandoff) {
+  async resumeIssue({ issue, expectedRevision, workerThreadId, role, designHandoff }) {
+    this.assertRunning();
+    const current = this.director
+      ? await this.director.assertEligible(issue, expectedRevision ?? (await this.director.snapshot(issue)).revision)
+      : null;
+    const job = this.state.jobs.find(job => job.issue === issue);
+    if (!job) throw new Error('No original job to resume.');
+    if (job.pr && (await this.github.pull(job.pr)).state === 'MERGED') throw new Error('PR already landed. Reconcile delivery before resuming.');
+    if (job.deliveryReconciliationRequired || job.pullCreationPending) throw new Error('PR delivery requires reconciliation before resuming.');
+    if (job.phase === 'paused' && occupied(this.state.jobs) >= this.config.agents) throw new Error('No issue capacity is available.');
+    await this.resume(issue, workerThreadId, role, designHandoff, current?.revision);
+    return { resumed: issue };
+  }
+  async resume(issue, threadId, role, designHandoff, eligibilityRevision) {
+    this.assertRunning();
     this.director?.assertInteractionReleased();
     const job = this.state.jobs.find(x => x.issue === issue);
-    if (!job || !['blocked','stopped','uncertain'].includes(job.phase) || this.tasks.has(issue)) throw new Error('Only a stopped or blocked original issue can be resumed.');
+    if (!job || !['blocked','stopped','uncertain','paused'].includes(job.phase) || this.tasks.has(issue) || this.preparations.has(issue)) throw new Error('Only a stopped, blocked or paused original issue can be resumed.');
     if (job.childPid && processExists(job.childPid)) throw new Error('Previous builder process is still alive; ownership remains uncertain.');
     const source = await this.github.issue(issue);
     if (source.state !== 'open') throw new Error('Reopen and reconcile the issue before resuming it.');
@@ -945,24 +1167,39 @@ export class Coordinator extends EventEmitter {
         if (!selected) throw new Error(`Thread ownership for the ${targetRole} is uncertain. Inspect Codex threads for this worktree, then use resume ISSUE --role ${targetRole} --thread ID; no replacement session was started.`);
         const recovered = await client.readThread({ threadId: selected.id });
         if (recovered.turns?.some(turn => turn.status === 'inProgress')) throw new Error('The selected thread is still active; reconcile its owner first.');
+        this.assertRunning();
         job[field] = selected.id; savedThread = selected.id; if (targetRole === 'builder') job.threadId = selected.id;
         await client.setThreadName({ threadId: selected.id, name: expectedName }); await this.save();
       } finally { await client.close(); }
     } else if (threadId && threadId !== savedThread) throw new Error(`This issue already owns a different ${targetRole} thread.`);
+    this.assertRunning();
+    if (eligibilityRevision) job.eligibilityRevision = eligibilityRevision;
     if (designHandoff !== undefined) { job.designHandoff = structuredClone(designHandoff); job.designHandoffValidation = null; }
+    const previousIntent = job.intent;
     job.intent = null;
     if (!job.prepared) {
       try {
-        await access(job.worktree);
-        const marker = await git(job.worktree, 'rev-parse', '--absolute-git-dir');
-        if ((await readFile(join(marker, 'conductor-owned-worktree'), 'utf8')).trim() !== this.repo.root) throw new Error('Worktree ownership does not match.');
-        if (await git(job.worktree, 'branch', '--show-current') !== job.branch) throw new Error('Worktree branch does not match its issue owner.');
-        job.worktreeCreated = true;
-      } catch (error) { if (error.code !== 'ENOENT') throw error; if (job.worktreeCreated) throw new Error('The recorded worktree or ownership marker is missing; preserve state and reconcile it.'); }
-      // Explicit resume authorizes repeating an interrupted preparation command.
-      await this.prepare(job, await this.base());
+        try {
+          await access(job.worktree);
+          const marker = await git(job.worktree, 'rev-parse', '--absolute-git-dir');
+          if ((await readFile(join(marker, 'conductor-owned-worktree'), 'utf8')).trim() !== this.repo.root) throw new Error('Worktree ownership does not match.');
+          if (await git(job.worktree, 'branch', '--show-current') !== job.branch) throw new Error('Worktree branch does not match its issue owner.');
+          job.worktreeCreated = true;
+        } catch (error) { if (error.code !== 'ENOENT') throw error; if (job.worktreeCreated) throw new Error('The recorded worktree or ownership marker is missing; preserve state and reconcile it.'); }
+        // Explicit resume authorizes repeating an interrupted preparation command.
+        const base = await this.base();
+        if (this.director) await this.guard(job);
+        await this.prepare(job, base);
+      } catch (error) {
+        job.intent ??= previousIntent;
+        await this.save();
+        throw error;
+      }
     }
-    job.activeRole = targetRole; job.nextRole = targetRole; job.phase = 'stopped'; job.repairAttempts = 0; await this.save(); this.wake();
+    this.assertRunning();
+    job.activeRole = targetRole; job.nextRole = targetRole; job.phase = 'stopped'; job.repairAttempts = 0;
+    delete job.runnerInterrupted;
+    await this.save(); this.wake();
   }
   async haltClient(job, client) {
     this.handoffChecks.get(job.issue)?.abort();
@@ -972,28 +1209,72 @@ export class Coordinator extends EventEmitter {
     // cancellation never depends on receiving a final assistant message.
     await client.close();
   }
+  async stopWorker(job, client) {
+    const role = job.activeRole ?? job.runnerInterrupted?.role;
+    const threadId = role === 'reviewer' ? job.reviewerThreadId : job.builderThreadId ?? job.threadId;
+    // Send the interrupt before EOF. A missing RPC response must not prevent
+    // closing the owned worker process or interrupting other workers.
+    const interrupt = job.turnId && threadId ? client.interrupt({ threadId, turnId: job.turnId }) : null;
+    const outcomes = await Promise.allSettled([interrupt, client.close()]);
+    const failures = outcomes.filter(result => result.status === 'rejected').map(result => result.reason.message);
+    if (failures.length) throw new Error(`Issue #${job.issue} worker interruption needs reconciliation: ${failures.join(' ')}`);
+  }
+  async stopMerge(job) {
+    if (!job.mergeArmed) return;
+    try {
+      if (!job.pr) throw new Error('The armed merge has no saved PR number. Inspect the original branch.');
+      await this.disarm(job);
+      delete job.deliveryReconciliationRequired;
+    } catch (error) {
+      job.lastError = error.message;
+      job.deliveryReconciliationRequired = true;
+      throw new Error(`Issue #${job.issue}, PR #${job.pr}: ${error.message}`);
+    } finally { await this.save(); }
+  }
   async stop({ explicit = false } = {}) {
     if (this.stopPromise) return this.stopPromise;
     this.stopping = true; clearInterval(this.timer);
     this.activityWatcher?.close(); clearInterval(this.activityTimer);
     this.stopPromise = (async () => {
-      let wakeCancellationError;
-      if (explicit && this.director) {
-        this.state.admissionPaused = true;
-        try { await this.director.events.stop(); }
-        catch (error) { wakeCancellationError = error; }
+      if (explicit) {
+        try { await this.pauseRunner(); }
+        catch (error) { this.stopPromise = undefined; throw error; }
       }
+      const halts = [];
       for (const job of this.state.jobs) {
-        if (!['complete','cancelled'].includes(job.phase)) job.intent = 'stop';
+        if (!explicit && !job.intent && !['complete','cancelled'].includes(job.phase)) job.intent = 'stop';
         this.handoffChecks.get(job.issue)?.abort();
         const client = this.clients.get(job.issue);
-        if (client) await this.haltClient(job, client);
+        if (client) halts.push(explicit ? this.stopWorker(job, client) : this.haltClient(job, client));
       }
-      await this.loop.close();
-      await Promise.allSettled([...this.preparations.values()]);
-      await Promise.allSettled([...this.tasks.values()]);
-      await this.directorHost?.close();
+      const drains = [this.loop.close(), ...this.preparations.values(), ...this.tasks.values(), ...this.controls, this.handoffProgress, ...halts];
+      if (this.hostStartup) {
+        drains.push(this.directorHost.close());
+        drains.push(this.hostStartup.catch(() => {}));
+      }
+      if (explicit) {
+        drains.push(Promise.resolve(this.handoffProgress).catch(() => {}).then(() => this.director?.events.stop()));
+        // A merge RPC may have reached GitHub before the stop gate closed.
+        // Recheck after that delivery operation returns so it cannot re-arm.
+        drains.push(this.deliveryAction(async () => {
+          const armed = this.state.jobs.filter(job => job.mergeArmed);
+          const results = await Promise.allSettled(armed.map(job => this.stopMerge(job)));
+          const warnings = results.filter(result => result.status === 'rejected').map(result => result.reason.message);
+          if (warnings.length) throw new Error(warnings.join(' '));
+        }));
+      }
+      const results = await Promise.allSettled(drains);
+      const warnings = results.filter(result => result.status === 'rejected').map(result => result.reason.message);
+      try { await this.directorHost?.close(); }
+      catch (error) { warnings.push(error.message); }
       this.directorActivity?.close();
+      if (explicit) {
+        for (const job of this.state.jobs) this.settleRunnerInterruption(job);
+        const uncertain = this.state.jobs.filter(job => job.phase === 'uncertain' && job.runnerInterrupted || job.pullCreationPending)
+          .map(job => `Issue #${job.issue} needs reconciliation before its original work can resume.`);
+        for (const warning of uncertain) this.emit('notice', warning);
+        if (warnings.length || uncertain.length) this.state.runnerPause.warnings = [...warnings, ...uncertain];
+      }
       this.state.running = false; this.state.serviceReady = false;
       try { await this.save(); }
       catch (error) {
@@ -1002,9 +1283,7 @@ export class Coordinator extends EventEmitter {
         throw error;
       }
       await this.store.release(); this.emit('stopped');
-      // A failed native queue deletion remains recoverable, but must not keep
-      // the observer lock or worker processes alive after an explicit stop.
-      if (wakeCancellationError) throw wakeCancellationError;
+      if (warnings.length) throw new Error(warnings.join(' '));
     })();
     return this.stopPromise;
   }

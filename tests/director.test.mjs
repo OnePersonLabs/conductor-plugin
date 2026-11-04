@@ -45,7 +45,7 @@ function setup({ issues = [], jobs = [], execute = async () => ({ code: 0, stdou
     clients: new Map(), tasks: new Map(), requests: new Map(),
     save: async () => {}, base: async () => 'base-sha',
     dispatchIssue: async (issue, base, eligibilityRevision, designHandoff) => { const job = { issue: issue.number, base, eligibilityRevision, designHandoff, phase: 'starting' }; state.jobs.push(job); return job; },
-    resume: async (...args) => calls.push(['resume', ...args]),
+    resumeIssue: async request => calls.push(['resume', request.issue, request.workerThreadId, request.role, request.designHandoff]),
     answer: async (...args) => calls.push(['answer', ...args]),
     haltClient: async (...args) => calls.push(['halt', ...args]),
     tasks,

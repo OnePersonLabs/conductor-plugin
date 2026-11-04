@@ -2,13 +2,17 @@ import { run } from './process.mjs';
 import { createHash } from 'node:crypto';
 
 export class GitHub {
-  constructor(repository, { cwd, execute = run } = {}) { this.repository = repository; this.cwd = cwd; this.execute = execute; }
-  async gh(args, { input } = {}) { return (await this.execute('gh', args, { cwd: this.cwd, input })).stdout.trim(); }
+  constructor(repository, { cwd, execute = run, beforeWrite } = {}) { Object.assign(this, { repository, cwd, execute, beforeWrite }); }
+  async gh(args, { input, write = false } = {}) {
+    if (write) this.beforeWrite?.();
+    return (await this.execute('gh', args, { cwd: this.cwd, input })).stdout.trim();
+  }
   async api(path, { method, fields } = {}) {
     const args = ['api', path, '-H', 'Accept: application/vnd.github+json'];
     if (method) args.push('--method', method);
     for (const [key, value] of Object.entries(fields ?? {})) args.push('-f', `${key}=${value}`);
-    const text = await this.gh(args); return text ? JSON.parse(text) : null;
+    const write = method ? !['GET', 'HEAD'].includes(method.toUpperCase()) : Object.keys(fields ?? {}).length > 0;
+    const text = await this.gh(args, { write }); return text ? JSON.parse(text) : null;
   }
   async pages(path) { const text = await this.gh(['api', path, '--paginate', '--slurp']); return JSON.parse(text).flat(); }
   async ready(label) {
@@ -44,7 +48,7 @@ export class GitHub {
   async setNeedsInput(number, needed, labels) {
     const label = labels.needsInput;
     const hasLabel = issue => (issue.labels ?? []).some(item => (typeof item === 'string' ? item : item.name).toLowerCase() === label.toLowerCase());
-    if (hasLabel(await this.issue(number)) !== needed) await this.gh(['issue', 'edit', String(number), '--repo', this.repository, needed ? '--add-label' : '--remove-label', label]);
+    if (hasLabel(await this.issue(number)) !== needed) await this.gh(['issue', 'edit', String(number), '--repo', this.repository, needed ? '--add-label' : '--remove-label', label], { write: true });
     const verified = await this.issue(number);
     if (hasLabel(verified) !== needed) throw new Error(`Human-input label change for issue #${number} could not be verified.`);
     return verified;
@@ -57,8 +61,8 @@ export class GitHub {
     const names = (existing.labels ?? []).map(x => typeof x === 'string' ? x : x.name).filter(Boolean);
     const previous = primary.map(key => labels[key]).filter(name => name !== desired && names.some(value => value.toLowerCase() === name.toLowerCase()));
     // Add before removing. If a later removal fails, conflict detection keeps the issue out of dispatch.
-    if (!names.some(value => value.toLowerCase() === desired.toLowerCase())) await this.gh(['issue', 'edit', String(number), '--repo', this.repository, '--add-label', desired]);
-    for (const label of previous) await this.gh(['issue', 'edit', String(number), '--repo', this.repository, '--remove-label', label]);
+    if (!names.some(value => value.toLowerCase() === desired.toLowerCase())) await this.gh(['issue', 'edit', String(number), '--repo', this.repository, '--add-label', desired], { write: true });
+    for (const label of previous) await this.gh(['issue', 'edit', String(number), '--repo', this.repository, '--remove-label', label], { write: true });
     const verified = await this.issue(number);
     const actual = (verified.labels ?? []).map(x => typeof x === 'string' ? x : x.name).filter(Boolean).map(x => x.toLowerCase());
     if (!actual.includes(desired.toLowerCase()) || primary.some(key => labels[key] !== desired && actual.includes(labels[key].toLowerCase()))) {
@@ -84,7 +88,7 @@ export class GitHub {
     for (const [key, description, color] of entries) {
       const name = labels[key];
       if (existing.has(name.toLowerCase())) continue;
-      try { await this.gh(['label', 'create', name, '--repo', this.repository, '--description', description, '--color', color]); }
+      try { await this.gh(['label', 'create', name, '--repo', this.repository, '--description', description, '--color', color], { write: true }); }
       catch (error) { if (!(await list()).has(name.toLowerCase())) throw error; }
       created.push(name);
     }
@@ -123,8 +127,13 @@ export class GitHub {
     if (existing) return existing;
     // No closing keyword: the coordinator reconciles acceptance after actual landing.
     const body = `Addresses #${issue.number}.\n\n${job.summary ?? 'Implementation and verification by Conductor.'}\n\nConductor retains the original builder for repairs. Issue closure follows verified landing and acceptance.`;
-    try { await this.gh(['pr', 'create', '--repo', this.repository, '--base', job.baseBranch, '--head', job.branch, '--title', issue.title, '--body', body]); }
-    catch (error) { const found = await this.pullForBranch(job.branch); if (!found) throw error; return found; }
+    try { await this.gh(['pr', 'create', '--repo', this.repository, '--base', job.baseBranch, '--head', job.branch, '--title', issue.title, '--body', body], { write: true }); }
+    catch (error) {
+      if (error.code === 'RUNNER_PAUSED') throw error;
+      const found = await this.pullForBranch(job.branch);
+      if (!found) throw error;
+      return found;
+    }
     const found = await this.pullForBranch(job.branch);
     if (!found) throw new Error('PR creation outcome is uncertain; no replacement PR was created.');
     return found;
@@ -163,8 +172,9 @@ export class GitHub {
         comments.push({ path, line, side: 'RIGHT', body: `${marker}\n[${finding.priority}] ${finding.title}\n\n${finding.body}` });
       }
       const payload = { commit_id: head, event: 'COMMENT', body, ...(comments.length ? { comments } : {}) };
-      try { await this.gh(['api', reviewsPath, '--method', 'POST', '--input', '-'], { input: JSON.stringify(payload) }); }
+      try { await this.gh(['api', reviewsPath, '--method', 'POST', '--input', '-'], { input: JSON.stringify(payload), write: true }); }
       catch (error) {
+        if (error.code === 'RUNNER_PAUSED') throw error;
         prior = await this.findReviewReceipt(number, { attempt, head });
         if (!prior) throw new Error(`PR review publication is uncertain or was rejected; reconcile its marker before retrying. ${error.message}`);
       }
@@ -187,11 +197,12 @@ export class GitHub {
       if (!after.some(x => x.body === body)) throw error;
     }
   }
-  async merge(number, head, method) { return this.gh(['pr', 'merge', String(number), '--repo', this.repository, '--auto', `--${method}`, '--match-head-commit', head]); }
+  async merge(number, head, method) { return this.gh(['pr', 'merge', String(number), '--repo', this.repository, '--auto', `--${method}`, '--match-head-commit', head], { write: true }); }
+  // Runner shutdown may disarm an already-armed PR while other writes are gated.
   async disableAutoMerge(number) { return this.gh(['pr', 'merge', String(number), '--repo', this.repository, '--disable-auto']); }
   async closeIssue(number, summary) {
     if ((await this.issue(number)).state === 'closed') return;
-    await this.gh(['issue', 'close', String(number), '--repo', this.repository, '--reason', 'completed', '--comment', summary]);
+    await this.gh(['issue', 'close', String(number), '--repo', this.repository, '--reason', 'completed', '--comment', summary], { write: true });
   }
 }
 

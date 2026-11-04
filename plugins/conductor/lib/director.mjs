@@ -3,6 +3,9 @@ import { eligibility, workflowState } from './workflow.mjs';
 import { DirectorEvents } from './director-events.mjs';
 import { occupied } from './scheduler.mjs';
 import { readDecisions, recordDecision } from './decisions.mjs';
+import { runnerPause, RUNNER_PAUSED_MESSAGE } from './runner-state.mjs';
+
+const pauseSafeOperations = new Set(['status', 'settle', 'wakeup', 'decision-read', 'enable', 'events', 'ack', 'retry-wakeup', 'bind', 'attach', 'resume-runner', 'stop']);
 
 // Policy is judged by the director. This owner enforces a fresh, bounded command
 // and retains barriers before attempting any non-atomic GitHub mutation.
@@ -11,7 +14,8 @@ export class Director {
     this.c = coordinator;
     const state = coordinator.state.director ??= {};
     this.events = new DirectorEvents({ state, threadId: threadId ?? state.threadId,
-      save: () => coordinator.save(), execute: coordinator.execute, cwd: coordinator.repo.root, host: coordinator.directorHost });
+      save: () => coordinator.save(), execute: coordinator.execute, cwd: coordinator.repo.root, host: coordinator.directorHost,
+      runnerPause: () => runnerPause(coordinator.state), stopping: () => coordinator.stopping || coordinator.runnerStopRequested || coordinator.runnerResuming });
     coordinator.state.holds ??= [];
     coordinator.state.admissionPaused ??= coordinator.config.admissionPaused ?? false;
   }
@@ -63,6 +67,7 @@ export class Director {
     }
   }
   async barrier(number, { admission = true } = {}) {
+    if (this.c.executionBlocked?.() || runnerPause(this.c.state)) return RUNNER_PAUSED_MESSAGE;
     if (admission && this.c.state.admissionPaused) return 'Repository admission is paused.';
     const parents = await this.c.github.parents(number);
     const numbers = new Set([number, ...parents.map(p => p.number)]);
@@ -73,6 +78,7 @@ export class Director {
     const barrier = await this.barrier(number);
     if (barrier) throw new Error(barrier);
     const current = await this.snapshot(number);
+    this.c.assertRunning?.();
     const reasons = allowCompleted && current.issue.state === 'closed' && current.issue.state_reason === 'completed'
       ? current.reasons.filter(reason => reason !== 'issue is closed') : current.reasons;
     if (reasons.length) throw new Error(reasons.join('; '));
@@ -80,13 +86,17 @@ export class Director {
     return current;
   }
   async checkJob(job) {
+    if (this.c.executionBlocked?.()) return false;
     if (job.intent || ['paused','blocked','uncertain','complete','cancelled'].includes(job.phase)) {
       // A blocked builder may still have armed auto-merge from earlier work.
       if (job.pr && job.mergeArmed) await this.pause(job.issue, 'Reconcile blocked delivery before advancing.');
       return false;
     }
     try { await this.assertEligible(job.issue, job.eligibilityRevision); return true; }
-    catch (error) { await this.pause(job.issue, error.message); return false; }
+    catch (error) {
+      if (!this.c.executionBlocked?.() && !job.runnerInterrupted) await this.pause(job.issue, error.message);
+      return false;
+    }
   }
   async observe() {
     const c = this.c;
@@ -116,6 +126,7 @@ export class Director {
   }
   async pause(number, reason = 'Paused by director') {
     const c = this.c, job = c.state.jobs.find(j => j.issue === number);
+    c.assertRunning?.();
     if (!job || ['complete','cancelled'].includes(job.phase)) return { issue: number, state: job?.phase ?? 'not-started' };
     job.intent = 'pause'; job.summary = reason; await c.save();
     c.handoffChecks?.get(number)?.abort();
@@ -158,8 +169,11 @@ export class Director {
       await c.save();
       const marker = `<!-- conductor:hold:${record.id} -->`;
       const body = `${marker}\n${record.reason}\n\nPrevious workflow state: ${record.previous[number]}.\n\n${JSON.stringify({ holdId: record.id, issue: number, previous: record.previous[number] })}`;
-      if (!(await c.github.comments(number)).some(comment => comment.body === body)) await c.github.api(`repos/${c.config.repository}/issues/${number}/comments`, { method: 'POST', fields: { body } });
+      const comments = await c.github.comments(number);
+      c.assertRunning?.();
+      if (!comments.some(comment => comment.body === body)) await c.github.api(`repos/${c.config.repository}/issues/${number}/comments`, { method: 'POST', fields: { body } });
       record.attempted.push(number); await c.save();
+      c.assertRunning?.();
       await c.github.setWorkflowState(number, 'hold', c.config.labels);
     }
     record.applied = true; await c.save();
@@ -195,6 +209,7 @@ export class Director {
         previous = original?.previous[number];
       }
       if (!['triage','proposal','ready'].includes(previous)) previous = 'triage';
+      c.assertRunning?.();
       await c.github.setWorkflowState(number, previous, c.config.labels);
     }
     record.active = false; record.releasedAt = new Date().toISOString(); await c.save();
@@ -204,13 +219,14 @@ export class Director {
   async control(request) {
     const c = this.c;
     if (request.repository !== c.config.repository || request.threadId !== c.state.director.threadId) throw new Error('Control repository/director identity does not match its owner.');
+    if (!pauseSafeOperations.has(request.op)) c.assertRunning?.();
     switch (request.op) {
       case 'status': {
         await this.observe();
-        return { checkRevision: c.state.director.checkRevision, interaction: c.state.director.interaction ?? null, jobs: c.state.jobs, holds: c.state.holds, admissionPaused: c.state.admissionPaused, issues: this.issues ?? [], requests: [...c.requests].map(([key,r]) => ({ key, issue:r.issue, method:r.method, params:r.params })) };
+        return { checkRevision: c.state.director.checkRevision, interaction: c.state.director.interaction ?? null, jobs: c.state.jobs, holds: c.state.holds, admissionPaused: c.state.admissionPaused, runnerPause: runnerPause(c.state), issues: this.issues ?? [], requests: [...c.requests].map(([key,r]) => ({ key, issue:r.issue, method:r.method, params:r.params })) };
       }
       case 'settle': return this.events.settle(request.checkRevision);
-      case 'wakeup': await this.releaseInteractionForWakeup(); return c.requestCheck({ manual: true });
+      case 'wakeup': if (!runnerPause(c.state)) await this.releaseInteractionForWakeup(); return c.requestCheck({ manual: true });
       case 'interaction-begin': return this.beginInteraction(request);
       case 'interaction-complete': return this.completeInteraction(request);
       case 'decision-read':
@@ -224,7 +240,9 @@ export class Director {
         if (request.op === 'decision-read') return current;
         if (request.op === 'decision-record' && request.record?.status === 'integrated') throw new Error('Use decision-integrate to reconcile labels before recording integration.');
         if (request.op === 'decision-integrate' && request.record?.status !== 'integrated') throw new Error('Integration requires an integrated record.');
-        return recordDecision(c.github, c.config.repository, request, { beforeWrite: request.op !== 'decision-integrate' ? undefined : async saved => {
+        return recordDecision(c.github, c.config.repository, request, { beforeWrite: async saved => {
+          c.assertRunning?.();
+          if (request.op !== 'decision-integrate') return;
           if (!['triage', 'proposal', 'ready', 'hold'].includes(request.state) || typeof request.needsInput !== 'boolean') throw new Error('Integration requires the judged primary state and needsInput boolean.');
           const remaining = saved.decisions.filter(item => item.decisionId !== request.decisionId && ['pending', 'answered', 'deferred'].includes(item.record.status));
           if (remaining.length && !request.needsInput) throw new Error('Other unresolved or deferred decisions still require needs-input.');
@@ -233,11 +251,17 @@ export class Director {
           const held = workflowState(source.issue, c.config.labels).state === 'hold' || await this.barrier(request.issue, { admission: false });
           if (held && request.state !== workflowState(source.issue, c.config.labels).state) throw new Error('Preserve the explicit hold during decision integration.');
           if (request.state === 'hold' && workflowState(source.issue, c.config.labels).state !== 'hold') throw new Error('Use hold to create an explicit hold.');
+          c.assertRunning?.();
           await c.github.setWorkflowState(request.issue, request.state, c.config.labels);
+          c.assertRunning?.();
           await c.github.setNeedsInput(request.issue, request.needsInput, c.config.labels);
         } });
       }
-      case 'enable': c.state.runtimeEnabled = true; return c.requestCheck({ manual: true });
+      case 'enable': {
+        c.state.runtimeEnabled = true;
+        await c.save();
+        return runnerPause(c.state) ? { status: 'runner-paused' } : c.requestCheck({ manual: true });
+      }
       case 'events': return this.events.pending();
       case 'ack': { const receipt = await this.events.acknowledge(request.ids); await this.events.flush(); return receipt; }
       case 'retry-wakeup': return this.events.retry(request.batchId, { confirmedNotQueued: request.confirmedNotQueued });
@@ -255,14 +279,7 @@ export class Director {
       case 'resume': {
         this.assertInteractionReleased();
         if (!request.expectedRevision) throw new Error('Resume requires expectedRevision.');
-        const current = await this.assertEligible(request.issue, request.expectedRevision);
-        const job = c.state.jobs.find(j => j.issue === request.issue);
-        if (!job) throw new Error('No original job to resume.');
-        if (job.deliveryReconciliationRequired) throw new Error('PR may already have landed; reconcile delivery before resuming.');
-        if (job.phase === 'paused' && occupied(c.state.jobs) >= c.config.agents) throw new Error('No issue capacity is available.');
-        job.eligibilityRevision = current.revision; job.intent = null;
-        if (job.phase === 'paused') job.phase = 'blocked';
-        await c.resume(request.issue, request.workerThreadId, request.role, request.designHandoff); return { resumed: request.issue };
+        return c.resumeIssue(request);
       }
       case 'pause': return this.pause(request.issue, request.reason);
       case 'reconcile': {
@@ -270,12 +287,14 @@ export class Director {
         const current = await this.assertEligible(request.issue, request.expectedRevision, { allowCompleted: true });
         const job = c.state.jobs.find(j => j.issue === request.issue);
         if (!job?.pr || (await c.github.pull(job.pr)).state !== 'MERGED') throw new Error('This operation reconciles an already merged owned PR; use resume for unfinished work.');
+        c.assertRunning?.();
         job.eligibilityRevision = current.revision; job.intent = null; job.phase = 'waiting'; await c.save();
         try {
           await c.deliveryAction(() => c.reconcilePull(job));
           job.deliveryReconciliationRequired = job.phase !== 'complete'; await c.save();
           return { issue: job.issue, phase: job.phase, mergedCommit: job.mergedCommit };
         } catch (error) {
+          if (error.code === 'RUNNER_PAUSED') throw error;
           if (job.phase === 'complete') {
             job.deliveryReconciliationRequired = false; job.lastError = error.message; await c.save();
             return { issue: job.issue, phase: 'complete', mergedCommit: job.mergedCommit, warning: error.message };
@@ -290,12 +309,14 @@ export class Director {
         const current = await this.snapshot(request.issue);
         if (!request.expectedRevision || request.expectedRevision !== current.revision) throw new Error('Transition requires the current expectedRevision.');
         if (workflowState(current.issue, c.config.labels).state === 'hold' || await this.barrier(request.issue, { admission: false })) throw new Error('Release the hold explicitly before changing workflow state.');
+        c.assertRunning?.();
         const result = await c.github.setWorkflowState(request.issue, request.state, c.config.labels);
         await this.events.emit({ kind: 'workflow-changed', issue: request.issue }); return result;
       }
       case 'answer': await c.answer(request.key, typeof request.value === 'string' ? request.value : JSON.stringify(request.value)); return { answered: request.key };
       case 'signal': return c.requestCheck({ reason: request.reason });
-      case 'stop': c.state.admissionPaused = true; await this.events.stop(); return { stopping: true };
+      case 'stop': return c.pauseRunner(request.reason);
+      case 'resume-runner': return c.resumeRunner();
       default: throw new Error(`Unknown director operation: ${request.op}`);
     }
   }

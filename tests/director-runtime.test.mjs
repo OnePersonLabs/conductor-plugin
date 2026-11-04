@@ -4,6 +4,7 @@ import { Coordinator } from '../plugins/conductor/lib/coordinator.mjs';
 import { Director } from '../plugins/conductor/lib/director.mjs';
 import { DEFAULT_LABELS } from '../plugins/conductor/lib/workflow.mjs';
 import { EventEmitter } from 'node:events';
+import { GitHub } from '../plugins/conductor/lib/github.mjs';
 
 const THREAD = '019c6e27-e55b-73d1-87d8-4e01f1f75043';
 const REPO = 'example/project';
@@ -165,4 +166,120 @@ test('manual wake reconciles a known interrupted director without resuming its w
   assert.equal(job.phase, 'paused');
   assert.equal(job.threadId, 'original-worker');
   assert.deepEqual(h.calls.launch, []);
+});
+
+test('stop persists the runner gate before waiting and starts all owned worker interrupts', async () => {
+  const first = { issue: 1, phase: 'building', prepared: true, activeRole: 'builder', builderThreadId: 'builder-one', turnId: 'turn-one', pr: 11, mergeArmed: true };
+  const second = { issue: 2, phase: 'reviewing', prepared: true, activeRole: 'reviewer', reviewerThreadId: 'reviewer-two', turnId: 'turn-two' };
+  const paused = { issue: 3, phase: 'paused', intent: 'pause' };
+  const h = fixture({ jobs: [first, second, paused] });
+  const c = h.coordinator;
+  const hold = { id: 'existing-hold', active: true, issues: [3] };
+  c.state.holds.push(hold);
+  let finishInterrupts;
+  const pending = new Promise(resolve => { finishInterrupts = resolve; });
+  const calls = [];
+  for (const job of [first, second]) c.clients.set(job.issue, {
+    async interrupt(ids) {
+      assert.ok(h.saved.at(-1).runnerPause);
+      assert.equal(h.saved.at(-1).serviceReady, false);
+      calls.push(ids);
+      await pending;
+    },
+    async close() {},
+  });
+  const receipt = await c.control({ op: 'stop', repository: REPO, threadId: THREAD });
+  assert.equal(receipt.stopping, true);
+  assert.deepEqual(calls, []);
+  const stopping = c.stop({ explicit: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, [{ threadId: 'builder-one', turnId: 'turn-one' }, { threadId: 'reviewer-two', turnId: 'turn-two' }]);
+  finishInterrupts();
+  await stopping;
+  assert.deepEqual(h.calls.disarm, [1]);
+  assert.equal(first.phase, 'stopped');
+  assert.equal(first.runnerInterrupted.turnId, 'turn-one');
+  assert.equal(second.runnerInterrupted.role, 'reviewer');
+  assert.equal(paused.intent, 'pause');
+  assert.deepEqual(c.state.holds, [hold]);
+  assert.equal(c.state.admissionPaused, false);
+});
+
+test('a paused wake observes once while enable, dispatch and ordinary flushes preserve the gate', async () => {
+  const h = fixture();
+  const c = h.coordinator;
+  const messages = [];
+  c.director.events.execute = async (_command, args) => { messages.push(args.at(-1)); return { code: 0, stdout: 'queued' }; };
+  c.state.runnerPause = { reason: 'Operator stop', at: 'now' };
+  c.state.director.enabled = false;
+  const request = { repository: REPO, threadId: THREAD };
+  assert.equal((await c.control({ ...request, op: 'enable' })).status, 'runner-paused');
+  assert.equal((await c.director.events.flush()).status, 'runner-paused');
+  assert.equal(messages.length, 0);
+  assert.equal((await c.control({ ...request, op: 'wakeup' })).status, 'queued');
+  assert.match(messages[0], /runner is paused.*read-only/);
+  assert.equal((await c.director.events.flush()).status, 'runner-paused');
+  assert.equal(messages.length, 1);
+  await assert.rejects(c.control({ ...request, op: 'dispatch', issue: 1 }), /PAUSED/);
+  assert.equal(c.state.runnerPause.reason, 'Operator stop');
+  assert.deepEqual(h.calls.launch, []);
+});
+
+test('lost owner pauses recovery until runner resume, preserving ambiguous preparation and issue pauses', async () => {
+  const worker = { issue: 1, phase: 'building', prepared: true, builderThreadId: 'original' };
+  const preparing = { issue: 2, phase: 'preparing', prepared: false, preparationInFlight: 1 };
+  const paused = { issue: 3, phase: 'paused', intent: 'pause', builderThreadId: 'paused-original' };
+  const h = fixture({ jobs: [worker, preparing, paused], issues: [1, 2, 3].map(n => makeIssue(n)), agents: 2 });
+  const c = h.coordinator;
+  const existing = await c.store.read();
+  worker.eligibilityRevision = (await c.director.snapshot(1)).revision;
+  existing.jobs[0].eligibilityRevision = worker.eligibilityRevision;
+  c.store.read = async () => ({ ...structuredClone(existing), running: true, ownerToken: 'old-owner', admissionPaused: true });
+  c.preflight = async () => {};
+  await c.start({ threadId: THREAD });
+  assert.match(c.state.runnerPause.reason, /exited/);
+  assert.equal(c.state.serviceReady, true);
+  assert.equal(c.state.jobs[0].phase, 'stopped');
+  assert.equal(c.state.jobs[1].phase, 'uncertain');
+  await c.scan();
+  assert.deepEqual(h.calls.launch, []);
+  assert.equal((await c.resumeRunner()).status, 'resumed');
+  assert.equal(c.state.admissionPaused, true);
+  await c.scan();
+  assert.deepEqual(h.calls.launch, []);
+  await c.control({ op: 'activate', repository: REPO, threadId: THREAD });
+  await c.scan();
+  assert.deepEqual(h.calls.launch, [1]);
+  assert.equal(c.state.jobs[0].builderThreadId, 'original');
+  assert.equal(c.state.jobs[1].preparationInFlight, 1);
+  assert.equal(c.state.jobs[2].intent, 'pause');
+  await c.stop();
+});
+
+test('resume reconciles an interrupted job whose PR has landed before any worker launches', async () => {
+  const job = { issue: 1, phase: 'stopped', prepared: true, builderThreadId: 'original', pr: 11, mergeArmed: true,
+    runnerInterrupted: { phase: 'building', role: 'builder', turnId: 'previous-turn' }, deliveryReconciliationRequired: true };
+  const h = fixture({ jobs: [job] });
+  const c = h.coordinator;
+  job.eligibilityRevision = (await c.director.snapshot(1)).revision;
+  c.state.runnerPause = { reason: 'Stopped', at: 'now' };
+  h.github.pull = async () => ({ state: 'MERGED' });
+  const reconciled = [];
+  c.reconcilePull = async current => { reconciled.push(current.issue); current.phase = 'complete'; };
+  await c.resumeRunner();
+  await c.scan();
+  assert.deepEqual(reconciled, [1]);
+  assert.deepEqual(h.calls.launch, []);
+});
+
+test('stop blocks PR creation when it arrives during the branch receipt lookup', async () => {
+  const h = fixture();
+  const c = h.coordinator;
+  const github = new GitHub(REPO, { cwd: c.repo.root, beforeWrite: () => c.assertRunning(),
+    execute: async () => assert.fail('The GitHub transport must receive no write after pause') });
+  github.pullForBranch = async () => {
+    await c.pauseRunner();
+    return null;
+  };
+  await assert.rejects(github.createPull({ branch: 'conductor/issue-1' }, makeIssue(1)), { code: 'RUNNER_PAUSED' });
 });

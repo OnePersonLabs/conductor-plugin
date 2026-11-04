@@ -38,7 +38,7 @@ async function fixture(t) {
   await host.connect(); await host.ensureThread();
   const events = new DirectorEvents({ state, threadId: THREAD, cwd: dir, host, execute: async () => assert.fail('No CLI queue fallback'), save: async () => {} });
   const c = new Coordinator({ repo: { root: dir }, config: { repository: 'owner/repo' }, store: { save: async () => {} } });
-  c.state = { director: state, jobs: [] }; c.director = { events }; c.directorHost = host; c.directorActivity = activity;
+  c.state = { director: state, jobs: [], admissionPaused: false }; c.director = { events }; c.directorHost = host; c.directorActivity = activity;
   t.after(async () => { activity.close(); await host.close(); await rm(dir, { recursive: true, force: true }); });
   return { activity, state, host, events, queue, calls: () => queueCalls, c };
 }
@@ -185,7 +185,8 @@ test('explicit stop releases the service even when deleting its pending wake fai
   await assert.rejects(f.c.stop({ explicit: true }), /queue unavailable/);
   assert.equal(released, true);
   assert.equal(f.c.state.running, false);
-  assert.equal(f.c.state.admissionPaused, true);
+  assert.equal(f.c.state.admissionPaused, false);
+  assert.ok(f.c.state.runnerPause);
   assert.equal(f.state.enabled, false);
   assert.equal(f.state.batches[0].cancellationRequired, true);
   f.c.store.save = async () => { throw new Error('old coordinator must not save after release'); };
