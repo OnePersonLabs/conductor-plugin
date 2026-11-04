@@ -28,3 +28,15 @@ incomplete, the issue remains open for operator reconciliation.
 A local push, a PR marked closed, an auto-merge request, or a finished Codex turn
 alone does not establish completed delivery. Inspect the PR, base, issue
 acceptance, and saved runtime status before reporting success.
+
+## Completed worktree cleanup
+
+After Conductor verifies delivery, it automatically removes eligible worktrees.
+Startup and maintenance cleanup use the same rule. A worktree qualifies only
+when Conductor owns it, its working tree is clean, and its unchanged head
+matches the delivered revision. Unfinished worktrees and worktrees with new or
+uncommitted changes remain available for recovery. Cleanup removes the entire
+worktree, including ignored build files, dependencies and local copies; commit or
+move any authored work you need before marking the issue complete. It retains the
+Git branch and history. Run `conductor cleanup --preview` to inspect candidates;
+run `conductor cleanup` to apply cleanup.

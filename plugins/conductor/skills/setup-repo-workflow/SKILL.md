@@ -6,10 +6,11 @@ description: Explicitly prepare or migrate a repository for Conductor's director
 # Set up a repository for Conductor
 
 Use when the user asks to set up or migrate the repository. Inspect and prepare
-`conductor.json`. Configuration preparation is inert; only the separate,
-explicit enable action establishes the repository's persistent Desktop director
-and starts observation. Do not dispatch production work as part of configuration
-preparation.
+`conductor.json`. Configuration preparation is inert; only an explicit request
+to start Conductor establishes its persistent Desktop director and starts
+observation. An ordinary change request may authorize issue preparation within
+its scope, but does not authorize chat adoption or runner startup. Do not dispatch
+production work as part of configuration preparation.
 
 ## Inspect the repository
 
@@ -56,22 +57,23 @@ Keep admission stopped during migration. Inventory open issues, current
 `conductor:ready` assignments, native dependencies, active jobs, threads,
 branches, worktrees, and saved delivery receipts. Map only verified prepared
 issues to `ready`; classify other unlabelled issues as triage. Preserve existing
-job identity and all unrelated metadata. Review and present the resulting issue
-states before removing the old ready label or activating the observer. Applying
-the migration saves a dated legacy configuration backup and writes version 2
-configuration with `admissionPaused: true`. Start the observer for review, then
-activate admission explicitly only after the reviewed issue states and scope are
-accepted. If ownership or classification is uncertain, leave execution stopped
-and report the exact items needing reconciliation.
+job identity and all unrelated metadata. Review and present the resulting issue states before removing the old ready
+label or changing admission. Applying the migration saves a dated legacy
+configuration backup and writes version 2 configuration with
+`admissionPaused: true`. Do not start observation as part of setup. If ownership
+or classification is uncertain, leave execution stopped and report the exact
+items needing reconciliation.
 
 The legacy configuration backup exists only for rollback through verification
 and the seven-day recovery window. Remove it after that boundary; a failed
 migration retains only the backup needed for recovery and reports the unresolved
 recovery obligation.
 
-After reviewing a migration, start the bound director with admission still
-paused, inspect the fresh status snapshot, and explicitly activate admission.
-The service can report status and reconcile events while admission is paused.
+After reviewing a migration, keep observation stopped unless the user explicitly
+requests its start. If the user authorizes startup, start the saved director with
+admission still paused and inspect the fresh status snapshot. Activate admission
+only when the user separately authorizes execution; the service can report status
+and reconcile events while admission remains paused.
 
 ## Enable the Desktop director
 
@@ -85,21 +87,29 @@ Complete requested plugin installation before starting the onboarding turn.
 Do not infer a restart or hook-toggle requirement from missing receipts;
 diagnose event delivery and hook execution first.
 
-Only do this when the user explicitly asks to enable Conductor. If this chat is
-already the saved director for this repository, reuse its thread ID. Otherwise,
-use Codex's native app thread creation to create a persistent local project chat
+Only do this when the user explicitly asks to start Conductor. Before creating a
+chat, inspect the saved owner and any pending handoff. Reuse the saved owner or
+continue its handoff; never create a duplicate. If this chat is already the saved
+director for this repository, reuse its actual thread UUID. Otherwise, use
+Codex's native app thread creation to create a persistent local project chat
 in the configured repository. Name it `Conductor: <product name>` by default,
 using the established product name from repository guidance or README (for
 example, `Conductor: Psychord` or `Conductor: Steady Helm`). If no product name
 is established, use the repository name. Honor an explicit user name. Set the
-title in the native creation call so the chat is named before its first turn;
-do not leave the name to automatic prompt summarization. Start it
-with `$conductor:director` and an initial instruction that its first action is
-to run `conductor enable --host desktop --thread <its own UUID>`, then verify
-the saved binding before inspecting issues or dispatching work. Retain the
-thread UUID returned by native thread creation. The parent setup conversation
-waits for the native thread's completion/status and confirms that this exact
-UUID is saved as the repository director before reporting enablement complete.
+title in the native creation call before its first turn. Start it with
+`$conductor:director` and pass the repository, requested operation and expected
+prior binding to its first-turn instruction.
+
+Retain and use the UUID returned by native thread creation. A matching title or
+skill does not prove ownership.
+The parent setup conversation must supply the repository, requested operation,
+and expected prior binding. The new chat first verifies its actual native UUID,
+saved owner and any pending handoff. It then enables or attaches only as
+authorized by that request and verifies the resulting saved binding before it
+inspects issues or dispatches work. The parent setup conversation waits for the
+native thread to finish and confirms that its UUID is the saved director before
+reporting startup complete.
+
 Do not use the CLI's shared-daemon thread creation for the Desktop director.
 For follow-ups requiring lifecycle receipts, use Desktop's native
 `thread/queue/add` API; cross-chat messaging bypasses `UserPromptSubmit`.

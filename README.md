@@ -31,7 +31,13 @@ review; Conductor validates and supplies the resulting design and implementation
 increment to the original builder. Missing or stale handoffs block that job
 without starting a model turn. See [design handoff configuration](plugins/conductor/docs/configuration.md#reviewed-design-handoffs).
 
-Once you explicitly enable Conductor for a configured repository, it keeps one
+An ordinary request to change a repository does not start a director. The
+director can prepare the change within the request's scope, create or update its
+issue, and show you the concrete result. It then asks whether you want to start
+Conductor's ongoing director for that repository. Setup and issue preparation
+do not bind a chat or start observation.
+
+Once you explicitly start Conductor for a configured repository, it keeps one
 Desktop director chat bound to that repository. Relevant changes wake that
 chat when it is idle. If it is already working, Conductor records that there is
 more to check and lets the current turn sort out the next work without extra
@@ -54,20 +60,26 @@ and authenticated GitHub CLI. Windows and WSL have separate local runtimes.
 
 From the target repository, ask Codex to use `$conductor:setup-repo-workflow`.
 Review its proposed `conductor.json`, issue label mapping, checks, concurrency,
-delivery settings and genuine scope authority. In Desktop, reuse the existing
-bound director or create a persistent local project chat named
-`Conductor: <product name>` (for example, `Conductor: Psychord`), start it with `$conductor:director`, and bind it
-when enabling the repository. A new director's initial instruction must run
-the enable command against its own thread UUID before inspecting issues or
-dispatching. Wait for the director to report completion and verify the saved
-binding with `conductor status`:
+delivery settings and scope authority. Preparing setup does not start Conductor.
+
+Only when you explicitly ask to start Conductor does the setup flow bind a
+Desktop director and start observation. It first checks the saved owner and any
+pending handoff. It reuses that owner or continues the handoff; it does not make
+a duplicate. If no director is bound, it creates a fresh native local project
+chat titled `Conductor: <product>`, starts it with `$conductor:director`, and
+passes the repository, start request and expected prior binding. The new chat
+verifies its actual native UUID, saved owner and any pending handoff before its
+first enable or attach control. A matching title or skill does not establish
+ownership.
+
+In the new chat, enable the configured repository with its native UUID:
 
 ```powershell
 conductor enable --host desktop --thread THREAD_UUID
 ```
 
-Merely installing the plugin or preparing configuration does not enable
-processing.
+Verify the saved binding with `conductor status`. Merely installing the plugin
+or preparing configuration does not enable processing.
 
 Review and trust the Conductor lifecycle hooks when Desktop prompts you to do
 so. Routine refresh does not require a blanket Desktop restart or hook toggle.
@@ -93,10 +105,16 @@ already-enabled repository with:
 conductor wakeup
 ```
 
-If a repository already has an explicitly bound director, Conductor reuses it;
-otherwise enabling starts one. `conductor status` shows service and recovery
-state. `conductor stop` deliberately disables automatic dispatch and wakeups
-while retaining recovery data. Run `conductor --help` for controls and the
+Before creating a director, Conductor checks the saved owner and any pending
+handoff. It reuses the saved owner or completes that handoff; a title or skill
+match does not establish ownership. `conductor status` shows service and recovery
+state. On Windows, keep the runner's console visible to see timestamped progress;
+its existing log rotates. `Ctrl+C`, closing the console, or `conductor stop`
+persists a runner pause. Bare `conductor resume` clears only that stop pause and
+restarts observation; holds, job pauses and admission restrictions remain.
+
+`conductor wakeup` observes and reports a paused reason without clearing the
+pause. Run `conductor --help` for controls and the
 [workflow guide](plugins/conductor/docs/workflow.md) for holds, release, event
 handling and recovery.
 
@@ -107,9 +125,12 @@ preserves worker ownership, holds and execution pauses and waits for an active
 director to finish before switching. The replacement automatically archives the
 superseded runner after verifying the handoff; its conversation history remains
 recoverable. You can explicitly ask to keep it visible.
-For plugin rollouts, finish changes and checks, publish, refresh and verify trust
-before creating the replacement chats. Keep the installed bundle unchanged
-through handoff and lifecycle verification; see the same guide for the full order.
+For plugin rollouts, finish bundle changes, checks and publication first. Then
+refresh the Windows local installation, verify hook trust, and complete required
+post-refresh configuration and global-instruction checks before creating
+replacements. Do not refresh WSL or another local Codex home unless requested.
+Keep the installed bundle unchanged through handoff and lifecycle verification;
+see the same guide for the full order.
 
 ## How issue states work
 

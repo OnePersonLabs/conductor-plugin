@@ -273,20 +273,31 @@ requires the appropriate evidence and verified delivery. Durable meaning stays
 with the project's existing owner. Unchanged evidence reuses valid
 analysis rather than triggering repeated planner calls or duplicate issue comments.
 
+An ordinary request in an unbound chat can authorize planning and issue work
+within the request's scope. Prepare and show the concrete change or issue result,
+then ask whether to start Conductor's ongoing director. That request alone does
+not authorize adopting the chat, creating a director, starting the runner,
+activating admission or dispatching work. An explicit request to start a director
+allows the required binding path.
+
 Use ordinary chat for questions, approvals and issue direction. The optional
 `$onepersonlabs:human-collaboration` inbox can carry longer reviews or phone
 responses; it is not required. An inbox draft is not a submitted answer.
 
 ## Move the director to another chat
 
-For a plugin rollout, use this order:
+For a plugin rollout, keep the current director active during preparation and
+use this order:
 
 1. Finish all bundle changes, checks and publication.
-2. Refresh the installed plugin, verify hook trust, and finish required
-   post-refresh configuration and global-instruction checks.
+2. Refresh the Windows local installation, verify hook trust, and finish
+   required post-refresh configuration and global-instruction checks. Do not
+   refresh WSL or another local Codex home unless asked.
 3. Create the fresh replacement chats and use the attach procedure below.
 4. Verify the saved bindings and matching native start/Stop receipts. Preserve
-   jobs, holds and admission pauses throughout.
+   jobs, holds and admission pauses throughout. If human-collaboration inbox
+   contributions exist, reconcile and bind them to the destination root through
+   that skill's procedure; `attach` does not transfer inbox ownership.
 
 Keep the installed bundle unchanged through handoff and verification. If a
 follow-up change is needed, finish and refresh it before creating replacements
@@ -380,11 +391,19 @@ Automatic delivery across Desktop or system restart still needs a live trial;
 if work has not resumed, open the saved director chat and say `wakeup`.
 Terminal-hosted directors continue to use the shared daemon path.
 
-Explicitly stopping Conductor disables automatic dispatch and wakeups. Passive
-issue-change signals do not restart a deliberately stopped service. Manual
-wakeup can restart observation but retains the admission pause established by
-the stop, migration pauses, and issue holds. Activate admission or release
-those states explicitly.
+Stopping Conductor pauses the local runner and automatic dispatch. Passive
+issue-change signals do not restart a deliberately stopped runner. Bare
+`conductor resume` restarts observation and clears only the runner-stop
+pause; migration pauses, holds, job pauses and admission restrictions remain.
+`conductor wakeup` observes and reports the paused reason and next action
+without clearing it. Activate admission or release holds only through their
+separate controls.
+
+On Windows, keep the local runner's console visible to read timestamped progress.
+Conductor rotates its existing log. `Ctrl+C` or closing the console persists the
+runner-stop pause. Closing the console can interrupt stop processing; use the
+saved pause as the recovery signal. Stopping the local runner does not stop a
+separate hosted or remote director; inspect that host and use its own stop control.
 
 If a runner turn is interrupted or fails, inspect status and its recovery
 receipt. Conductor preserves the original builder, reviewer, branch and
@@ -474,6 +493,9 @@ effects. Retain only unresolved human residuals with their existing issue/PR
 owner. Cleanup runs at service startup and during normal maintenance; stopped
 repositories are cleaned on the next invocation, so no off-process timer is
 promised.
+After verified delivery, startup and maintenance automatically clean eligible
+completed worktrees. Cleanup candidates and the full deletion boundary are in the
+[PR delivery guide](../skills/github-workflow/references/delivery.md#completed-worktree-cleanup).
 
 See [configuration](configuration.md) for repository labels, checks and
 migration. `$conductor:director` is the interactive entry point;

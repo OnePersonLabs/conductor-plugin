@@ -3,7 +3,9 @@
 Conductor reads `conductor.json` from the target Git repository root. Use
 `$conductor:setup-repo-workflow` to prepare or migrate this configuration.
 Setup inspects repository policy and prepares the file. The user must explicitly
-enable the repository to create or bind its director and start issue observation.
+start the director to bind a chat and start issue observation. An ordinary request
+to make a change may prepare the work and create or update its issue; it does not
+authorize a director binding, runner start, admission activation or dispatch.
 
 ## Repository and execution settings
 
