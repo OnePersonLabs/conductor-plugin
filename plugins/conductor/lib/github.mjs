@@ -1,6 +1,17 @@
 import { run } from './process.mjs';
 import { createHash } from 'node:crypto';
 
+// Explain delivery gates from the same snapshot used to decide whether to merge.
+// Reporting must not introduce a second GitHub polling loop.
+export function deliveryWaitReason(pull, checks, approvals, requiredApprovals = 0) {
+  if (pull.isDraft) return 'PR is a draft; mark it ready for review to continue';
+  if (checks.failed.length) return `Checks failed: ${checks.failed.map(check => typeof check === 'string' ? check : check.name ?? check.context ?? 'unnamed check').join(', ')}; waiting for repair`;
+  if (checks.pending) return 'GitHub checks are still running; waiting for their results';
+  if (pull.reviewDecision === 'CHANGES_REQUESTED' || approvals?.changesRequested) return 'A reviewer requested changes; waiting for repair and a new review';
+  if (approvals && approvals.approved < requiredApprovals) return `Waiting for PR approval (${approvals.approved}/${requiredApprovals}); an eligible reviewer must approve`;
+  return null;
+}
+
 export class GitHub {
   constructor(repository, { cwd, execute = run, beforeWrite } = {}) { Object.assign(this, { repository, cwd, execute, beforeWrite }); }
   async gh(args, { input, write = false } = {}) {

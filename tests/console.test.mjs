@@ -4,6 +4,7 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launchService, createReporter, activityLines, windowsArguments } from '../plugins/conductor/lib/console.mjs';
+import { deliveryWaitReason } from '../plugins/conductor/lib/github.mjs';
 
 test('Windows console launch transports literal command arguments without shell interpolation', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'conductor-console-'));
@@ -35,4 +36,22 @@ test('progress appears in console and retained log, including the exact resume a
   assert.match(displayed, /WAITING FOR YOU/);
   assert.match(displayed, /Issue #36: review; PR #42/);
   assert.equal(await readFile(join(dir, 'service.log'), 'utf8'), displayed);
+});
+
+test('delivery waits explain the current gate instead of an old builder result', () => {
+  const clear = { pending: false, failed: [] };
+  const cases = [
+    [{ isDraft: true }, clear, null, /draft; mark it ready/],
+    [{}, { pending: true, failed: [] }, null, /checks are still running/],
+    [{}, { pending: false, failed: ['build'] }, null, /Checks failed: build/],
+    [{ reviewDecision: 'CHANGES_REQUESTED' }, clear, null, /reviewer requested changes/],
+    [{}, clear, { approved: 0 }, /approval \(0\/1\)/],
+  ];
+  for (const [pull, checks, approvals, expected] of cases) {
+    const waitingFor = deliveryWaitReason(pull, checks, approvals, 1);
+    const output = activityLines({ running: true, jobs: [{ issue: 5, phase: 'waiting', waitingFor, summary: 'Old result', lastError: 'Old error' }] }).join('\n');
+    assert.match(output, expected);
+    assert.doesNotMatch(output, /Old result|Old error/);
+  }
+  assert.equal(deliveryWaitReason({}, clear, { approved: 1 }, 1), null);
 });

@@ -188,9 +188,10 @@ export async function serve({ coordinator, store, config, options = {}, inputStr
     const reviewer = request.role === 'reviewer';
     report(`WAITING FOR YOU -- Issue #${request.issue} ${request.role ?? 'builder'} needs input (${request.method}).\n${JSON.stringify(request.params, null, 2)}\n${reviewer ? 'Reviewer requests cannot be approved; stop and reconcile the read-only review.' : `Answer in the director chat or enter: answer ${request.key} <explicit decision or JSON response>`}`);
   });
-  let seen = new Set();
+  let seen = new Set(), starting = true;
   coordinator.on('status', state => {
     const lines = activityLines(state);
+    if (starting && !state.running && !state.runnerPause) lines[0] = 'STARTING -- checking the repository and recovering saved work';
     for (const line of lines) if (!seen.has(line)) report(line);
     seen = new Set(lines);
   });
@@ -263,6 +264,7 @@ export async function serve({ coordinator, store, config, options = {}, inputStr
     report(`Conductor: ${config.repository}; ${config.agents} worker slot(s). Ctrl+C or closing this window pauses work. Run conductor resume from this project to continue.`);
     heartbeat = setInterval(() => { if (controlsReady && coordinator.state && !coordinator.stopping) report(activityLines(coordinator.state)[0]); }, 60_000);
     await coordinator.start({ threadId: options.threadId, host: options.host, enable: options.enable === true, manualWake: options.manualWake === true, resumeRunner: options.resumeRunner === true, attachOnly: options.attachOnly, handoffThreadId: options.handoffThreadId, beforeScan: async () => { controlsReady = true; if (stopRequested) await stop(); else await controls(); } });
+    starting = false;
   } catch (error) { cleanup(); throw error; }
 }
 

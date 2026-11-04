@@ -340,8 +340,10 @@ test('parallel owners retain slots while idle; dependencies skip; serialized lan
   assert.notEqual(c.state.jobs[0].worktree, c.state.jobs[1].worktree);
   const count = world.turns; await Promise.all(Array.from({ length: 10 }, () => c.wake()));
   assert.equal(world.turns, count);
+  assert.ok(c.state.jobs.every(job => /checks are still running/.test(job.waitingFor)));
   for (const p of world.pulls.values()) p.statusCheckRollup = [];
   await c.wake(); assert.equal(world.merges.length, 1);
+  assert.match(c.state.jobs.find(job => !job.mergeArmed).waitingFor, /Waiting for Issue #2 to finish landing/);
   const first = world.pulls.get(world.merges[0]);
   await git(remote, 'update-ref', 'refs/heads/main', first.headRefOid);
   first.state = 'MERGED'; first.mergeCommit = { oid: first.headRefOid };

@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { hostname, homedir } from 'node:os';
 import { CodexClient } from './codex.mjs';
-import { GitHub, checkState } from './github.mjs';
+import { GitHub, checkState, deliveryWaitReason } from './github.mjs';
 import { git, run } from './process.mjs';
 import { createWorktree, copyWorktreeIncludes, refreshBranch, inspectRepository } from './worktrees.mjs';
 import { processExists } from './state.mjs';
@@ -786,6 +786,7 @@ export class Coordinator extends EventEmitter {
   }
   launch(job, issue, reason, feedback = [], role = job.nextRole ?? 'builder') {
     if (this.tasks.has(job.issue) || this.executionBlocked() || !this.hasResumeCapacity(job)) return;
+    delete job.waitingFor;
     const task = this.build(job, issue, reason, feedback, role).catch(async error => {
       if (job.runnerInterrupted && this.executionBlocked()) return;
       const threadId = role === 'reviewer' ? job.reviewerThreadId : job.builderThreadId ?? job.threadId;
@@ -1039,6 +1040,11 @@ export class Coordinator extends EventEmitter {
     if (await git(job.worktree, 'rev-parse', 'HEAD') !== head) throw new Error('Source changed while checks were running.');
     job.checkHead = head; job.checkBase = base; await this.save();
   }
+  async waitForDelivery(job, reason) {
+    if (job.waitingFor === reason) return;
+    job.waitingFor = reason;
+    await this.save();
+  }
   async reconcilePull(job, base) {
     if (job.intent || this.executionBlocked()) return;
     const pull = await this.github.pull(job.pr);
@@ -1059,7 +1065,7 @@ export class Coordinator extends EventEmitter {
       if (this.director) await this.guard(job, { allowCompleted: true });
       this.assertRunning();
       await this.github.closeIssue(job.issue, `Delivered by PR #${job.pr}; accepted base contains ${pull.mergeCommit.oid}.\n\n${job.summary}`);
-      job.phase = 'complete'; job.mergedCommit = pull.mergeCommit.oid;
+      job.phase = 'complete'; job.mergedCommit = pull.mergeCommit.oid; delete job.waitingFor;
       job.deliveredHead = pull.headRefOid && pull.headRefOid === job.checkHead ? pull.headRefOid : null;
       delete job.runnerInterrupted; delete job.deliveryReconciliationRequired; job.mergeArmed = false;
       delete job.designHandoff; delete job.designHandoffValidation;
@@ -1087,7 +1093,8 @@ export class Coordinator extends EventEmitter {
       await this.save();
       this.launch(job, await this.github.issue(job.issue), job.repairReason, job.pendingFeedback); return;
     }
-    if (checks.failed.length || checks.pending || pull.isDraft || pull.reviewDecision === 'CHANGES_REQUESTED') return;
+    const wait = deliveryWaitReason(pull, checks);
+    if (wait) return this.waitForDelivery(job, wait);
     const currentBase = await this.base();
     if (job.mergeArmed && job.checkBase !== currentBase) await this.disarm(job);
     try { await this.verify(job); }
@@ -1114,16 +1121,22 @@ export class Coordinator extends EventEmitter {
     }
     // GitHub can retain an armed request after all gates turn green. Reconcile a
     // CLEAN request through the normal protected merge command instead of waiting forever.
-    if (job.mergeArmed && pull.autoMergeRequest && pull.mergeStateStatus !== 'CLEAN') return;
+    if (job.mergeArmed && pull.autoMergeRequest && pull.mergeStateStatus !== 'CLEAN') return this.waitForDelivery(job, `GitHub auto-merge is waiting for branch requirements (${pull.mergeStateStatus ?? 'unknown'}); inspect the PR merge requirements`);
     const approvals = await this.github.approvals(job.pr, head);
-    if (approvals.changesRequested || approvals.approved < this.config.requiredApprovals) return;
+    const approvalWait = deliveryWaitReason(pull, checks, approvals, this.config.requiredApprovals);
+    if (approvalWait) return this.waitForDelivery(job, approvalWait);
     // Only one PR may have native auto-merge armed. Waiting issues retain their slots.
-    if (this.state.jobs.some(other => other.issue !== job.issue && other.mergeArmed && other.phase !== 'complete')) return;
+    const landing = this.state.jobs.find(other => other.issue !== job.issue && other.mergeArmed && other.phase !== 'complete');
+    if (landing) return this.waitForDelivery(job, `Waiting for Issue #${landing.issue} to finish landing before this PR can merge`);
     const fresh = await this.github.pull(job.pr);
-    if (fresh.headRefOid !== job.checkHead || (await this.base()) !== job.checkBase) return;
+    if (fresh.headRefOid !== job.checkHead || (await this.base()) !== job.checkBase) return this.waitForDelivery(job, 'The PR or base branch changed; rechecking on the next observation');
     const freshChecks = checkState(fresh);
     const freshApprovals = await this.github.approvals(job.pr, fresh.headRefOid);
-    if (this.executionBlocked() || job.intent || fresh.state !== 'OPEN' || fresh.isDraft || freshChecks.pending || freshChecks.failed.length || fresh.reviewDecision === 'CHANGES_REQUESTED' || freshApprovals.changesRequested || freshApprovals.approved < this.config.requiredApprovals) return;
+    if (this.executionBlocked() || job.intent) return;
+    if (fresh.state !== 'OPEN') return this.waitForDelivery(job, 'PR state changed; reconciling delivery on the next observation');
+    const freshWait = deliveryWaitReason(fresh, freshChecks, freshApprovals, this.config.requiredApprovals);
+    if (freshWait) return this.waitForDelivery(job, freshWait);
+    job.waitingFor = 'GitHub is completing the merge; waiting to verify delivery on the base branch';
     job.mergeArmed = true; await this.save();
     if (this.executionBlocked() || job.intent) return;
     if (this.director) await this.guard(job);

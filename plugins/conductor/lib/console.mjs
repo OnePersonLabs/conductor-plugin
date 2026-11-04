@@ -50,7 +50,7 @@ export function activityLines(state) {
     lines.push(`${hold.all ? 'All issues' : (hold.issues ?? []).map(n => `Issue #${n}`).join(', ')} ON HOLD -- ${hold.reason ?? 'explicitly held'}; ask the director to release this hold`);
   }
   for (const job of state.jobs ?? []) {
-    const detail = job.lastError ?? job.summary;
+    const detail = job.phase === 'waiting' ? job.waitingFor ?? job.lastError ?? job.summary : job.lastError ?? job.summary;
     lines.push(`Issue #${job.issue}: ${job.phase}${job.activeRole ? ` (${job.activeRole})` : ''}${job.pr ? `; PR #${job.pr}` : ''}${detail ? ` -- ${detail}` : ''}`);
   }
   return lines;
