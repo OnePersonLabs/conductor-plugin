@@ -678,7 +678,7 @@ export class Coordinator extends EventEmitter {
           }
           else { job.reviewStatus = 'skipped'; job.phase = 'waiting'; await this.save(); }
         } else if (job.phase === 'waiting') await this.deliveryAction(() => this.reconcilePull(job, base));
-      } catch (error) { if (error.code !== 'RUNNER_PAUSED') { job.lastError = error.message; await this.save(); this.emit('notice', `Issue #${job.issue}: ${error.message}`); } }
+      } catch (error) { if (error.code !== 'RUNNER_PAUSED') { delete job.waitingFor; job.lastError = error.message; await this.save(); this.emit('notice', `Issue #${job.issue}: ${error.message}`); } }
     }
     if (this.executionBlocked()) return;
     // Version 2 never admits from a polling tick: the director supplies a fresh
@@ -1041,8 +1041,8 @@ export class Coordinator extends EventEmitter {
     job.checkHead = head; job.checkBase = base; await this.save();
   }
   async waitForDelivery(job, reason) {
-    if (job.waitingFor === reason) return;
-    job.waitingFor = reason;
+    if (job.waitingFor === reason && !job.lastError) return;
+    job.waitingFor = reason; job.lastError = null;
     await this.save();
   }
   async reconcilePull(job, base) {
@@ -1136,13 +1136,15 @@ export class Coordinator extends EventEmitter {
     if (fresh.state !== 'OPEN') return this.waitForDelivery(job, 'PR state changed; reconciling delivery on the next observation');
     const freshWait = deliveryWaitReason(fresh, freshChecks, freshApprovals, this.config.requiredApprovals);
     if (freshWait) return this.waitForDelivery(job, freshWait);
-    job.waitingFor = 'GitHub is completing the merge; waiting to verify delivery on the base branch';
+    job.waitingFor = 'Submitting the merge request; an interrupted response will be reconciled before retrying';
+    job.lastError = null;
     job.mergeArmed = true; await this.save();
     if (this.executionBlocked() || job.intent) return;
     if (this.director) await this.guard(job);
     if ((await this.designContext(job)).status === 'blocked') return;
     this.assertRunning();
     await this.github.merge(job.pr, fresh.headRefOid, this.config.mergeMethod);
+    await this.waitForDelivery(job, 'GitHub accepted the merge request; waiting to verify delivery on the base branch');
   }
   async disarm(job) {
     const before = await this.github.pull(job.pr);

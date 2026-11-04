@@ -614,6 +614,10 @@ test('a landed squash or rebase records the delivered source and removes its wor
   const tree = await git(root, 'rev-parse', `${pull.headRefOid}^{tree}`);
   const parent = await git(root, 'rev-parse', 'main');
   const landed = await git(root, 'commit-tree', tree, '-p', parent, '-m', 'Landed with rewritten history');
+  github.merge = async () => { throw new Error('GitHub rejected this merge request'); };
+  pull.mergeStateStatus = 'CLEAN'; await c.wake();
+  assert.equal(job.waitingFor, undefined);
+  assert.match(job.lastError, /GitHub rejected this merge request/);
   github.merge = async () => {
     await git(root, 'push', 'origin', `${landed}:refs/heads/main`);
     pull.state = 'MERGED'; pull.mergeCommit = { oid: landed };

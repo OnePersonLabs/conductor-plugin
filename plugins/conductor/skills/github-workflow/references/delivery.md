@@ -40,10 +40,17 @@ worktree, including ignored build files, dependencies and local copies; commit o
 move any authored work you need before marking the issue complete. It retains the
 Git branch and history. Run `conductor cleanup --preview` to inspect candidates;
 you can run the preview while the runner is active. Apply cleanup only while the
-runner is stopped:
+runner is stopped. First request the stop:
 
 ```powershell
 conductor stop
+```
+
+The command returns when the stop is queued. Use `conductor status` to confirm
+that `owner` is null and `running` is false. Resolve any shutdown warning
+before continuing. Then apply cleanup and resume observation and eligible work:
+
+```powershell
 conductor cleanup
 conductor resume
 ```
