@@ -39,4 +39,16 @@ uncommitted changes remain available for recovery. Cleanup removes the entire
 worktree, including ignored build files, dependencies and local copies; commit or
 move any authored work you need before marking the issue complete. It retains the
 Git branch and history. Run `conductor cleanup --preview` to inspect candidates;
-run `conductor cleanup` to apply cleanup.
+you can run the preview while the runner is active. Apply cleanup only while the
+runner is stopped:
+
+```powershell
+conductor stop
+conductor cleanup
+conductor resume
+```
+
+Bare `conductor resume` clears the runner-stop pause after cleanup. It preserves
+holds, admission restrictions and individual job pauses. `conductor wakeup`
+only observes and reports the pause; it does not resume the runner. `conductor
+resume ISSUE` resumes an issue job and is not the cleanup recovery command.

@@ -87,18 +87,24 @@ Complete requested plugin installation before starting the onboarding turn.
 Do not infer a restart or hook-toggle requirement from missing receipts;
 diagnose event delivery and hook execution first.
 
-Only do this when the user explicitly asks to start Conductor. Before creating a
-chat, inspect the saved owner and any pending handoff. Reuse the saved owner or
-continue its handoff; never create a duplicate. If this chat is already the saved
-director for this repository, reuse its actual thread UUID. Otherwise, use
-Codex's native app thread creation to create a persistent local project chat
-in the configured repository. Name it `Conductor: <product name>` by default,
-using the established product name from repository guidance or README (for
-example, `Conductor: Psychord` or `Conductor: Steady Helm`). If no product name
-is established, use the repository name. Honor an explicit user name. Set the
-title in the native creation call before its first turn. Start it with
-`$conductor:director` and pass the repository, requested operation and expected
-prior binding to its first-turn instruction.
+Only do this when the user explicitly asks to start Conductor. First inspect the
+saved director and any pending handoff. If the user explicitly asks to make the
+current chat the director, use the director skill's takeover procedure: rename
+this chat through the native app, attach its actual UUID, then verify the saved
+binding and title. Resolve any conflicting pending handoff before changing its
+destination. Otherwise, resume a pending handoff to its recorded destination. If
+no handoff is pending but a director is saved, reuse its UUID. Do not create a
+second chat in either case.
+
+Create a fresh chat only when no director is saved and no handoff is pending.
+Use Codex's native app to create a persistent local project chat in the configured
+repository. Name it `Conductor: <product name>` by default, using the established
+product name from repository guidance or README (for example, `Conductor: Psychord`
+or `Conductor: Steady Helm`). If no product name is established, use the
+repository name. Honor an explicit user name. Set its title in the native
+creation call before its first turn. Start it with `$conductor:director` and
+pass the repository, requested operation and expected prior binding to its
+first-turn instruction.
 
 Retain and use the UUID returned by native thread creation. A matching title or
 skill does not prove ownership.

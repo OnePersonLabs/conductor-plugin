@@ -58,10 +58,11 @@ recovery only.
 ## Hand Conductor to another chat
 
 For a plugin rollout, keep the current director active during preparation.
-Create replacement chats only after the final bundle is complete, required checks
-pass, and publication is complete. Then refresh the Windows local installation,
-verify hook trust, and finish required post-refresh configuration and global
-instruction checks. Do not refresh WSL or another local Codex home unless asked.
+Finish all bundle changes, required checks and publication first. Then refresh
+the Windows local installation, verify hook trust, and finish required
+post-refresh configuration and global-instruction checks. Create replacement
+chats only after those steps are complete. Do not refresh WSL or another local
+Codex home unless asked.
 
 Keep the installed bundle unchanged through handoff and native start/Stop
 verification. If another bundle change is needed, finish and refresh it before
