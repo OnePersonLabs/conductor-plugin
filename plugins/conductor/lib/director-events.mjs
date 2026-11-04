@@ -177,7 +177,7 @@ export class DirectorEvents {
     const deliveryStates = new Set(['submitting', 'queued', 'uncertain']);
     const unsent = this.state.events.filter(item => !item.acknowledgedAt && !this.state.batches.some(batch => deliveryStates.has(batch.status) && batch.eventIds.includes(item.id)));
     if (!unsent.length) return { status: 'idle' };
-    const batch = { id: randomUUID(), eventIds: observation ? [] : unsent.map(item => item.id), status: 'submitting', createdAt: new Date().toISOString(), threadId: this.threadId, ...(observation ? { observation: true } : {}) };
+    const batch = { id: randomUUID(), eventIds: observation ? [] : unsent.map(item => item.id), status: 'submitting', createdAt: new Date().toISOString(), threadId: this.threadId, ...(observation ? { observation: true, observationPauseAt: observation.at } : {}) };
     this.state.batches.push(batch);
     await this.save();
     const message = observation

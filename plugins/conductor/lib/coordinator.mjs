@@ -7,7 +7,7 @@ import { hostname, homedir } from 'node:os';
 import { CodexClient } from './codex.mjs';
 import { GitHub, checkState } from './github.mjs';
 import { git, run } from './process.mjs';
-import { createWorktree, copyWorktreeIncludes, refreshBranch } from './worktrees.mjs';
+import { createWorktree, copyWorktreeIncludes, refreshBranch, inspectRepository } from './worktrees.mjs';
 import { processExists } from './state.mjs';
 import { WakeLoop, admission, occupied } from './scheduler.mjs';
 import { Director } from './director.mjs';
@@ -171,7 +171,7 @@ export class Coordinator extends EventEmitter {
         if (manualWake || (enable && !runnerPause(this.state))) await this.requestCheck({ manual: true });
         else await this.wake();
       }
-    } catch (error) { if (this.stopping) return; this.activityWatcher?.close(); clearInterval(this.activityTimer); this.directorActivity?.close(); await this.directorHost?.close().catch(() => {}); if (this.state) { this.state.running = false; this.state.serviceReady = false; this.state.startupError = error.message; await this.save().catch(() => {}); } await this.store.release(); throw error; }
+    } catch (error) { if (this.stopping) return; clearInterval(this.timer); this.activityWatcher?.close(); clearInterval(this.activityTimer); this.directorActivity?.close(); await this.directorHost?.close().catch(() => {}); if (this.state) { this.state.running = false; this.state.serviceReady = false; this.state.startupError = error.message; await this.save().catch(() => {}); } await this.store.release(); throw error; }
   }
   async preflight() {
     const remote = await git(this.repo.root, 'remote', 'get-url', 'origin');
@@ -203,10 +203,13 @@ export class Coordinator extends EventEmitter {
     if (!this.directorActivity || this.stopping || this.activityRefreshing) return;
     this.activityRefreshing = true;
     try {
-      const activity = await this.directorActivity.read(this.state.director.threadId);
+      const threadId = this.state.director.threadId;
+      const reconciled = await this.reconcileBlockedWakeups(threadId);
+      const activity = await this.directorActivity.read(threadId);
       if (this.stopping) return;
       if (this.activityRevision === activity.revision) {
         if (this.state.director.handoff) await this.progressHandoff(activity);
+        else if (reconciled && activity.state === 'idle') await this.director.events.flush();
         return;
       }
       this.activityRevision = activity.revision;
@@ -238,6 +241,34 @@ export class Coordinator extends EventEmitter {
       if (this.state.director.handoff) await this.progressHandoff(activity);
       if (activity.state === 'idle' && !this.state.director.handoff) await this.director.events.flush();
     } finally { this.activityRefreshing = false; }
+  }
+  async reconcileBlockedWakeups(threadId) {
+    const receipts = this.directorActivity.blockedWakeups?.(threadId) ?? [];
+    if (!receipts.length) return false;
+    // A Desktop queue response can arrive after its prompt was rejected.
+    // Reconcile only after submission has finished recording its outcome.
+    await this.director.events.flushing;
+    if (this.stopping) return false;
+    const director = this.state.director;
+    for (const receipt of receipts) {
+      const batch = director.batches.find(item => item.id === receipt.batchId && item.threadId === threadId);
+      if (!batch) continue;
+      batch.status = 'reconciled-ended';
+      batch.nativeConsumed = true;
+      batch.blockedWakeup = { turnId: receipt.turnId, at: receipt.blockedAt };
+      batch.terminalAt = receipt.blockedAt;
+      if (batch.observation) batch.acknowledgedAt ??= receipt.blockedAt;
+      delete batch.cancellationRequired;
+      const recovery = director.recoveryRequired;
+      if (recovery?.batchId === batch.id && !recovery.resolvedAt) {
+        recovery.resolvedAt = receipt.blockedAt;
+        recovery.outcome = 'The Desktop lifecycle hook blocked this queued wake before execution.';
+      }
+    }
+    this.director.events.pruneSettled();
+    await this.save();
+    if (!this.stopping) for (const receipt of receipts) this.directorActivity.clearBlockedWakeup(threadId, receipt.batchId);
+    return true;
   }
   async requestCheck({ manual = false, reason } = {}) {
     if (!this.director) throw new Error('Director is not bound.');
@@ -342,6 +373,7 @@ export class Coordinator extends EventEmitter {
       await Promise.allSettled([this.director.events.flushing]);
       activity = await this.directorActivity.read(handoff.fromThreadId);
     }
+    await this.reconcileBlockedWakeups(handoff.fromThreadId);
     if (this.directorControlCount > 0) {
       return pending('Waiting for the current director control operation to finish.');
     }
@@ -527,16 +559,14 @@ export class Coordinator extends EventEmitter {
     if (job.pullCreationPending && !job.pr) {
       const receipt = await this.github.pullForBranch(job.branch);
       this.assertRunning();
+      if (!job.pullCreationPending) return false;
       if (!receipt) {
         job.phase = 'uncertain';
         job.summary = 'PR creation was interrupted without a GitHub receipt. Inspect the original branch before resuming the issue.';
         await this.save();
         return false;
       }
-      job.pr = receipt.number;
-      job.phase = this.config.reviewEnabled ? 'review' : 'waiting';
-      job.activeRole = null; job.nextRole = this.config.reviewEnabled ? 'reviewer' : null;
-      delete job.pullCreationPending;
+      this.recordPullReceipt(job, receipt);
       await this.save();
     }
     if (job.pr) {
@@ -557,8 +587,7 @@ export class Coordinator extends EventEmitter {
     }
     if (job.phase === 'uncertain' || job.phase === 'blocked') return false;
     if (job.runnerInterrupted && job.phase === 'stopped') {
-      const activeJobs = this.state.jobs.filter(other => !(other.runnerInterrupted && other.phase === 'stopped'));
-      if (occupied(activeJobs) >= this.config.agents || this.state.director?.interaction?.active) return false;
+      if (!this.hasResumeCapacity(job) || this.state.director?.interaction?.active) return false;
       // Retain the saved interruption while a hold, admission, or changed
       // revision blocks it. The normal checkJob failure would pause the issue.
       if (this.director) await this.director.assertEligible(job.issue, job.eligibilityRevision);
@@ -567,6 +596,17 @@ export class Coordinator extends EventEmitter {
       await this.save();
     }
     return true;
+  }
+  hasResumeCapacity(job) {
+    const interrupted = candidate => candidate.runnerInterrupted && candidate.phase === 'stopped' && !this.tasks.has(candidate.issue);
+    if (job.phase !== 'paused' && !interrupted(job)) return true;
+    return occupied(this.state.jobs.filter(candidate => !interrupted(candidate))) < this.config.agents;
+  }
+  recordPullReceipt(job, pull) {
+    job.pr = pull.number;
+    job.phase = this.config.reviewEnabled ? 'review' : 'waiting';
+    job.activeRole = null; job.nextRole = this.config.reviewEnabled ? 'reviewer' : null;
+    delete job.pullCreationPending;
   }
   async progress(job) {
     if (!this.executionBlocked()) await this.github.progress(job);
@@ -744,7 +784,7 @@ export class Coordinator extends EventEmitter {
     } finally { if (this.handoffChecks.get(job.issue) === abort) this.handoffChecks.delete(job.issue); }
   }
   launch(job, issue, reason, feedback = [], role = job.nextRole ?? 'builder') {
-    if (this.tasks.has(job.issue) || this.executionBlocked()) return;
+    if (this.tasks.has(job.issue) || this.executionBlocked() || !this.hasResumeCapacity(job)) return;
     const task = this.build(job, issue, reason, feedback, role).catch(async error => {
       if (job.runnerInterrupted && this.executionBlocked()) return;
       const threadId = role === 'reviewer' ? job.reviewerThreadId : job.builderThreadId ?? job.threadId;
@@ -879,10 +919,10 @@ export class Coordinator extends EventEmitter {
         if (error.code === 'RUNNER_PAUSED') delete job.pullCreationPending;
         throw error;
       }
-      job.pr = pull.number; delete job.pullCreationPending;
+      this.recordPullReceipt(job, pull);
       // Do not swallow feedback arriving while the builder was active: only evidence sent
       // to that turn is acknowledged by reconcilePull before launching it.
-      job.phase = this.config.reviewEnabled ? 'review' : 'waiting'; job.activeRole = null; job.nextRole = this.config.reviewEnabled ? 'reviewer' : null; job.lastError = null; job.repairReason = null; job.pendingFeedback = [];
+      job.lastError = null; job.repairReason = null; job.pendingFeedback = [];
       job.reviewStatus = this.config.reviewEnabled ? null : 'skipped'; job.reviewClearance = null;
       await this.save(); await this.progress(job);
     } finally {
@@ -1148,8 +1188,8 @@ export class Coordinator extends EventEmitter {
     const job = this.state.jobs.find(job => job.issue === issue);
     if (!job) throw new Error('No original job to resume.');
     if (job.pr && (await this.github.pull(job.pr)).state === 'MERGED') throw new Error('PR already landed. Reconcile delivery before resuming.');
-    if (job.deliveryReconciliationRequired || job.pullCreationPending) throw new Error('PR delivery requires reconciliation before resuming.');
-    if (job.phase === 'paused' && occupied(this.state.jobs) >= this.config.agents) throw new Error('No issue capacity is available.');
+    if (job.deliveryReconciliationRequired) throw new Error('PR delivery requires reconciliation before resuming.');
+    if (!this.hasResumeCapacity(job)) throw new Error('No issue capacity is available.');
     await this.resume(issue, workerThreadId, role, designHandoff, current?.revision);
     return { resumed: issue };
   }
@@ -1161,6 +1201,29 @@ export class Coordinator extends EventEmitter {
     if (job.childPid && processExists(job.childPid)) throw new Error('Previous builder process is still alive; ownership remains uncertain.');
     const source = await this.github.issue(issue);
     if (source.state !== 'open') throw new Error('Reopen and reconcile the issue before resuming it.');
+    const recoveringPull = job.pullCreationPending;
+    if (recoveringPull) {
+      const receipt = await this.github.pullForBranch(job.branch);
+      this.assertRunning();
+      if (!job.pullCreationPending) return;
+      if (receipt) {
+        if (!this.hasResumeCapacity(job)) throw new Error('No issue capacity is available.');
+        if (eligibilityRevision) job.eligibilityRevision = eligibilityRevision;
+        if (designHandoff !== undefined) { job.designHandoff = structuredClone(designHandoff); job.designHandoffValidation = null; }
+        job.intent = null;
+        this.recordPullReceipt(job, receipt);
+        job.deliveryReconciliationRequired = true;
+        await this.save(); this.wake();
+        return;
+      }
+      const worktree = await inspectRepository(job.worktree);
+      if (worktree.root !== resolve(job.worktree) || worktree.commonDir !== this.repo.commonDir || job.branch !== `conductor/issue-${job.issue}` ||
+          (await readFile(join(worktree.gitDir, 'conductor-owned-worktree'), 'utf8')).trim() !== this.repo.root ||
+          await git(job.worktree, 'branch', '--show-current') !== job.branch) {
+        throw new Error('The original worktree and issue branch could not be verified. PR creation remains unresolved.');
+      }
+      if (!job.pullCreationPending) return;
+    }
     const targetRole = role ?? job.nextRole ?? job.activeRole ?? 'builder';
     if (!['builder', 'reviewer'].includes(targetRole)) throw new Error('Role must be builder or reviewer.');
     const field = targetRole === 'reviewer' ? 'reviewerThreadId' : 'builderThreadId';
@@ -1209,8 +1272,13 @@ export class Coordinator extends EventEmitter {
       }
     }
     this.assertRunning();
+    if (recoveringPull && !job.pullCreationPending) return;
+    if (!this.hasResumeCapacity(job)) {
+      job.intent = previousIntent;
+      throw new Error('No issue capacity is available.');
+    }
     job.activeRole = targetRole; job.nextRole = targetRole; job.phase = 'stopped'; job.repairAttempts = 0;
-    delete job.runnerInterrupted;
+    delete job.runnerInterrupted; delete job.pullCreationPending;
     await this.save(); this.wake();
   }
   async haltClient(job, client) {

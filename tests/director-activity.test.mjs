@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { DirectorActivity } from '../plugins/conductor/lib/director-activity.mjs';
 import { handleDirectorLifecycle } from '../plugins/conductor/lib/director-lifecycle.mjs';
@@ -21,6 +22,46 @@ test('a lost runner makes the bound director observation-only at the next tool b
   assert.match(result.hookOutput.hookSpecificOutput.additionalContext, /must not start workers/);
   const unrelated = await handleDirectorLifecycle({ cwd: root, session_id: 'ordinary-chat', turn_id: 'turn', hook_event_name: 'UserPromptSubmit' });
   assert.equal(unrelated.handled, false);
+});
+
+test('a paused director blocks stale wake prompts and permits only a current observation batch', async t => {
+  const { root, dir, threadId, close } = await fixture(t);
+  const statePath = join(dir, 'state.json');
+  const state = JSON.parse(await readFile(statePath, 'utf8'));
+  const automatic = '019c6e27-e55b-73d1-87d8-4e01f1f75047';
+  const old = '019c6e27-e55b-73d1-87d8-4e01f1f75048';
+  const observation = '019c6e27-e55b-73d1-87d8-4e01f1f75049';
+  state.runnerPause = { reason: 'Stopped', at: 'current-pause' };
+  state.serviceReady = true;
+  state.ownerToken = 'observer';
+  state.director.batches = [
+    { id: automatic, threadId, status: 'queued' },
+    { id: old, threadId, status: 'queued', observation: true, observationPauseAt: 'previous-pause' },
+    { id: observation, threadId, status: 'submitting', observation: true, observationPauseAt: 'current-pause' },
+  ];
+  await writeFile(statePath, JSON.stringify(state));
+  await writeFile(join(dir, 'coordinator.lock'), JSON.stringify({ pid: process.pid, hostname: hostname(), platform: process.platform, token: 'observer' }));
+  const prompt = marker => ({ cwd: root, session_id: threadId, turn_id: `turn-${marker}`, hook_event_name: 'UserPromptSubmit',
+    prompt: `Wake <!-- conductor:director-wakeup:${marker} -->` });
+  const hook = fileURLToPath(new URL('../plugins/conductor/hooks/director-lifecycle.mjs', import.meta.url));
+  const stopped = spawnSync(process.execPath, [hook], { input: JSON.stringify(prompt(automatic)), encoding: 'utf8', windowsHide: true });
+  assert.equal(stopped.status, 2);
+  assert.match(stopped.stderr, /queued director wake was blocked before execution/);
+  assert.match((await handleDirectorLifecycle(prompt(old))).error, /blocked before execution/);
+  const activity = new DirectorActivity({ dir }); close.push(() => activity.close());
+  assert.equal((await activity.read(threadId)).state, 'unknown');
+  assert.deepEqual(activity.blockedWakeups(threadId).map(item => item.batchId), [automatic, old]);
+  const observed = await handleDirectorLifecycle(prompt(observation));
+  assert.match(observed.hookOutput.hookSpecificOutput.additionalContext, /PAUSED/);
+  assert.equal(observed.status.wakeupMarker, observation);
+});
+
+test('an unrelated chat ignores a malformed coordinator lock', async t => {
+  const { root, dir, threadId } = await fixture(t);
+  await writeFile(join(dir, 'coordinator.lock'), '{');
+  const prompt = { cwd: root, turn_id: 'turn', hook_event_name: 'UserPromptSubmit', prompt: 'new request' };
+  assert.equal((await handleDirectorLifecycle({ ...prompt, session_id: 'ordinary-chat' })).handled, false);
+  await assert.rejects(handleDirectorLifecycle({ ...prompt, session_id: threadId }), SyntaxError);
 });
 
 async function fixture(t) {

@@ -118,7 +118,7 @@ export async function ensureService({ store, root, threadId, enable = false, man
       const current = await store.owner();
       if (current?.hostname === hostname() && current.platform === process.platform && processExists(current.pid)) {
         const liveState = await store.read();
-        if (liveState.serviceReady === true && liveState.ownerToken === current.token) {
+        if (liveState.serviceReady === true && liveState.ownerToken === current.token && (!resumeRunner || !runnerPause(liveState, current))) {
           const handoff = liveState.director?.handoff;
           if (attachThreadId && liveState.director?.threadId !== attachThreadId) {
             if (handoff?.toThreadId === attachThreadId) return { ...handoff, fromThreadId: liveState.director.threadId, handoffStatus: handoff.status, status: 'handoff-pending', blocker: handoff.blocker ?? 'Waiting for the old native turn to finish.', pid: current.pid };
@@ -133,6 +133,7 @@ export async function ensureService({ store, root, threadId, enable = false, man
       }
       await delay(100);
     }
+    if (resumeRunner) throw new Error('Conductor did not confirm that the runner pause cleared before the startup timeout. Check `conductor status` and the service log.');
     throw new Error('Conductor was launched but did not acquire repository ownership before the startup timeout. Check `conductor status` and the service log.');
   } finally { await release(); }
 }

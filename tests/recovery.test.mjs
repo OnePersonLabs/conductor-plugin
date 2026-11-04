@@ -8,7 +8,7 @@ import { Coordinator } from '../plugins/conductor/lib/coordinator.mjs';
 import { validateConfig } from '../plugins/conductor/lib/config.mjs';
 import { Store } from '../plugins/conductor/lib/state.mjs';
 import { git } from '../plugins/conductor/lib/process.mjs';
-import { inspectRepository } from '../plugins/conductor/lib/worktrees.mjs';
+import { createWorktree, inspectRepository } from '../plugins/conductor/lib/worktrees.mjs';
 import { createRequestRevision } from '../plugins/conductor/lib/prompts.mjs';
 
 const issue = number => ({ number, title: `Task ${number}`, body: 'Finish the accepted task.', state: 'open', labels: ['conductor:ready'] });
@@ -42,6 +42,37 @@ function coordinator({ repo, store = { save: async () => {} }, github, Client = 
   instance.base = async () => git(repo.root, 'rev-parse', 'HEAD');
   return instance;
 }
+
+test('only explicit issue resume can recover a PR creation intent with no remote receipt', async t => {
+  const { repo, temp } = await repository(t);
+  const worktree = path.join(temp, 'owned checkout');
+  const branch = 'conductor/issue-7';
+  await createWorktree({ repoRoot: repo.root, path: worktree, branch, baseRef: 'main' });
+  const job = { issue: 7, worktree, branch, phase: 'stopped', prepared: true, builderThreadId: 'original', pullCreationPending: true };
+  let lookupFailed = false;
+  const c = coordinator({ repo, github: { issue: async () => issue(7), pullForBranch: async target => {
+    assert.equal(target, branch);
+    if (lookupFailed) throw new Error('lookup failed');
+    return null;
+  } } });
+  c.state = { jobs: [job] };
+  c.wake = () => {};
+  assert.equal(await c.recoverRunnerJob(job), false);
+  assert.equal(job.phase, 'uncertain');
+  assert.equal(job.pullCreationPending, true);
+  lookupFailed = true;
+  await assert.rejects(c.resumeIssue({ issue: 7 }), /lookup failed/);
+  assert.equal(job.pullCreationPending, true);
+  lookupFailed = false;
+  await git(worktree, 'branch', '-m', 'other-branch');
+  await assert.rejects(c.resumeIssue({ issue: 7 }), /original worktree and issue branch could not be verified/);
+  assert.equal(job.pullCreationPending, true);
+  await git(worktree, 'branch', '-m', branch);
+  assert.deepEqual(await c.resumeIssue({ issue: 7 }), { resumed: 7 });
+  assert.equal(job.pullCreationPending, undefined);
+  assert.equal(job.builderThreadId, 'original');
+  assert.equal(job.phase, 'stopped');
+});
 
 test('failed repair launch retains exact pending PR feedback through explicit resume', async t => {
   const { repo } = await repository(t);

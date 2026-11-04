@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DirectorActivity } from './director-activity.mjs';
 import { inspectRepository } from './worktrees.mjs';
-import { runnerPause, RUNNER_PAUSED_MESSAGE } from './runner-state.mjs';
+import { isLiveOwner, runnerPause, RUNNER_PAUSED_MESSAGE } from './runner-state.mjs';
 
 const DIRECTOR_CONTEXT = 'This conversation is the configured Conductor director. Follow $conductor:director for this user request, reconcile current repository and issue state, and preserve holds, pauses, and approval boundaries.';
 const WAKEUP_MARKER = /<!--\s*conductor:director-wakeup:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\s*-->/ig;
@@ -28,14 +28,15 @@ export async function handleDirectorLifecycle(payload, { activityFactory = optio
   } catch { return { handled: false }; }
 
   const director = state.director;
+  const ownership = director?.threadHostOwnership;
+  const boundThread = director?.threadId === threadId && ownership?.host === 'codex-desktop' && (!ownership.threadId || ownership.threadId === threadId);
+  const pendingDestination = director?.handoff?.fromThreadId === director?.threadId && director?.handoff?.toThreadId === threadId && ownership?.host === 'codex-desktop' && (!ownership.threadId || ownership.threadId === director.threadId);
+  if (config.version !== 2 || (!boundThread && !pendingDestination)) return { handled: false };
+
   let owner;
   try { owner = JSON.parse(await readFile(join(repo.commonDir, 'conductor', 'coordinator.lock'), 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; owner = null; }
   const pause = runnerPause(state, owner);
-  const ownership = director?.threadHostOwnership;
-  const boundThread = director?.threadId === threadId && ownership?.host === 'codex-desktop' && (!ownership.threadId || ownership.threadId === threadId);
-  const pendingDestination = director?.handoff?.fromThreadId === director?.threadId && director.handoff.toThreadId === threadId && ownership?.host === 'codex-desktop' && (!ownership.threadId || ownership.threadId === director.threadId);
-  if (config.version !== 2 || (!boundThread && !pendingDestination)) return { handled: false };
 
   // Reject a new submission during the final binding write. The old turn's
   // terminal receipts remain admissible; blocked handoffs still allow recovery.
@@ -50,7 +51,19 @@ export async function handleDirectorLifecycle(payload, { activityFactory = optio
     const oldThread = boundThread && handoff?.fromThreadId === threadId && ['waiting-turn', 'blocked', 'switching'].includes(handoff.status);
     const oldTurn = oldThread && handoff.turnId === turnId;
     const destination = boundThread && event === 'PostToolUse' ? ownership?.lifecycleBaseline : null;
-    const activityInput = { threadId, turnId, event, wakeupMarker: event === 'UserPromptSubmit' ? wakeupMarker(payload.prompt) : null };
+    const marker = event === 'UserPromptSubmit' ? wakeupMarker(payload.prompt) : null;
+    if (pause && marker) {
+      const batch = director.batches?.find(item => item.id === marker && item.threadId === threadId);
+      const authorized = batch?.observation === true && typeof state.runnerPause?.at === 'string' && batch.observationPauseAt === state.runnerPause.at && !director.handoff
+        && state.serviceReady === true && isLiveOwner(owner) && state.ownerToken === owner.token
+        && ['submitting', 'queued', 'uncertain'].includes(batch.status)
+        && !batch.acknowledgedAt && !batch.queueCancellationConfirmed && !batch.nativeConsumed;
+      if (!authorized) {
+        if (batch) activity.blockWakeup({ threadId, turnId, batchId: marker });
+        return { handled: true, error: `${RUNNER_PAUSED_MESSAGE}. This queued director wake was blocked before execution.` };
+      }
+    }
+    const activityInput = { threadId, turnId, event, wakeupMarker: marker };
     if (destination) activityInput.enrollmentBaseline = destination;
     const status = await activity.record(activityInput);
     if (pendingDestination) return { handled: true, status, hookOutput: event === 'Stop' || event === 'Interrupt' ? {} : null };

@@ -36,8 +36,8 @@ async function fixture(t) {
   }();
   const host = new DirectorHost({ client, cwd: dir, repository: 'owner/repo', state, activity, save: async () => {} });
   await host.connect(); await host.ensureThread();
-  const events = new DirectorEvents({ state, threadId: THREAD, cwd: dir, host, execute: async () => assert.fail('No CLI queue fallback'), save: async () => {} });
   const c = new Coordinator({ repo: { root: dir }, config: { repository: 'owner/repo' }, store: { save: async () => {} } });
+  const events = new DirectorEvents({ state, threadId: THREAD, cwd: dir, host, execute: async () => assert.fail('No CLI queue fallback'), save: async () => {}, runnerPause: () => c.state.runnerPause });
   c.state = { director: state, jobs: [], admissionPaused: false }; c.director = { events }; c.directorHost = host; c.directorActivity = activity;
   t.after(async () => { activity.close(); await host.close(); await rm(dir, { recursive: true, force: true }); });
   return { activity, state, host, events, queue, calls: () => queueCalls, c };
@@ -191,4 +191,29 @@ test('explicit stop releases the service even when deleting its pending wake fai
   assert.equal(f.state.batches[0].cancellationRequired, true);
   f.c.store.save = async () => { throw new Error('old coordinator must not save after release'); };
   await assert.rejects(f.c.stop({ explicit: true }), /queue unavailable/);
+});
+
+test('a blocked automatic wake releases its batch while its events remain pending', async t => {
+  const f = await fixture(t);
+  await f.activity.record({ threadId: THREAD, turnId: 'manual', event: 'UserPromptSubmit' });
+  await f.activity.record({ threadId: THREAD, turnId: 'manual', event: 'Stop' });
+  await f.c.refreshDirectorActivity();
+  const ready = await f.events.emit({ kind: 'ready' });
+  await f.events.flush();
+  const batch = f.state.batches[0];
+  f.c.state.runnerPause = { reason: 'Stopped', at: 'now' };
+  f.state.enabled = false;
+  f.state.recoveryRequired = { batchId: batch.id, status: 'lifecycle-receipt-missing' };
+  f.queue.length = 0;
+  f.activity.blockWakeup({ threadId: THREAD, turnId: 'blocked', batchId: batch.id });
+  await f.c.refreshDirectorActivity();
+  assert.equal(batch.status, 'reconciled-ended');
+  assert.ok(f.state.recoveryRequired.resolvedAt);
+  assert.equal(f.state.nativeActivity.turnId, 'manual');
+  assert.deepEqual(f.activity.blockedWakeups(THREAD), []);
+  assert.deepEqual((await f.events.pending()).map(item => item.id), [ready.id]);
+  assert.equal(f.calls(), 1);
+  await f.c.resumeRunner();
+  assert.equal(f.calls(), 2);
+  assert.ok(f.state.batches.at(-1).eventIds.includes(ready.id));
 });

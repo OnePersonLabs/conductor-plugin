@@ -272,6 +272,21 @@ test('resume reconciles an interrupted job whose PR has landed before any worker
   assert.deepEqual(h.calls.launch, []);
 });
 
+test('explicit issue resume shares the capacity limit for runner-interrupted jobs', async () => {
+  const jobs = [1, 2].map(issue => ({ issue, phase: 'stopped', prepared: true, builderThreadId: `builder-${issue}`,
+    runnerInterrupted: { phase: 'building', role: 'builder', turnId: `turn-${issue}` } }));
+  const h = fixture({ jobs, issues: [makeIssue(1), makeIssue(2)], agents: 1 });
+  const c = h.coordinator;
+  for (const job of jobs) job.eligibilityRevision = (await c.director.snapshot(job.issue)).revision;
+  c.state.runnerPause = { reason: 'Stopped', at: 'now' };
+  await c.resumeRunner();
+  await c.scan();
+  assert.deepEqual(h.calls.launch, [1]);
+  await assert.rejects(c.resumeIssue({ issue: 2, expectedRevision: jobs[1].eligibilityRevision }), /No issue capacity/);
+  assert.equal(jobs[1].phase, 'stopped');
+  assert.ok(jobs[1].runnerInterrupted);
+});
+
 test('stop blocks PR creation when it arrives during the branch receipt lookup', async () => {
   const h = fixture();
   const c = h.coordinator;

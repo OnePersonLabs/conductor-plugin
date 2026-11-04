@@ -47,6 +47,26 @@ test('a deliberate stop ignores passive signals but permits explicit observation
   assert.equal(launches, 1);
 });
 
+test('cold resume waits for the persisted pause to clear after the observer is ready', async t => {
+  const pause = { reason: 'Stopped', at: 'saved' };
+  const { base, store } = await fixture(t, { runtimeEnabled: true, runnerPause: pause, director: { threadId: THREAD, enabled: false } });
+  const statePath = join(store.dir, 'state.json');
+  let clearing;
+  t.after(async () => { await clearing; });
+  const result = await ensureService({ store, root: base, resumeRunner: true, cliPath: 'conductor.mjs', timeoutMs: 2_000,
+    execute: async (_command, args) => {
+      assert.ok(args.includes('--resume-runner'));
+      await atomicJSON(store.lockPath, { token: 'live', pid: process.pid, hostname: hostname(), platform: process.platform });
+      const ready = { version: 1, jobs: [], runtimeEnabled: true, ownerToken: 'live', serviceReady: true, director: { threadId: THREAD, enabled: false } };
+      await atomicJSON(statePath, { ...ready, runnerPause: pause });
+      clearing = new Promise((resolve, reject) => setTimeout(() => atomicJSON(statePath, { ...ready, director: { ...ready.director, enabled: true } }).then(resolve, reject), 120));
+      return { unref() {} };
+    } });
+  assert.equal(result.status, 'resumed');
+  assert.equal(result.runnerPause, null);
+  assert.equal((await store.read()).runnerPause, undefined);
+});
+
 test('passive signal recognizes a saved enabled binding', async t => {
   const { base, store } = await fixture(t, { director: { threadId: THREAD, enabled: true } });
   let launches = 0;

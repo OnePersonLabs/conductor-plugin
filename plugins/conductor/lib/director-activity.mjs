@@ -30,6 +30,13 @@ export class DirectorActivity {
         revision INTEGER NOT NULL,
         updated_at TEXT NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS director_blocked_wakeup (
+        thread_id TEXT NOT NULL,
+        batch_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        blocked_at TEXT NOT NULL,
+        PRIMARY KEY (thread_id, batch_id)
+      ) STRICT;
     `);
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -53,9 +60,27 @@ export class DirectorActivity {
 
   async pruneExcept(threadIds) {
     if (!Array.isArray(threadIds) || threadIds.some(id => typeof id !== 'string' || !id)) throw new TypeError('threadIds must be an array of nonempty thread IDs.');
-    if (!threadIds.length) { this.db.exec('DELETE FROM director_activity'); return; }
+    if (!threadIds.length) { this.db.exec('DELETE FROM director_activity; DELETE FROM director_blocked_wakeup'); return; }
     const placeholders = threadIds.map(() => '?').join(',');
     this.db.prepare(`DELETE FROM director_activity WHERE thread_id NOT IN (${placeholders})`).run(...threadIds);
+    this.db.prepare(`DELETE FROM director_blocked_wakeup WHERE thread_id NOT IN (${placeholders})`).run(...threadIds);
+  }
+
+  blockWakeup({ threadId, turnId, batchId }) {
+    identity(threadId, 'threadId');
+    identity(turnId, 'turnId');
+    if (!MARKER.test(batchId ?? '')) throw new TypeError('batchId must be a UUID.');
+    this.db.prepare(`INSERT OR IGNORE INTO director_blocked_wakeup (thread_id, batch_id, turn_id, blocked_at)
+      VALUES (?, ?, ?, ?)`).run(threadId, batchId, turnId, new Date().toISOString());
+  }
+
+  blockedWakeups(threadId) {
+    return this.db.prepare(`SELECT batch_id AS batchId, turn_id AS turnId, blocked_at AS blockedAt
+      FROM director_blocked_wakeup WHERE thread_id = ?`).all(threadId);
+  }
+
+  clearBlockedWakeup(threadId, batchId) {
+    this.db.prepare('DELETE FROM director_blocked_wakeup WHERE thread_id = ? AND batch_id = ?').run(threadId, batchId);
   }
 
   async record({ threadId, turnId, event, wakeupMarker = null, enrollmentBaseline = null }) {
