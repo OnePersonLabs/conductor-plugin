@@ -2,6 +2,7 @@ import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hostname } from 'node:os';
 import { processExists } from './state.mjs';
+import { runnerPause } from './runner-state.mjs';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -46,19 +47,21 @@ export async function runnerEnabled(store) {
     : state.runtimeEnabled === true;
 }
 
-export async function ensureService({ store, root, threadId, enable = false, manualWake = false, attachThreadId,
+export async function ensureService({ store, root, threadId, enable = false, manualWake = false, resumeRunner = false, attachThreadId,
   host, execute, cliPath, timeoutMs = 30_000 }) {
   let saved = await store.read();
   let enabled = await runnerEnabled(store);
   if (!enabled && !enable && !attachThreadId) return { status: 'disabled' };
-  if (!enable && !manualWake && saved.director?.enabled === false) return { status: 'stopped', threadId: saved.director?.threadId ?? null };
+  const initialPause = runnerPause(saved, await store.owner());
+  if (!enable && !manualWake && !resumeRunner && !attachThreadId && (initialPause || saved.director?.enabled === false)) return { status: initialPause ? 'paused' : 'stopped', runnerPause: initialPause, threadId: saved.director?.threadId ?? null };
 
   const release = await acquire(store, timeoutMs);
   try {
     const state = saved = await store.read();
     enabled = await runnerEnabled(store);
     if (!enabled && !enable && !attachThreadId) return { status: 'disabled', threadId: state.director?.threadId ?? null };
-    if (!enable && !manualWake && state.director?.enabled === false) return { status: 'stopped', threadId: state.director?.threadId ?? null };
+    const pause = runnerPause(state, await store.owner());
+    if (!enable && !manualWake && !resumeRunner && !attachThreadId && (pause || state.director?.enabled === false)) return { status: pause ? 'paused' : 'stopped', runnerPause: pause, threadId: state.director?.threadId ?? null };
     if (threadId && state.director?.threadId && state.director.threadId !== threadId && !attachThreadId) {
       throw new Error(`Repository is bound to director thread ${state.director.threadId}; rebind explicitly before changing it.`);
     }
@@ -74,6 +77,12 @@ export async function ensureService({ store, root, threadId, enable = false, man
     const owner = await store.owner();
     const isLive = owner?.hostname === hostname() && owner.platform === process.platform && processExists(owner.pid);
     if (owner && isLive) {
+      if (resumeRunner) {
+        const request = await store.sendRequest({ op: 'resume-runner', repository: state.repository, threadId: state.director?.threadId });
+        const receipt = request.completed ? request : await waitForControlResult(store, request.id, timeoutMs);
+        if (receipt?.error) throw new Error(`Conductor could not resume: ${receipt.error}`);
+        return { status: receipt ? 'resumed' : 'resume-requested', ...(receipt?.result ?? {}), threadId: state.director?.threadId ?? null, requestId: request.id, pid: owner.pid };
+      }
       if (attachThreadId) {
         if (state.director?.attachProtocol !== 1) throw new Error('The running Conductor service does not support chat handoff. Update the plugin and restart this repository service, then retry attach.');
         const request = await store.sendRequest({ op: 'attach', repository: state.repository, threadId: state.director?.threadId ?? attachThreadId, targetThreadId: attachThreadId });
@@ -101,6 +110,7 @@ export async function ensureService({ store, root, threadId, enable = false, man
     if (host) args.push('--host', host);
     if (enable || attachThreadId) args.push('--enable');
     if (manualWake) args.push('--manual-wake');
+    if (resumeRunner) args.push('--resume-runner');
     const child = await execute(process.execPath, args, { cwd: root, detached: true, windowsHide: true, stdio: 'ignore' });
     child.unref?.();
     const started = Date.now();
@@ -114,8 +124,12 @@ export async function ensureService({ store, root, threadId, enable = false, man
             if (handoff?.toThreadId === attachThreadId) return { ...handoff, fromThreadId: liveState.director.threadId, handoffStatus: handoff.status, status: 'handoff-pending', blocker: handoff.blocker ?? 'Waiting for the old native turn to finish.', pid: current.pid };
             throw new Error(`Conductor became ready without binding ${attachThreadId} or recording its pending handoff; inspect status before retrying.`);
           }
-          return { status: attachThreadId ? 'attached' : 'started', threadId: liveState.director?.threadId ?? threadId ?? null, nativeStatus: liveState.director?.nativeActivity?.state ?? 'unknown', pid: current.pid };
+          return { status: attachThreadId ? 'attached' : resumeRunner ? 'resumed' : 'started', runnerPause: liveState.runnerPause ?? null, threadId: liveState.director?.threadId ?? threadId ?? null, nativeStatus: liveState.director?.nativeActivity?.state ?? 'unknown', pid: current.pid };
         }
+      }
+      if (child.pid && !processExists(child.pid)) {
+        const failed = await store.read();
+        throw new Error(`Conductor exited during startup: ${failed.startupError ?? 'inspect the service log for details'}`);
       }
       await delay(100);
     }
@@ -126,6 +140,7 @@ export async function ensureService({ store, root, threadId, enable = false, man
 export async function signalIfEnabled({ store, root, execute, cliPath }) {
   const state = await store.read();
   if (!await runnerEnabled(store)) return { status: 'disabled' };
-  if (state.director?.enabled === false) return { status: 'stopped', threadId: state.director.threadId ?? null };
+  const pause = runnerPause(state, await store.owner());
+  if (pause || state.director?.enabled === false) return { status: pause ? 'paused' : 'stopped', runnerPause: pause, threadId: state.director.threadId ?? null };
   return ensureService({ store, root, execute, cliPath });
 }

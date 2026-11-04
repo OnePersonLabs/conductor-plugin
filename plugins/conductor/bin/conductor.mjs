@@ -2,13 +2,12 @@
 import { createInterface } from 'node:readline';
 import { watch, realpathSync } from 'node:fs';
 import { readFileSync, copyFileSync, mkdirSync } from 'node:fs';
-import { spawn } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { hostname } from 'node:os';
 import { inspectRepository } from '../lib/worktrees.mjs';
 import { loadConfig } from '../lib/config.mjs';
-import { Store, prepareServiceLog, appendServiceLog } from '../lib/state.mjs';
+import { Store } from '../lib/state.mjs';
 import { Coordinator } from '../lib/coordinator.mjs';
 import { GitHub } from '../lib/github.mjs';
 import { applyMigration, previewMigration } from '../lib/migration.mjs';
@@ -16,12 +15,16 @@ import { processExists } from '../lib/state.mjs';
 import { atomicJSON } from '../lib/state.mjs';
 import { ensureService, signalIfEnabled } from '../lib/bootstrap.mjs';
 import { git } from '../lib/process.mjs';
+import { launchService, createReporter, activityLines } from '../lib/console.mjs';
+import { runnerPause, RUNNER_PAUSED_MESSAGE } from '../lib/runner-state.mjs';
 
 const HELP = `Conductor 0.1.0 -- conversational GitHub issue director
 Usage: conductor enable [--thread UUID]
        conductor enable --host desktop --thread UUID
        conductor attach --host desktop --thread UUID
        conductor wakeup
+       conductor resume                   (wake and resume runner-interrupted work)
+       conductor resume ISSUE             (recover an individual issue)
        conductor observe                   (ensure observation without ending interaction)
        conductor signal                    (internal, passive)
        conductor start --thread UUID       (compatibility)
@@ -44,7 +47,7 @@ export function parseArgs(args) {
     if (args.length) throw new Error('cleanup accepts only --preview.');
     result.preview = option === '--preview'; return result;
   }
-  if (['cancel','resume'].includes(result.command)) {
+  if (result.command === 'cancel' || (result.command === 'resume' && args.length)) {
     result.issue = Number(args.shift());
     if (!Number.isSafeInteger(result.issue) || result.issue < 1) throw new Error(`${result.command} requires a positive issue number.`);
   }
@@ -60,6 +63,7 @@ export function parseArgs(args) {
     else if (flag === '--handoff-thread' && result.command === 'serve') { result.handoffThreadId = args.shift(); if (!result.handoffThreadId) throw new Error('--handoff-thread requires a thread ID.'); }
     else if (flag === '--enable' && result.command === 'serve') result.enable = true;
     else if (flag === '--manual-wake' && result.command === 'serve') result.manualWake = true;
+    else if (flag === '--resume-runner' && result.command === 'serve') result.resumeRunner = true;
     else if (flag === '--request-file' && result.command === 'rpc') { result.requestFile = args.shift(); if (!result.requestFile) throw new Error('--request-file requires a JSON file.'); }
     else if (flag === '--apply' && result.command === 'migrate') result.apply = true;
     else if (flag === '--mapping' && result.command === 'migrate') { result.mappingFile = args.shift(); if (!result.mappingFile) throw new Error('--mapping requires a JSON file.'); }
@@ -78,24 +82,13 @@ async function main() {
   if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
   if (args.includes('--version')) { console.log('0.1.0'); return; }
   const options = parseArgs(args);
-  if (options.command === 'serve' && process.env.CONDUCTOR_SERVICE_LOG) {
-    const earlyLogPath = process.env.CONDUCTOR_SERVICE_LOG;
-    const writeLog = (chunk, encoding, callback) => {
-      const done = typeof encoding === 'function' ? encoding : callback;
-      try { appendServiceLog(earlyLogPath, Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk)); done?.(); return true; }
-      catch (error) { if (done) { done(error); return false; } throw error; }
-    };
-    process.stdout.write = writeLog;
-    process.stderr.write = writeLog;
-  }
   const repo = await inspectRepository(process.cwd());
   const store = new Store(repo.commonDir);
   const cliPath = fileURLToPath(import.meta.url);
   const launch = async (command, argv, spawnOptions) => {
     const logPath = resolve(store.dir, 'service.log');
     mkdirSync(store.dir, { recursive: true });
-    await prepareServiceLog(logPath);
-    return spawn(command, argv, { ...spawnOptions, env: { ...process.env, CONDUCTOR_SERVICE_LOG: logPath }, stdio: 'ignore' });
+    return launchService(command, argv, { ...spawnOptions, logPath });
   };
   if (options.command === 'migrate') {
     const raw = JSON.parse(readFileSync(resolve(repo.root, 'conductor.json'), 'utf8'));
@@ -131,7 +124,8 @@ async function main() {
   }
   if (options.command === 'status') {
     const state = await store.read(); const owner = await store.owner();
-    console.log(JSON.stringify({ owner, ...state, controls: await store.results() }, null, 2)); return;
+    const effective = { ...state, runnerPause: runnerPause(state, owner) };
+    console.log(JSON.stringify({ owner, ...effective, activity: activityLines(effective), controls: await store.results() }, null, 2)); return;
   }
   if (options.command === 'cleanup') {
     let configVerified = false;
@@ -143,14 +137,15 @@ async function main() {
     const result = await store.cleanupStopped(Date.now(), repo.root, configVerified);
     console.log(JSON.stringify(result, null, 2)); return;
   }
-  if (['start','enable','wakeup','observe','attach'].includes(options.command)) {
+  if (['start','enable','wakeup','observe','attach'].includes(options.command) || (options.command === 'resume' && !options.issue)) {
     if (options.command === 'start' && !options.threadId) throw new Error('Start requires --thread with the existing director chat UUID. Use `conductor enable` to create or resume the configured director automatically.');
     const enabled = options.command === 'start' || options.command === 'enable' || options.command === 'attach';
     const result = await ensureService({ store, root: repo.root, threadId: options.threadId, attachThreadId: options.command === 'attach' ? options.threadId : undefined, host: options.host,
-      enable: enabled, manualWake: options.command === 'wakeup',
+      enable: enabled, manualWake: options.command === 'wakeup', resumeRunner: options.command === 'resume',
       execute: launch, cliPath });
     if (result.status === 'disabled') throw new Error('Conductor is not enabled for this repository. Run `conductor enable` explicitly first.');
-    console.log(JSON.stringify({ ...result, repository: (await loadConfig(repo.root)).repository, logPath: resolve(store.dir, 'service.log') })); return;
+    const state = await store.read();
+    console.log(JSON.stringify({ ...result, repository: (await loadConfig(repo.root)).repository, activity: activityLines({ ...state, runnerPause: runnerPause(state, await store.owner()) }), logPath: resolve(store.dir, 'service.log') })); return;
   }
   if (options.command === 'signal') {
     const result = await signalIfEnabled({ store, root: repo.root, execute: launch, cliPath });
@@ -174,27 +169,24 @@ async function main() {
     console.log(`${options.command} queued (${queued.id}); use status to inspect the resulting state.`); return;
   }
   if (options.command === 'run') throw new Error('The legacy foreground runner no longer starts work. Bind and start the conversational director with `conductor start --thread UUID`.');
-  if (options.command === 'serve') {
-    const serviceLog = resolve(store.dir, 'service.log');
-    console.log = (...values) => appendServiceLog(serviceLog, values.join(' '));
-    console.error = (...values) => appendServiceLog(serviceLog, values.join(' '));
-    console.warn = (...values) => appendServiceLog(serviceLog, values.join(' '));
-  }
   const config = await loadConfig(repo.root, options.overrides);
   const coordinator = new Coordinator({ repo, config, store });
-  coordinator.on('notice', message => console.error(message));
+  await serve({ coordinator, store, config, options });
+}
+
+export async function serve({ coordinator, store, config, options = {}, inputStream = process.stdin, signals = process }) {
+  const report = createReporter(resolve(store.dir, 'service.log'));
+  const error = message => report(`ERROR: ${message}`, { error: true });
+  coordinator.on('notice', message => report(message));
   coordinator.on('request', request => {
     const reviewer = request.role === 'reviewer';
-    console.log(`\nIssue #${request.issue} ${request.role ?? 'builder'} session needs input (${request.method}).\n${JSON.stringify(request.params, null, 2)}\n${reviewer ? 'Reviewer requests cannot be approved; stop and reconcile the read-only review.' : `Answer with: answer ${request.key} <explicit decision or JSON response>`}\nEnter alone only scans GitHub.`);
+    report(`WAITING FOR YOU -- Issue #${request.issue} ${request.role ?? 'builder'} needs input (${request.method}).\n${JSON.stringify(request.params, null, 2)}\n${reviewer ? 'Reviewer requests cannot be approved; stop and reconcile the read-only review.' : `Answer in the director chat or enter: answer ${request.key} <explicit decision or JSON response>`}`);
   });
-  const seen = new Map();
+  let seen = new Set();
   coordinator.on('status', state => {
-    for (const job of state.jobs) {
-      const sessions = [job.builderThreadId ?? job.threadId, job.reviewerThreadId].filter(Boolean).map((id, index) => `${index ? 'reviewer' : 'builder'}:${id}`).join(' ');
-      const role = ['building','reviewing','launching','starting','preparing'].includes(job.phase) ? job.activeRole : ['stopped','uncertain','blocked','repair','review'].includes(job.phase) ? job.nextRole ?? job.activeRole : null;
-      const line = `#${job.issue} ${job.phase}${role ? ` (${role})` : ''}${job.pr ? ` PR #${job.pr}` : ''}${sessions ? ` ${sessions}` : ''}${job.lastError ? ` -- ${job.lastError}` : ''}`;
-      if (seen.get(job.issue) !== line) { console.log(line); seen.set(job.issue, line); }
-    }
+    const lines = activityLines(state);
+    for (const line of lines) if (!seen.has(line)) report(line);
+    seen = new Set(lines);
   });
   let controlsRunning = false, controlsReady = false;
   async function controls() {
@@ -209,42 +201,50 @@ async function main() {
         if (request.op) {
           let failure, result;
           try { result = await coordinator.control(request); }
-          catch (error) { failure = error.message; console.error(error.message); }
+          catch (failureError) { failure = failureError.message; error(failure); }
           await store.acknowledge(request, failure, result);
-          if (request.op === 'stop') { await coordinator.stop(); break; }
+          if (request.op === 'stop' && !failure) { await coordinator.stop({ explicit: true }); break; }
           continue;
         }
         if (request.command === 'stop') {
-          // Stop itself has no external side effect beyond retaining work and releasing
-          // ownership. Acknowledge before release; later commands remain for the next run.
+          // The stop gate must survive even if Windows cuts the remaining drain short.
+          await coordinator.pauseRunner('Stopped by the operator');
           await store.acknowledge(request); await coordinator.stop({ explicit: true }); break;
         }
         let failure;
         try {
           if (request.command === 'signal') coordinator.wake();
           else if (request.command === 'cancel') await coordinator.cancel(request.issue);
-          else if (request.command === 'resume') await coordinator.resume(request.issue, request.threadId, request.role);
+          else if (request.command === 'resume') await coordinator.resumeIssue({ issue: request.issue, workerThreadId: request.threadId, role: request.role });
           else throw new Error(`Unknown queued command: ${request.command}`);
-        } catch (error) { failure = error.message; console.error(error.message); }
+        } catch (failureError) { failure = failureError.message; error(failure); }
         await store.acknowledge(request, failure);
       }
-    } catch (error) { console.error(error.message); }
+    } catch (failure) { error(failure.message); }
     finally { controlsRunning = false; }
   }
-  const input = createInterface({ input: process.stdin, terminal: false });
+  let stopRequested = false;
+  const stop = async () => {
+    stopRequested = true;
+    if (!coordinator.state) return;
+    try { await coordinator.stop({ explicit: true }); }
+    catch (failure) { error(failure.message); process.exitCode = 1; }
+  };
+  const input = createInterface({ input: inputStream, terminal: false });
   input.on('line', line => {
     const trimmed = line.trim();
-    if (!trimmed) { coordinator.wake(); return; }
-    if (trimmed === 'stop') { coordinator.stop().catch(error => console.error(error.message)); return; }
+    if (!trimmed) { if (controlsReady) coordinator.wake(); return; }
+    if (trimmed === 'stop') { void stop(); return; }
+    if (trimmed === 'resume') { if (controlsReady) coordinator.resumeRunner().catch(failure => error(failure.message)); return; }
     const match = /^answer\s+(\S+)\s+(.+)$/.exec(trimmed);
-    if (match) coordinator.answer(match[1], match[2]).catch(error => console.error(error.message));
-    else console.error('Enter scans; use answer ISSUE:REQUEST VALUE for a pending question, or stop.');
+    if (match && controlsReady) coordinator.answer(match[1], match[2]).catch(failure => error(failure.message));
+    else error('Enter checks for changes; use resume, stop, or answer ISSUE:REQUEST VALUE.');
   });
-  const onSignal = () => coordinator.stop().catch(error => { console.error(error.message); process.exitCode = 1; });
-  process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal);
-  let watcher, fallback;
-  function cleanup() { watcher?.close(); clearInterval(fallback); input.close(); process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal); }
-  coordinator.once('stopped', cleanup);
+  const onSignal = () => { void stop(); };
+  for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) signals.on(name, onSignal);
+  let watcher, fallback, heartbeat;
+  function cleanup() { watcher?.close(); clearInterval(fallback); clearInterval(heartbeat); input.close(); for (const name of ['SIGINT','SIGTERM','SIGHUP','SIGBREAK']) signals.removeListener(name, onSignal); }
+  coordinator.once('stopped', () => { report(coordinator.state?.runnerPause ? RUNNER_PAUSED_MESSAGE : 'Runner stopped; saved work is retained'); cleanup(); });
   try {
     const saved = await store.read();
     if (options.threadId && saved.director?.threadId && saved.director.threadId !== options.threadId) throw new Error('Director thread is not bound to this repository. Start with its saved binding or explicitly reconcile the binding.');
@@ -253,11 +253,18 @@ async function main() {
     await store.initialize();
     watcher = watch(store.controls, () => controls());
     fallback = setInterval(controls, 1000);
-  console.log(`Conductor director: ${config.repository}; ${config.agents} worker slot(s); external reconciliation every ${config.pollMs / 60000}m.`);
-    await coordinator.start({ threadId: options.threadId, host: options.host, enable: options.enable === true, manualWake: options.manualWake === true, attachOnly: options.attachOnly, handoffThreadId: options.handoffThreadId, beforeScan: async () => { controlsReady = true; await controls(); } });
+    process.title = `Conductor: ${config.repository}`;
+    report(`Conductor: ${config.repository}; ${config.agents} worker slot(s). Ctrl+C or closing this window pauses work. Run conductor resume from this project to continue.`);
+    heartbeat = setInterval(() => { if (controlsReady && coordinator.state && !coordinator.stopping) report(activityLines(coordinator.state)[0]); }, 60_000);
+    await coordinator.start({ threadId: options.threadId, host: options.host, enable: options.enable === true, manualWake: options.manualWake === true, resumeRunner: options.resumeRunner === true, attachOnly: options.attachOnly, handoffThreadId: options.handoffThreadId, beforeScan: async () => { controlsReady = true; if (stopRequested) await stop(); else await controls(); } });
   } catch (error) { cleanup(); throw error; }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(resolve(process.argv[1]))).href) {
-  main().catch(error => { console.error(`conductor: ${error.message}`); process.exitCode = 1; });
+  main().catch(error => {
+    const message = `conductor: ${error.message}`;
+    if (process.env.CONDUCTOR_SERVICE_LOG) createReporter(process.env.CONDUCTOR_SERVICE_LOG)(message, { error: true });
+    else console.error(message);
+    process.exitCode = 1;
+  });
 }

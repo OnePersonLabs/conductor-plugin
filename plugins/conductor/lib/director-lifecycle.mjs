@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DirectorActivity } from './director-activity.mjs';
 import { inspectRepository } from './worktrees.mjs';
+import { runnerPause, RUNNER_PAUSED_MESSAGE } from './runner-state.mjs';
 
 const DIRECTOR_CONTEXT = 'This conversation is the configured Conductor director. Follow $conductor:director for this user request, reconcile current repository and issue state, and preserve holds, pauses, and approval boundaries.';
 const WAKEUP_MARKER = /<!--\s*conductor:director-wakeup:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\s*-->/ig;
@@ -27,6 +28,10 @@ export async function handleDirectorLifecycle(payload, { activityFactory = optio
   } catch { return { handled: false }; }
 
   const director = state.director;
+  let owner;
+  try { owner = JSON.parse(await readFile(join(repo.commonDir, 'conductor', 'coordinator.lock'), 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; owner = null; }
+  const pause = runnerPause(state, owner);
   const ownership = director?.threadHostOwnership;
   const boundThread = director?.threadId === threadId && ownership?.host === 'codex-desktop' && (!ownership.threadId || ownership.threadId === threadId);
   const pendingDestination = director?.handoff?.fromThreadId === director?.threadId && director.handoff.toThreadId === threadId && ownership?.host === 'codex-desktop' && (!ownership.threadId || ownership.threadId === director.threadId);
@@ -52,6 +57,10 @@ export async function handleDirectorLifecycle(payload, { activityFactory = optio
     if (oldThread && (event === 'UserPromptSubmit' || (oldTurn && event === 'PostToolUse'))) {
       const handoffContext = `Conductor is handing this director to Desktop chat ${handoff.toThreadId}. Finish only the current operation, do not begin another issue or queue another wake, summarize the handoff, and end this turn. Do not wait for the replacement chat.`;
       const additionalContext = event === 'UserPromptSubmit' ? `${DIRECTOR_CONTEXT}\n\n${handoffContext}` : handoffContext;
+      return { handled: true, status, hookOutput: { hookSpecificOutput: { hookEventName: event, additionalContext } } };
+    }
+    if (pause && ['UserPromptSubmit', 'PostToolUse'].includes(event)) {
+      const additionalContext = `${DIRECTOR_CONTEXT}\n\n${RUNNER_PAUSED_MESSAGE}. Reason: ${pause.reason}. Report this state and the resume action clearly. This turn may inspect state and answer the user, but must not start workers, publish changes, or automatically resume execution. Internal events are not permission to resume. Only an explicit user resume request may run conductor resume. Finish any already-issued operation, preserve unresolved recovery, and end this turn.`;
       return { handled: true, status, hookOutput: { hookSpecificOutput: { hookEventName: event, additionalContext } } };
     }
     return event === 'UserPromptSubmit'

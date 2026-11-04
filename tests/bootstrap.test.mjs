@@ -87,6 +87,9 @@ test('enable starts a threadless service and waits for owned readiness', async t
 });
 
 test('CLI accepts lifecycle commands and preserves explicit existing binding syntax', () => {
+  assert.deepEqual(parseArgs(['resume']), { command: 'resume', overrides: {} });
+  assert.deepEqual(parseArgs(['resume', '42', '--role', 'reviewer']), { command: 'resume', overrides: {}, issue: 42, role: 'reviewer' });
+  assert.throws(() => parseArgs(['resume', '--role', 'builder']), /positive issue number/);
   assert.deepEqual(parseArgs(['enable']), { command: 'enable', overrides: {} });
   assert.deepEqual(parseArgs(['wakeup']), { command: 'wakeup', overrides: {} });
   assert.deepEqual(parseArgs(['enable', '--host', 'desktop', '--thread', THREAD]), { command: 'enable', overrides: {}, host: 'desktop', threadId: THREAD });
@@ -98,6 +101,30 @@ test('CLI accepts lifecycle commands and preserves explicit existing binding syn
   assert.deepEqual(parseArgs(['serve', '--enable', '--manual-wake']), { command: 'serve', overrides: {}, enable: true, manualWake: true });
   assert.deepEqual(parseArgs(['serve', '--host', 'daemon']), { command: 'serve', overrides: {}, host: 'daemon' });
   assert.equal(parseArgs(['start', '--thread', THREAD]).threadId, THREAD);
+});
+
+test('lost ready owner requires explicit resume; passive signals cannot replace it', async t => {
+  const { base, store } = await fixture(t, { runtimeEnabled: true, running: true, serviceReady: true, ownerToken: 'dead', director: { threadId: THREAD, enabled: true } });
+  const result = await signalIfEnabled({ store, root: base, cliPath: 'conductor.mjs', execute: async () => assert.fail('must not launch') });
+  assert.equal(result.status, 'paused');
+  assert.match(result.runnerPause.reason, /exited/);
+  const result2 = await ensureService({ store, root: base, resumeRunner: true, cliPath: 'conductor.mjs', timeoutMs: 500, execute: async (_command, args) => {
+    assert.ok(args.includes('--resume-runner'));
+    await atomicJSON(store.lockPath, { token: 'new', pid: process.pid, hostname: hostname(), platform: process.platform });
+    await store.save({ version: 1, jobs: [], runtimeEnabled: true, running: true, serviceReady: true, ownerToken: 'new', director: { threadId: THREAD, enabled: true } });
+    return { unref() {} };
+  } });
+  assert.equal(result2.status, 'resumed');
+});
+
+test('bare resume uses the owning service and reports its refusal', async t => {
+  const { base, store } = await fixture(t, { runtimeEnabled: true, runnerPause: { reason: 'user stopped' }, repository: 'owner/repo', director: { threadId: THREAD, enabled: false } });
+  await atomicJSON(store.lockPath, { token: 'live', pid: process.pid, hostname: hostname(), platform: process.platform });
+  store.sendRequest = async request => {
+    assert.equal(request.op, 'resume-runner');
+    return { id: 'test', completed: true, error: 'Unresolved worker ownership' };
+  };
+  await assert.rejects(ensureService({ store, root: base, resumeRunner: true, cliPath: 'conductor.mjs', execute: async () => assert.fail('duplicate launch') }), /Unresolved worker ownership/);
 });
 
 test('attach refuses an old live service before enqueueing an unsupported control', async t => {

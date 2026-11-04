@@ -10,6 +10,19 @@ import { DirectorEvents } from '../plugins/conductor/lib/director-events.mjs';
 
 const DESTINATION = '019c6e27-e55b-73d1-87d8-4e01f1f75046';
 
+test('a lost runner makes the bound director observation-only at the next tool boundary', async t => {
+  const { root, dir, threadId } = await fixture(t);
+  const file = join(dir, 'state.json'), state = JSON.parse(await readFile(file, 'utf8'));
+  state.running = true; state.serviceReady = true; state.ownerToken = 'missing-owner';
+  await writeFile(file, JSON.stringify(state));
+  const result = await handleDirectorLifecycle({ cwd: root, session_id: threadId, turn_id: 'running-turn', hook_event_name: 'PostToolUse' });
+  assert.equal(result.handled, true);
+  assert.match(result.hookOutput.hookSpecificOutput.additionalContext, /PAUSED -- run conductor resume/);
+  assert.match(result.hookOutput.hookSpecificOutput.additionalContext, /must not start workers/);
+  const unrelated = await handleDirectorLifecycle({ cwd: root, session_id: 'ordinary-chat', turn_id: 'turn', hook_event_name: 'UserPromptSubmit' });
+  assert.equal(unrelated.handled, false);
+});
+
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'conductor-activity-'));
   const git = (...args) => {
