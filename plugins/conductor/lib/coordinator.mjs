@@ -16,6 +16,7 @@ import { watch } from 'node:fs';
 import { builderPrompt, createRequestRevision, parseResult, parseReviewResult, reviewPrompt, resultSchema, reviewResultSchema } from './prompts.mjs';
 import { validateDesignHandoff } from './design-handoff.mjs';
 import { runnerPause, RUNNER_PAUSED_MESSAGE } from './runner-state.mjs';
+import { cleanupWorktrees, heldWorktreeIssues } from './cleanup.mjs';
 
 const skillPath = fileURLToPath(new URL('../skills/github-workflow/SKILL.md', import.meta.url));
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -71,6 +72,7 @@ export class Coordinator extends EventEmitter {
       if (this.state.environment && JSON.stringify(this.state.environment) !== JSON.stringify(environment) && this.state.jobs.some(job => !['complete','cancelled'].includes(job.phase))) throw new Error('Unfinished builders belong to a different OS or Codex home. Resume in that environment; no replacement builder was started.');
       this.state.environment = environment;
       this.state.repository = this.config.repository; this.state.root = this.repo.root;
+      await this.cleanupCompletedWorktrees();
       this.state.serviceReady = false;
       this.state.ownerToken = this.store.token;
       delete this.state.startupError;
@@ -183,9 +185,19 @@ export class Coordinator extends EventEmitter {
     if (!this.ready || this.stopping || runnerPause(this.state) || this.state?.director?.handoff) return Promise.resolve();
     const now = Date.now();
     const cleanup = now - this.lastCleanupAt >= 60_000
-      ? (this.lastCleanupAt = now, this.store.cleanupOwned().catch(error => this.emit('notice', `Retention cleanup: ${error.message}`)))
+      ? (this.lastCleanupAt = now, this.store.cleanupOwned().then(() => this.cleanupCompletedWorktrees()).catch(error => this.emit('notice', `Retention cleanup: ${error.message}`)))
       : Promise.resolve();
     return cleanup.then(() => this.loop.wake());
+  }
+  cleanupCompletedWorktrees() {
+    if (this.worktreeCleanup) return this.worktreeCleanup;
+    this.lastCleanupAt = Date.now();
+    this.worktreeCleanup = cleanupWorktrees({ repoRoot: this.repo.root, jobs: this.state.jobs,
+      busyIssues: new Set([...this.clients.keys(), ...this.tasks.keys(), ...this.preparations.keys()]),
+      heldIssues: heldWorktreeIssues(this.state), save: () => this.save(), notice: message => this.emit('notice', message),
+    }).catch(error => { this.emit('notice', `Worktree cleanup failed: ${error.message}`); })
+      .finally(() => { this.worktreeCleanup = null; });
+    return this.worktreeCleanup;
   }
   async refreshDirectorActivity() {
     if (!this.directorActivity || this.stopping || this.activityRefreshing) return;
@@ -1010,7 +1022,7 @@ export class Coordinator extends EventEmitter {
       job.deliveredHead = pull.headRefOid && pull.headRefOid === job.checkHead ? pull.headRefOid : null;
       delete job.runnerInterrupted; delete job.deliveryReconciliationRequired; job.mergeArmed = false;
       delete job.designHandoff; delete job.designHandoffValidation;
-      await this.save(); await this.progress(job); return;
+      await this.save(); await this.cleanupCompletedWorktrees(); await this.progress(job); return;
     }
     if (pull.state === 'CLOSED') { job.phase = 'blocked'; job.summary = 'PR closed without merge; acceptance remains open.'; await this.save(); await this.progress(job); return; }
     const currentIssue = await this.github.issue(job.issue);
@@ -1247,7 +1259,7 @@ export class Coordinator extends EventEmitter {
         const client = this.clients.get(job.issue);
         if (client) halts.push(explicit ? this.stopWorker(job, client) : this.haltClient(job, client));
       }
-      const drains = [this.loop.close(), ...this.preparations.values(), ...this.tasks.values(), ...this.controls, this.handoffProgress, ...halts];
+      const drains = [this.loop.close(), ...this.preparations.values(), ...this.tasks.values(), ...this.controls, this.handoffProgress, this.worktreeCleanup, ...halts];
       if (this.hostStartup) {
         drains.push(this.directorHost.close());
         drains.push(this.hostStartup.catch(() => {}));

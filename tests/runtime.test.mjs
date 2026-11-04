@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, mkdir, rm, symlink } from 'node:fs/promises';
+import { access, mkdtemp, writeFile, readFile, mkdir, rm, symlink } from 'node:fs/promises';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -519,6 +519,8 @@ test('merged PR does not close a newer issue revision; uncertain close reconcile
   await c.wake();
   assert.equal(job.phase, 'complete');
   assert.deepEqual(uncertain.world.closed, [1]);
+  assert.equal(job.worktreeCleanup.status, 'removed');
+  await assert.rejects(access(job.worktree), { code: 'ENOENT' });
 });
 
 test('review repairs reuse original thread; duplicate feedback is idle; closed unmerged PR never closes issue', async t => {
@@ -599,16 +601,26 @@ test('interrupted preparation adopts the already-owned worktree only on explicit
   assert.equal(c.state.jobs[0].worktree, worktree); assert.equal(world.starts, 1);
 });
 
-test('an armed PR that becomes CLEAN is reconciled to actual delivery without another builder turn', async t => {
-  const { world, github, remote, coordinator } = await fixture(t);
+test('a landed squash or rebase records the delivered source and removes its worktree without another builder turn', async t => {
+  const { root, world, github, coordinator } = await fixture(t);
   world.issues = [issue(1)];
   const c = coordinator(); await c.start(); await until(() => c.state.jobs[0]?.phase === 'waiting');
   const job = c.state.jobs[0], pull = world.pulls.get(job.pr);
   pull.statusCheckRollup = []; await c.wake(); assert.equal(job.mergeArmed, true);
+  // Squash and rebase replace the source commit. Cleanup must compare the
+  // worktree to the verified PR head, not the different commit on main.
+  const tree = await git(root, 'rev-parse', `${pull.headRefOid}^{tree}`);
+  const parent = await git(root, 'rev-parse', 'main');
+  const landed = await git(root, 'commit-tree', tree, '-p', parent, '-m', 'Landed with rewritten history');
   github.merge = async () => {
-    await git(remote, 'update-ref', 'refs/heads/main', pull.headRefOid);
-    pull.state = 'MERGED'; pull.mergeCommit = { oid: pull.headRefOid };
+    await git(root, 'push', 'origin', `${landed}:refs/heads/main`);
+    pull.state = 'MERGED'; pull.mergeCommit = { oid: landed };
   };
   pull.mergeStateStatus = 'CLEAN'; await c.wake(); await c.wake();
   assert.equal(job.phase, 'complete'); assert.deepEqual(world.closed, [1]); assert.equal(world.turns, 1);
+  assert.equal(job.deliveredHead, pull.headRefOid); assert.equal(job.mergedCommit, landed);
+  assert.notEqual(job.deliveredHead, job.mergedCommit);
+  assert.equal(job.worktreeCleanup.status, 'removed');
+  await assert.rejects(access(job.worktree), { code: 'ENOENT' });
+  assert.equal(await git(root, 'rev-parse', job.branch), job.deliveredHead);
 });
