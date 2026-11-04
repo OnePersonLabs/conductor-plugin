@@ -1,5 +1,10 @@
-import { processExists } from './state.mjs';
+import { processExists } from './process.mjs';
 import { removeWorktree } from './worktrees.mjs';
+
+export function heldWorktreeIssues(state) {
+  return (state.holds ?? []).filter(hold => hold.active)
+    .flatMap(hold => hold.all ? state.jobs.map(job => job.issue) : hold.issues ?? []);
+}
 
 function retentionReason(job, busy, held) {
   if (job.phase !== 'complete') return `Job phase is ${job.phase}`;
@@ -50,7 +55,7 @@ export async function cleanupWorktrees({ repoRoot, jobs, preview = false, busyIs
       else delete job.worktreeCleanup;
       throw error;
     }
-    if (reason) notice?.(`Worktree cleanup ${status} for #${job.issue} at ${job.worktree}: ${reason}`);
+    notice?.(`Worktree cleanup ${status} for #${job.issue} at ${job.worktree}${reason ? `: ${reason}` : ''}`);
   }
   return outcomes;
 }

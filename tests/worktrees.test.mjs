@@ -358,7 +358,8 @@ test('cleanup applies only to inactive, unheld jobs with verified delivery evide
   const retry = await cleanupWorktrees(options);
   assert.deepEqual(retry.absent.map(item => item.issue), [1]);
   assert.equal(writes, 1);
-  assert.equal(notices.length, 0);
+  assert.equal(notices.length, 1);
+  assert.match(notices[0], /cleanup removed/);
 });
 
 test('cleanup keeps delivery complete and reports a retained worktree only when its reason changes', async (t) => {

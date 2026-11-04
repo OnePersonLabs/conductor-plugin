@@ -17,6 +17,7 @@ import { ensureService, signalIfEnabled } from '../lib/bootstrap.mjs';
 import { git } from '../lib/process.mjs';
 import { launchService, createReporter, activityLines } from '../lib/console.mjs';
 import { runnerPause, RUNNER_PAUSED_MESSAGE } from '../lib/runner-state.mjs';
+import { cleanupWorktrees, heldWorktreeIssues } from '../lib/cleanup.mjs';
 
 const HELP = `Conductor 0.1.0 -- conversational GitHub issue director
 Usage: conductor enable [--thread UUID]
@@ -132,7 +133,9 @@ async function main() {
     try { configVerified = (await loadConfig(repo.root)).version === 2; } catch { /* Expired migration backups remain available until valid configuration loads. */ }
     if (options.preview) {
       const result = await store.previewCleanup(), backups = await store.previewMigrationBackups(repo.root, Date.now(), configVerified);
-      console.log(JSON.stringify({ preview: true, ...result, backupCandidates: backups.candidates, exceptions: [...result.retained, ...backups.retained] }, null, 2)); return;
+      const state = await store.read();
+      const worktrees = await cleanupWorktrees({ repoRoot: repo.root, jobs: state.jobs, heldIssues: heldWorktreeIssues(state), preview: true });
+      console.log(JSON.stringify({ preview: true, ...result, worktrees, backupCandidates: backups.candidates, exceptions: [...result.retained, ...backups.retained] }, null, 2)); return;
     }
     const result = await store.cleanupStopped(Date.now(), repo.root, configVerified);
     console.log(JSON.stringify(result, null, 2)); return;

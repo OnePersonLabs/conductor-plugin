@@ -1,5 +1,10 @@
 import { spawn } from 'node:child_process';
 
+export function processExists(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return false;
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
+}
+
 export function run(command, args, { cwd, env = process.env, input, signal, allowFailure = false } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, signal, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });

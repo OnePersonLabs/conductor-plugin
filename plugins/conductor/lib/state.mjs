@@ -4,11 +4,9 @@ import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { appendFileSync, statSync, renameSync, unlinkSync } from 'node:fs';
-
-export function processExists(pid) {
-  if (!Number.isSafeInteger(pid) || pid < 1) return false;
-  try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
-}
+import { cleanupWorktrees, heldWorktreeIssues } from './cleanup.mjs';
+import { processExists } from './process.mjs';
+export { processExists } from './process.mjs';
 
 export async function atomicJSON(path, value) {
   const temp = `${path}.${randomUUID()}.tmp`;
@@ -305,7 +303,9 @@ export class Store {
     try {
       const result = await this.cleanupOwned(now);
       const backups = repoRoot ? await this.cleanupMigrationBackups(repoRoot, now, configVerified) : { removed: [], exceptions: [] };
-      return { ...result, removedBackups: backups.removed, exceptions: [...result.exceptions, ...backups.exceptions] };
+      const state = await this.read();
+      const worktrees = repoRoot ? await cleanupWorktrees({ repoRoot, jobs: state.jobs, heldIssues: heldWorktreeIssues(state), save: () => this.save(state) }) : null;
+      return { ...result, worktrees, removedBackups: backups.removed, exceptions: [...result.exceptions, ...backups.exceptions] };
     } finally { await this.release(); }
   }
 }
