@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { cleanupWorktrees } from '../plugins/conductor/lib/cleanup.mjs';
 import {
   copyWorktreeIncludes,
   createWorktree,
@@ -210,9 +211,14 @@ test('worktree uses its own branch, refresh merges accepted base, and clean owne
   const refresh = await refreshBranch({ repoRoot: root, worktreePath, baseRef: 'main' });
   assert.equal(refresh.changed, true);
   assert.equal(await fs.readFile(path.join(worktreePath, 'base-update.txt'), 'utf8'), 'new base\n');
-  const removed = await removeWorktree({ repoRoot: root, worktreePath });
-  assert.equal(removed.removed, true);
+  await write(worktreePath, 'ignored/dependencies/library.txt', 'prepared dependencies\n');
+  const options = { repoRoot: root, worktreePath, branch: created.branch, head: refresh.head };
+  assert.deepEqual(await removeWorktree({ ...options, preview: true }), { status: 'candidate' });
+  assert.equal(await fs.readFile(path.join(worktreePath, 'ignored/dependencies/library.txt'), 'utf8'), 'prepared dependencies\n');
+  assert.deepEqual(await removeWorktree(options), { status: 'removed' });
   await assert.rejects(fs.stat(worktreePath), { code: 'ENOENT' });
+  assert.equal(await git(root, 'rev-parse', 'refs/heads/issue/101'), refresh.head);
+  assert.deepEqual(await removeWorktree(options), { status: 'absent' });
 });
 
 test('refresh leaves merge conflicts for the original issue builder', async (t) => {
@@ -235,9 +241,147 @@ test('refuses removal of dirty or unowned worktrees', async (t) => {
   const { root, worktreePath } = await fixture(t);
   await fs.mkdir(path.dirname(worktreePath), { recursive: true });
   await git(root, 'worktree', 'add', worktreePath, '-b', 'issue/dirty', 'main');
-  await assert.rejects(removeWorktree({ repoRoot: root, worktreePath }), /without Conductor ownership/);
+  const head = await git(root, 'rev-parse', 'HEAD');
+  const unowned = { repoRoot: root, worktreePath, branch: 'issue/dirty', head };
+  assert.match((await removeWorktree(unowned)).reason, /ownership marker/);
   const ownedPath = path.join(path.dirname(worktreePath), 'owned');
-  await createWorktree({ repoRoot: root, path: ownedPath, branch: 'issue/dirty-owned', baseRef: 'main' });
+  const owned = await createWorktree({ repoRoot: root, path: ownedPath, branch: 'issue/dirty-owned', baseRef: 'main' });
+  const options = { repoRoot: root, worktreePath: ownedPath, branch: owned.branch, head };
   await fs.writeFile(path.join(ownedPath, 'local.txt'), 'preserve me\n');
-  await assert.rejects(removeWorktree({ repoRoot: root, worktreePath: ownedPath }), /uncommitted changes/);
+  await git(ownedPath, 'config', 'status.showUntrackedFiles', 'no');
+  assert.match((await removeWorktree(options)).reason, /uncommitted or untracked/);
+  await fs.unlink(path.join(ownedPath, 'local.txt'));
+  await git(ownedPath, 'update-index', '--assume-unchanged', 'tracked.txt');
+  await fs.writeFile(path.join(ownedPath, 'tracked.txt'), 'hidden change\n');
+  assert.match((await removeWorktree(options)).reason, /index flags/);
+  assert.equal(await fs.readFile(path.join(ownedPath, 'tracked.txt'), 'utf8'), 'hidden change\n');
+});
+
+test('removes only the proven missing worktree registration and preserves other stale registrations', async (t) => {
+  const { root, worktreePath, temp } = await fixture(t);
+  const owned = await createWorktree({ repoRoot: root, path: worktreePath, branch: 'issue/missing', baseRef: 'main' });
+  const otherPath = path.join(path.dirname(worktreePath), 'other');
+  await git(root, 'worktree', 'add', otherPath, '-b', 'issue/other', 'main');
+  await fs.rename(worktreePath, path.join(temp, 'removed checkout'));
+  await fs.rename(otherPath, path.join(temp, 'other removed checkout'));
+  const options = { repoRoot: root, worktreePath, branch: owned.branch, head: owned.head };
+  const other = { ...options, worktreePath: otherPath, branch: 'issue/other' };
+
+  assert.match((await removeWorktree({ ...options, branch: 'issue/wrong' })).reason, /branch does not match/);
+  assert.match((await removeWorktree({ ...options, head: '0'.repeat(owned.head.length) })).reason, /HEAD does not match/);
+  assert.match((await removeWorktree(other)).reason, /ownership marker/);
+  assert.deepEqual(await removeWorktree(options), { status: 'removed' });
+  assert.deepEqual(await removeWorktree(options), { status: 'absent' });
+  assert.match(await git(root, 'worktree', 'list', '--porcelain'), /branch refs\/heads\/issue\/other/);
+});
+
+test('keeps a checkout at the wrong delivered head and a path left without registration', async (t) => {
+  const { root, worktreePath } = await fixture(t);
+  const owned = await createWorktree({ repoRoot: root, path: worktreePath, branch: 'issue/advanced', baseRef: 'main' });
+  const options = { repoRoot: root, worktreePath, branch: owned.branch, head: owned.head };
+  await git(worktreePath, 'commit', '--allow-empty', '-m', 'local work after delivery');
+  assert.match((await removeWorktree(options)).reason, /HEAD does not match/);
+  assert.equal(await fs.readFile(path.join(worktreePath, 'tracked.txt'), 'utf8'), 'base\n');
+
+  const moved = path.join(path.dirname(worktreePath), 'moved worktree');
+  await git(root, 'worktree', 'move', worktreePath, moved);
+  assert.match((await removeWorktree(options)).reason, /checked out at another registered path/);
+  assert.equal(await fs.readFile(path.join(moved, 'tracked.txt'), 'utf8'), 'base\n');
+  await git(root, 'worktree', 'remove', moved);
+  await write(worktreePath, 'surviving-file.txt', 'preserve me\n');
+  const result = await removeWorktree(options);
+  assert.equal(result.status, 'failed');
+  assert.match(result.reason, /without an exact Git worktree registration/);
+  assert.equal(await fs.readFile(path.join(worktreePath, 'surviving-file.txt'), 'utf8'), 'preserve me\n');
+});
+
+test('preserves external junction targets and reports any leftover checkout', async (t) => {
+  const { root, worktreePath, temp } = await fixture(t);
+  const owned = await createWorktree({ repoRoot: root, path: worktreePath, branch: 'issue/junction', baseRef: 'main' });
+  await write(temp, 'external/keep.txt', 'outside the checkout\n');
+  await fs.mkdir(path.join(worktreePath, 'ignored'));
+  await fs.symlink(path.join(temp, 'external'), path.join(worktreePath, 'ignored/dependency'), 'junction');
+
+  const options = { repoRoot: root, worktreePath, branch: owned.branch, head: owned.head };
+  const result = await removeWorktree(options);
+  const leftover = await fs.stat(worktreePath).then(() => true).catch(error => {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  });
+  assert.equal(result.status, leftover ? 'failed' : 'removed');
+  assert.equal(await fs.readFile(path.join(temp, 'external/keep.txt'), 'utf8'), 'outside the checkout\n');
+  if (leftover) {
+    const retry = await removeWorktree({ ...options, previousGitDir: result.gitDir });
+    assert.equal(retry.status, 'failed');
+  }
+});
+
+test('cleanup applies only to inactive, unheld jobs with verified delivery evidence', async (t) => {
+  const { root, worktreePath } = await fixture(t);
+  const owned = await createWorktree({ repoRoot: root, path: worktreePath, branch: 'issue/complete', baseRef: 'main' });
+  const complete = {
+    issue: 1, worktree: worktreePath, branch: owned.branch, phase: 'complete',
+    acceptanceComplete: true, mergedCommit: 'merge-commit', deliveredHead: owned.head,
+    builderThreadId: 'builder-thread',
+  };
+  const jobs = [
+    complete,
+    { ...complete, issue: 2, phase: 'cancelled' },
+    { ...complete, issue: 3, phase: 'paused' },
+    { ...complete, issue: 4, phase: 'blocked' },
+    { ...complete, issue: 5, phase: 'uncertain' },
+    { ...complete, issue: 6, deliveryReconciliationRequired: true },
+    { ...complete, issue: 7, deliveredHead: undefined },
+    { ...complete, issue: 8, childPid: process.pid },
+    { ...complete, issue: 9 },
+    { ...complete, issue: 10 },
+  ];
+  let writes = 0;
+  const notices = [];
+  const options = {
+    repoRoot: root, jobs, busyIssues: [9], heldIssues: [10],
+    save: async () => { writes++; }, notice: message => notices.push(message),
+  };
+
+  const preview = await cleanupWorktrees({ ...options, preview: true });
+  assert.deepEqual(preview.candidates.map(item => item.issue), [1]);
+  assert.deepEqual(preview.retained.map(item => item.issue), [2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.equal(writes, 0);
+
+  const first = await cleanupWorktrees(options);
+  assert.deepEqual(first.removed.map(item => item.issue), [1]);
+  assert.equal(writes, 1);
+  assert.deepEqual(complete.worktreeCleanup, { status: 'removed' });
+  assert.equal(complete.builderThreadId, 'builder-thread');
+  assert.equal(complete.mergedCommit, 'merge-commit');
+
+  const retry = await cleanupWorktrees(options);
+  assert.deepEqual(retry.absent.map(item => item.issue), [1]);
+  assert.equal(writes, 1);
+  assert.equal(notices.length, 0);
+});
+
+test('cleanup keeps delivery complete and reports a retained worktree only when its reason changes', async (t) => {
+  const { root, worktreePath } = await fixture(t);
+  const owned = await createWorktree({ repoRoot: root, path: worktreePath, branch: 'issue/retained', baseRef: 'main' });
+  const job = {
+    issue: 1, worktree: worktreePath, branch: owned.branch, phase: 'complete',
+    acceptanceComplete: true, mergedCommit: 'merge-commit', deliveredHead: owned.head,
+  };
+  await write(worktreePath, 'local.txt', 'preserve me\n');
+  const notices = [];
+  let writes = 0;
+  const options = { repoRoot: root, jobs: [job], save: async () => { writes++; }, notice: message => notices.push(message) };
+  for (let retry = 0; retry < 2; retry++) {
+    const outcome = await cleanupWorktrees(options);
+    assert.equal(outcome.retained.length, 1);
+    assert.equal(job.phase, 'complete');
+    assert.equal(job.worktreeCleanup.status, 'retained');
+  }
+  assert.equal(writes, 1);
+  assert.equal(notices.length, 1);
+  assert.equal(await fs.readFile(path.join(worktreePath, 'local.txt'), 'utf8'), 'preserve me\n');
+  await fs.unlink(path.join(worktreePath, 'local.txt'));
+  assert.equal((await cleanupWorktrees(options)).removed.length, 1);
+  assert.deepEqual(job.worktreeCleanup, { status: 'removed' });
 });

@@ -279,26 +279,133 @@ export async function refreshBranch({ repoRoot, worktreePath, baseRef }) {
   };
 }
 
-export async function removeWorktree({ repoRoot, worktreePath }) {
-  const root = await fs.realpath(repoRoot);
+async function registrations(root) {
+  const { stdout } = await git(root, ['worktree', 'list', '--porcelain', '-z']);
+  return stdout.toString('utf8').split('\0\0')
+    .map(record => record.split('\0'))
+    .filter(([line]) => line.startsWith('worktree '));
+}
+
+function atWorktree(registration, worktree) {
+  return samePath(registration[0].slice(9), worktree);
+}
+
+async function readRegularFile(target) {
+  if (!(await lstatOrNull(target))?.isFile()) return null;
+  return (await fs.readFile(target, 'utf8')).trimEnd();
+}
+
+async function findWorktreeGitDir(commonDir, worktree) {
+  const linkedDir = path.join(commonDir, 'worktrees');
+  if (!(await lstatOrNull(linkedDir))?.isDirectory()) return null;
+  const candidates = [];
+  for (const entry of await fs.readdir(linkedDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const gitDir = path.join(linkedDir, entry.name);
+    const backlink = await readRegularFile(path.join(gitDir, 'gitdir'));
+    if (backlink && samePath(path.resolve(gitDir, backlink), path.join(worktree, '.git'))) {
+      candidates.push(gitDir);
+    }
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function retained(reason) {
+  return { status: 'retained', reason };
+}
+
+export async function removeWorktree({ repoRoot, worktreePath, branch, head, preview, previousGitDir }) {
+  if (!path.isAbsolute(worktreePath) || !branch || !head) {
+    throw new Error('An absolute worktree path, branch, and delivered head are required');
+  }
+  const source = await inspectRepository(repoRoot);
   const worktree = path.resolve(worktreePath);
-  if (samePath(root, worktree)) {
-    throw new Error('Refusing to remove the source checkout');
+  if (!samePath(source.root, await fs.realpath(repoRoot))) {
+    return retained('Source path does not match the Git repository root');
   }
-  const actualRoot = text(await git(worktree, ['rev-parse', '--show-toplevel']));
-  if (!samePath(actualRoot, worktree)) {
-    throw new Error('Requested path is not the root of a Git worktree');
+  if (isWithin(source.root, worktree) || isWithin(worktree, source.root) ||
+      isWithin(source.commonDir, worktree) || isWithin(worktree, source.commonDir)) {
+    return retained('Worktree is not separate from the source checkout and its Git directory');
   }
-  const marker = await getManagedMarker(worktree);
-  let owner;
-  try { owner = (await fs.readFile(marker, 'utf8')).trim(); } catch {
-    throw new Error('Refusing to remove a worktree without Conductor ownership metadata');
+  const stat = await lstatOrNull(worktree);
+  const registered = await registrations(source.root);
+  const matches = registered.filter(record => atWorktree(record, worktree));
+  const expectedBranch = `branch refs/heads/${branch}`;
+  if (!matches.length) {
+    if (stat) return { status: 'failed', reason: 'A filesystem entry remains without an exact Git worktree registration' };
+    if (previousGitDir &&
+        samePath(path.dirname(previousGitDir), path.join(source.commonDir, 'worktrees')) &&
+        await lstatOrNull(previousGitDir)) {
+      return { status: 'failed', reason: 'Git administrative files remain after worktree removal', gitDir: previousGitDir };
+    }
+    if (registered.some(record => record.includes(expectedBranch))) {
+      return retained('Recorded issue branch is still checked out at another registered path');
+    }
+    return { status: 'absent' };
   }
-  if (!samePath(owner, root)) {
-    throw new Error('Worktree ownership metadata does not match this repository');
+  if (matches.length !== 1) return retained('Git lists multiple registrations at the recorded worktree path');
+  const [registeredPath, ...fields] = matches[0];
+  if (fields.some(field => field === 'locked' || field.startsWith('locked '))) {
+    return retained('Git worktree is locked');
   }
-  const dirty = text(await git(worktree, ['status', '--porcelain', '--untracked-files=all']));
-  if (dirty) throw new Error('Refusing to remove a worktree with uncommitted changes');
-  await git(root, ['worktree', 'remove', worktree]);
-  return { path: worktree, removed: true };
+  if (!fields.includes(expectedBranch)) {
+    return retained('Worktree branch does not match the recorded issue branch');
+  }
+  if (!fields.includes(`HEAD ${head}`)) return retained('Worktree HEAD does not match the delivered pull request head');
+
+  // The backlink identifies the administrative directory even when the
+  // checkout and its .git file are already gone.
+  const gitDir = await findWorktreeGitDir(source.commonDir, worktree);
+  if (!gitDir || !samePath(gitDir, await fs.realpath(gitDir))) {
+    return retained('Git registration has no verifiable administrative directory');
+  }
+  const commonDir = await readRegularFile(path.join(gitDir, 'commondir'));
+  if (!commonDir || !samePath(path.resolve(gitDir, commonDir), source.commonDir)) {
+    return retained('Worktree belongs to a different Git repository');
+  }
+  const owner = await readRegularFile(path.join(gitDir, OWNERSHIP_MARKER));
+  if (!owner || !path.isAbsolute(owner) || !samePath(owner, source.root)) {
+    return retained('Worktree has no matching Conductor ownership marker');
+  }
+
+  if (stat) {
+    if (!stat.isDirectory() || !samePath(worktree, await fs.realpath(worktree)) ||
+        !(await lstatOrNull(path.join(worktree, '.git')))?.isFile()) {
+      return retained('Recorded worktree path is not a real linked checkout');
+    }
+    const target = await inspectRepository(worktree);
+    if (!samePath(target.root, worktree) || !samePath(target.commonDir, source.commonDir) ||
+        !samePath(target.gitDir, gitDir)) {
+      return retained('Checkout does not match its Git registration');
+    }
+    // These index flags can hide local modifications from Git status.
+    const indexed = nulList((await git(worktree, ['ls-files', '-v', '-z'])).stdout);
+    if (indexed.some(entry => /^[a-zS] /.test(entry))) {
+      return retained('Git index flags can hide changes to tracked files');
+    }
+    const dirty = text(await git(worktree, [
+      '--no-optional-locks', '-c', 'core.fsmonitor=false', 'status',
+      '--porcelain', '--untracked-files=all', '--ignore-submodules=none',
+    ]));
+    if (dirty) return retained('Worktree has uncommitted or untracked files');
+  }
+  if (preview) return { status: 'candidate' };
+
+  const current = (await registrations(source.root)).filter(record => atWorktree(record, worktree));
+  if (current.length !== 1 || current[0].join('\0') !== matches[0].join('\0') ||
+      owner !== await readRegularFile(path.join(gitDir, OWNERSHIP_MARKER))) {
+    return retained('Worktree registration or ownership changed during cleanup');
+  }
+  try {
+    await git(source.root, ['worktree', 'remove', '--', registeredPath.slice(9)]);
+    if (await lstatOrNull(worktree) || await lstatOrNull(gitDir) ||
+        (await registrations(source.root)).some(record => atWorktree(record, worktree))) {
+      throw new Error('Worktree path or Git registration remains after removal');
+    }
+    return { status: 'removed' };
+  } catch (error) {
+    // Git can remove the registration even when it cannot remove the directory.
+    // Keep the known administrative path for checking a partial removal on retry.
+    return { status: 'failed', reason: error.message, gitDir };
+  }
 }
