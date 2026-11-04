@@ -4,7 +4,7 @@ import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { appendFileSync, statSync, renameSync, unlinkSync } from 'node:fs';
-import { cleanupWorktrees, heldWorktreeIssues } from './cleanup.mjs';
+import { cleanupWorktrees } from './cleanup.mjs';
 import { processExists } from './process.mjs';
 export { processExists } from './process.mjs';
 
@@ -296,7 +296,7 @@ export class Store {
     return { removed, retained: [...after.retained, ...after.candidates].length, exceptions: after.retained };
   }
 
-  async cleanupStopped(now = Date.now(), repoRoot = null, configVerified = false) {
+  async cleanupStopped(now = Date.now(), repoRoot = null, configVerified = false, resolveParents) {
     const owner = await this.owner();
     if (owner && (owner.hostname !== hostname() || owner.platform !== process.platform || processExists(owner.pid))) throw new Error('Conductor is running or owned by another environment; cleanup must run under the active owner.');
     await this.acquire();
@@ -304,7 +304,7 @@ export class Store {
       const result = await this.cleanupOwned(now);
       const backups = repoRoot ? await this.cleanupMigrationBackups(repoRoot, now, configVerified) : { removed: [], exceptions: [] };
       const state = await this.read();
-      const worktrees = repoRoot ? await cleanupWorktrees({ repoRoot, jobs: state.jobs, heldIssues: heldWorktreeIssues(state), save: () => this.save(state) }) : null;
+      const worktrees = repoRoot ? await cleanupWorktrees({ repoRoot, jobs: state.jobs, holds: state.holds, resolveParents, save: () => this.save(state) }) : null;
       return { ...result, worktrees, removedBackups: backups.removed, exceptions: [...result.exceptions, ...backups.exceptions] };
     } finally { await this.release(); }
   }

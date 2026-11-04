@@ -26,6 +26,11 @@ export function workflowState(issue, labels = DEFAULT_LABELS) {
   };
 }
 
+export function activeHoldApplies(holds, number, parents = []) {
+  const covered = new Set([number, ...parents.map(parent => parent.number)]);
+  return holds.some(hold => hold.active && (hold.all || hold.issues?.some(issue => covered.has(issue))));
+}
+
 function blockerState(blocker) {
   const state = normalize(blocker.state);
   const reason = normalize(blocker.state_reason ?? blocker.stateReason);

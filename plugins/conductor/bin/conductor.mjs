@@ -17,7 +17,7 @@ import { ensureService, signalIfEnabled } from '../lib/bootstrap.mjs';
 import { git } from '../lib/process.mjs';
 import { launchService, createReporter, activityLines } from '../lib/console.mjs';
 import { runnerPause, RUNNER_PAUSED_MESSAGE } from '../lib/runner-state.mjs';
-import { cleanupWorktrees, heldWorktreeIssues } from '../lib/cleanup.mjs';
+import { cleanupWorktrees } from '../lib/cleanup.mjs';
 
 const HELP = `Conductor 0.1.0 -- conversational GitHub issue director
 Usage: conductor enable [--thread UUID]
@@ -129,15 +129,18 @@ async function main() {
     console.log(JSON.stringify({ owner, ...effective, activity: activityLines(effective), controls: await store.results() }, null, 2)); return;
   }
   if (options.command === 'cleanup') {
-    let configVerified = false;
-    try { configVerified = (await loadConfig(repo.root)).version === 2; } catch { /* Expired migration backups remain available until valid configuration loads. */ }
+    let config;
+    try { config = await loadConfig(repo.root); } catch { /* Expired migration backups remain available until valid configuration loads. */ }
+    const configVerified = config?.version === 2;
+    const github = configVerified ? new GitHub(config.repository, { cwd: repo.root }) : null;
+    const resolveParents = github ? issue => github.parents(issue) : undefined;
     if (options.preview) {
       const result = await store.previewCleanup(), backups = await store.previewMigrationBackups(repo.root, Date.now(), configVerified);
       const state = await store.read();
-      const worktrees = await cleanupWorktrees({ repoRoot: repo.root, jobs: state.jobs, heldIssues: heldWorktreeIssues(state), preview: true });
+      const worktrees = await cleanupWorktrees({ repoRoot: repo.root, jobs: state.jobs, holds: state.holds, resolveParents, preview: true });
       console.log(JSON.stringify({ preview: true, ...result, worktrees, backupCandidates: backups.candidates, exceptions: [...result.retained, ...backups.retained] }, null, 2)); return;
     }
-    const result = await store.cleanupStopped(Date.now(), repo.root, configVerified);
+    const result = await store.cleanupStopped(Date.now(), repo.root, configVerified, resolveParents);
     console.log(JSON.stringify(result, null, 2)); return;
   }
   if (['start','enable','wakeup','observe','attach'].includes(options.command) || (options.command === 'resume' && !options.issue)) {

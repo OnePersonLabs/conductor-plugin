@@ -16,7 +16,7 @@ import { watch } from 'node:fs';
 import { builderPrompt, createRequestRevision, parseResult, parseReviewResult, reviewPrompt, resultSchema, reviewResultSchema } from './prompts.mjs';
 import { validateDesignHandoff } from './design-handoff.mjs';
 import { runnerPause, RUNNER_PAUSED_MESSAGE } from './runner-state.mjs';
-import { cleanupWorktrees, heldWorktreeIssues } from './cleanup.mjs';
+import { cleanupWorktrees } from './cleanup.mjs';
 
 const skillPath = fileURLToPath(new URL('../skills/github-workflow/SKILL.md', import.meta.url));
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -194,7 +194,8 @@ export class Coordinator extends EventEmitter {
     this.lastCleanupAt = Date.now();
     this.worktreeCleanup = cleanupWorktrees({ repoRoot: this.repo.root, jobs: this.state.jobs,
       busyIssues: new Set([...this.clients.keys(), ...this.tasks.keys(), ...this.preparations.keys()]),
-      heldIssues: heldWorktreeIssues(this.state), save: () => this.save(), notice: message => this.emit('notice', message),
+      holds: this.state.holds, resolveParents: issue => this.github.parents(issue),
+      save: () => this.save(), notice: message => this.emit('notice', message),
     }).catch(error => { this.emit('notice', `Worktree cleanup failed: ${error.message}`); })
       .finally(() => { this.worktreeCleanup = null; });
     return this.worktreeCleanup;

@@ -339,7 +339,8 @@ test('cleanup applies only to inactive, unheld jobs with verified delivery evide
   let writes = 0;
   const notices = [];
   const options = {
-    repoRoot: root, jobs, busyIssues: [9], heldIssues: [10],
+    repoRoot: root, jobs, busyIssues: [9], holds: [{ active: true, issues: [10] }],
+    resolveParents: async () => [],
     save: async () => { writes++; }, notice: message => notices.push(message),
   };
 
@@ -360,6 +361,45 @@ test('cleanup applies only to inactive, unheld jobs with verified delivery evide
   assert.equal(writes, 1);
   assert.equal(notices.length, 1);
   assert.match(notices[0], /cleanup removed/);
+});
+
+test('cleanup preserves descendants of held issues and retains worktrees when ancestry is unknown', async (t) => {
+  const { root, worktreePath } = await fixture(t);
+  const owned = await createWorktree({ repoRoot: root, path: worktreePath, branch: 'issue/descendant', baseRef: 'main' });
+  const job = {
+    issue: 3, worktree: worktreePath, branch: owned.branch, phase: 'complete',
+    acceptanceComplete: true, mergedCommit: 'merge-commit', deliveredHead: owned.head,
+  };
+  const notices = [];
+  const options = {
+    repoRoot: root, jobs: [job], holds: [{ active: true, issues: [1] }],
+    save: async () => {}, notice: message => notices.push(message),
+  };
+  const direct = await cleanupWorktrees({ ...options, preview: true, holds: [{ active: true, issues: [3] }] });
+  assert.match(direct.retained[0].reason, /Job is held/);
+  const all = await cleanupWorktrees({ ...options, preview: true, holds: [{ active: true, all: true }] });
+  assert.match(all.retained[0].reason, /Job is held/);
+
+  const inherited = await cleanupWorktrees({
+    ...options,
+    resolveParents: async issue => {
+      assert.equal(issue, 3);
+      return [{ number: 2 }, { number: 1 }];
+    },
+  });
+  assert.match(inherited.retained[0].reason, /Job is held/);
+  const noResolver = await cleanupWorktrees({ ...options, preview: true });
+  assert.match(noResolver.retained[0].reason, /without repository configuration/);
+  const unavailable = { ...options, resolveParents: async () => { throw new Error('GitHub unavailable'); } };
+  for (let retry = 0; retry < 2; retry++) {
+    const result = await cleanupWorktrees(unavailable);
+    assert.match(result.retained[0].reason, /Could not verify parent holds: GitHub unavailable/);
+  }
+  assert.equal(notices.length, 1);
+  assert.equal(job.phase, 'complete');
+  assert.equal(await fs.readFile(path.join(worktreePath, 'tracked.txt'), 'utf8'), 'base\n');
+  const allowed = await cleanupWorktrees({ ...options, resolveParents: async () => [{ number: 2 }] });
+  assert.equal(allowed.removed.length, 1);
 });
 
 test('cleanup keeps delivery complete and reports a retained worktree only when its reason changes', async (t) => {

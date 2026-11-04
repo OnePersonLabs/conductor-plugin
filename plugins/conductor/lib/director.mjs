@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eligibility, workflowState } from './workflow.mjs';
+import { activeHoldApplies, eligibility, workflowState } from './workflow.mjs';
 import { DirectorEvents } from './director-events.mjs';
 import { occupied } from './scheduler.mjs';
 import { readDecisions, recordDecision } from './decisions.mjs';
@@ -70,8 +70,7 @@ export class Director {
     if (this.c.executionBlocked?.() || runnerPause(this.c.state)) return RUNNER_PAUSED_MESSAGE;
     if (admission && this.c.state.admissionPaused) return 'Repository admission is paused.';
     const parents = await this.c.github.parents(number);
-    const numbers = new Set([number, ...parents.map(p => p.number)]);
-    if (this.c.state.holds.some(h => h.active && (h.all || h.issues.some(n => numbers.has(n))))) return 'An unreleased local hold applies.';
+    if (activeHoldApplies(this.c.state.holds, number, parents)) return 'An unreleased local hold applies.';
     return null;
   }
   async assertEligible(number, expectedRevision, { allowCompleted = false } = {}) {
@@ -157,6 +156,10 @@ export class Director {
     const c = this.c;
     const roots = request.all ? (await c.github.openIssues()).map(i => i.number) : request.issues ?? [request.issue];
     if (!roots.length || roots.some(n => !Number.isSafeInteger(n) || n < 1)) throw new Error('Hold requires issue numbers or all:true.');
+    // Cleanup uses a snapshot of active holds. Wait for any sweep that already
+    // took its snapshot, then publish the hold before another sweep can start.
+    while (c.worktreeCleanup) await c.worktreeCleanup;
+    c.assertRunning?.();
     const record = { id: request.holdId ?? randomUUID(), active: true, all: request.all === true, issues: [...roots], previous: {}, attempted: [], reason: request.reason ?? 'Held for revision', createdAt: new Date().toISOString() };
     if (c.state.holds.some(h => h.id === record.id)) throw new Error('Hold ID already exists; inspect its receipt instead of duplicating it.');
     c.state.holds.push(record); await c.save();

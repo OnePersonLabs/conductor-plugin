@@ -72,6 +72,27 @@ test('releasing a partially applied group hold leaves untouched issues unchanged
   assert.deepEqual(h.records.get(2).labels, ['proposal']);
 });
 
+test('establishes a hold after any cleanup sweep that already took its hold snapshot', async () => {
+  const h = setup({ issues: [issue(1)] });
+  const first = Promise.withResolvers();
+  const second = Promise.withResolvers();
+  h.coordinator.worktreeCleanup = first.promise.finally(() => { h.coordinator.worktreeCleanup = null; });
+  // A second sweep can take its snapshot before the waiting hold resumes.
+  const next = h.coordinator.worktreeCleanup.then(() => {
+    h.coordinator.worktreeCleanup = second.promise.finally(() => { h.coordinator.worktreeCleanup = null; });
+  });
+  const holding = h.director.hold({ issue: 1 });
+  assert.equal(h.state.holds.length, 0);
+  first.resolve();
+  await next;
+  assert.equal(h.state.holds.length, 0);
+  second.resolve();
+
+  const held = await holding;
+  assert.equal(h.state.holds[0].id, held.id);
+  assert.equal(held.active, true);
+});
+
 test('a merge racing a hold is reconciled only after release without starting another builder', async () => {
   const job = { issue: 1, pr: 11, phase: 'paused', intent: 'pause', deliveryReconciliationRequired: true };
   const h = setup({ issues: [issue(1)], jobs: [job] });
