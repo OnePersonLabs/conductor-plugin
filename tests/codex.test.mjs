@@ -84,7 +84,7 @@ test('routes out-of-order responses to their matching calls and sends skill inpu
     const slow = client.startTurn({
       threadId: 'thread',
       prompt: 'slow',
-      skillPath: 'C:/skills/github-workflow/SKILL.md',
+      skillPath: 'C:/skills/implement/SKILL.md',
       outputSchema: { type: 'object' },
     });
     const fast = client.startTurn({ threadId: 'thread', prompt: 'fast' });
@@ -94,8 +94,8 @@ test('routes out-of-order responses to their matching calls and sends skill inpu
     const sent = await inputPromise;
     assert.deepEqual(sent.params.input[0], {
       type: 'skill',
-      name: 'github-workflow',
-      path: resolve('C:/skills/github-workflow/SKILL.md'),
+      name: 'implement',
+      path: resolve('C:/skills/implement/SKILL.md'),
     });
     assert.deepEqual(sent.params.input[1], { type: 'text', text: 'slow' });
     assert.deepEqual(sent.params.outputSchema, { type: 'object' });

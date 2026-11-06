@@ -13,8 +13,8 @@ those requests. Read [shared issue policy](../../references/workflow.md).
 ## Choose the mode and chat
 
 The default director is synchronous: this agent coordinates work and any useful
-authorized native subagents in the current chat. It does not require worktrees,
-a background run, runtime binding or service. Full automation is a separate
+authorized native subagents in the current chat. Work in the current checkout;
+do not create worktrees, start a background runner, or bind the runtime. Full automation is a separate
 explicit choice that uses the existing runtime lifecycle.
 
 On an explicit start request, use the user's specified chat location. If location
@@ -25,7 +25,7 @@ jobs, holds and recovery state before acting; a title or skill does not prove
 ownership. Resolve an ambiguous switch from active automation with the user and
 existing owner, without silently stopping it or taking over.
 
-Name the director `🎬 <project> <MM/DD/YYYY hh:mm AM/PM local>`, using the established
+Name the director `🎬 <project> <MM/DD/YYYY hh:mm AM/PM>`, using the established
 project name and the local creation or adoption time. Use the same format when
 the user explicitly adopts this chat. For an authorized fresh chat, use the native
 project chat creation tool with `gpt-6.1-sol` and low thinking when supported.

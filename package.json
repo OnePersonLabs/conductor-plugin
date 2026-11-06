@@ -1,7 +1,7 @@
 {
   "name": "conductor",
   "version": "0.1.0",
-  "description": "A conversational GitHub issue director with event-driven Codex worker orchestration",
+  "description": "GitHub issue skills with synchronous direction and explicit Codex worker automation",
   "type": "module",
   "private": true,
   "license": "MIT",

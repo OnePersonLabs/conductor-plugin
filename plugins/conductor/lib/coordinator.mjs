@@ -18,7 +18,7 @@ import { validateDesignHandoff } from './design-handoff.mjs';
 import { runnerPause, RUNNER_PAUSED_MESSAGE } from './runner-state.mjs';
 import { cleanupWorktrees } from './cleanup.mjs';
 
-const skillPath = fileURLToPath(new URL('../skills/github-workflow/SKILL.md', import.meta.url));
+const skillPath = fileURLToPath(new URL('../skills/implement/SKILL.md', import.meta.url));
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const activePhases = new Set(['building','reviewing','launching','starting','preparing']);
 

@@ -1,7 +1,7 @@
 {
   "name": "conductor",
   "version": "0.1.0",
-  "description": "A conversational director and event-driven GitHub issue-to-PR workflow.",
+  "description": "GitHub issue skills for ordinary work, synchronous direction, and explicitly requested automation.",
   "license": "MIT",
   "repository": "https://github.com/OnePersonLabs/conductor-plugin",
   "keywords": ["github", "codex", "workflow", "issue-tracking", "pull-requests"],
@@ -9,7 +9,7 @@
   "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "Conductor",
-    "shortDescription": "Direct issue work and coordinate verified delivery in chat",
-    "longDescription": "Triage, discuss proposals, manage holds, resolve decisions, and prepare authorized work through a conversational director. A local event-driven service coordinates isolated builders, configured checks, independent review, original-thread repairs, and verified landing. Issue labels and native dependencies determine execution eligibility. Installation and repository setup never start production work."
+    "shortDescription": "Plan, implement, review, and manage issues in your chosen mode",
+    "longDescription": "Use manage-issues, ask-user, plan, implement, and review during ordinary chat work. Director operation requires an explicit request and defaults to synchronous work by the current agent and subagents, without worktrees or a background runner. Explicit automated mode coordinates isolated workers, configured checks, independent review, original-thread repairs, and verified delivery. Human questions stay in chat unless an inbox is requested. Setup never starts production work."
   }
 }

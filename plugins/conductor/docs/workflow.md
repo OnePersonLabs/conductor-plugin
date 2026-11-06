@@ -1,10 +1,60 @@
 # Direct work and recover Conductor
 
-Conductor uses a conversational director for planning and issue management, with
-a local deterministic service for dispatch, worker lifecycle and delivery. The
-director is one persistent chat bound to the repository. Explicitly enabling a
-configured repository creates that chat if needed and starts observation.
-Installation and preparing configuration alone do not enable it.
+Use `$conductor:manage-issues`, `$conductor:ask-user`, `$conductor:plan`,
+`$conductor:implement`, and `$conductor:review` during ordinary agent work.
+They complete the requested scope in the current chat and report issue changes.
+They never adopt the chat, start a director, or ask whether to start one merely
+because a change was requested.
+
+## Ordinary work and synchronous direction
+
+An explicit director request defaults to synchronous operation. The current
+agent coordinates the selected issues and native subagents in the current
+checkout, without creating worktrees, starting a background service, or binding
+the automated runtime. End when the selected scope is complete or a human answer
+is needed. There are no timer-driven turns in this mode.
+
+When the request does not specify a chat, ask whether to use the current chat or
+a fresh director chat. Create a chat only after the user selects that option.
+Use native project chat creation, model `gpt-6.1-sol`, and reasoning `low` for a
+new chat. Rename an explicitly adopted current chat but keep its model. Use the
+title `🎬 <project> <MM/DD/YYYY hh:mm AM/PM>` in the user's local time, for example
+`🎬 Psychord 11/06/2026 06:30 PM`.
+
+Begin with `$conductor:ask-user`: inspect accepted scope and saved answers, ask
+the consequential unresolved questions in chat, and integrate answers before
+dependent implementation. Do not invent questions or repeat resolved decisions.
+An ordinary or synchronous chat records decisions directly on their issues using
+the shared decision format; it does not call controls reserved for a bound
+automated director. The web inbox is optional and starts only on explicit request.
+
+Check for existing automation before writing in the same checkout. A saved
+director binding does not authorize converting or stopping that director. Keep
+its jobs, pauses, holds, pending human submissions, and original workers intact.
+Switch modes only after an explicit request and verified shutdown/reconciliation.
+An unrelated agent may inspect or plan an actively owned issue, but must obtain
+the existing director's hold/pause barrier before changing its acceptance, scope,
+or dependencies. GitHub readback alone cannot halt a worker or an armed merge.
+
+## Main checkout protection
+
+The checkout hook warns an unrelated main-checkout chat with a 🚨 message while
+automation is active or worker termination remains uncertain. Recognized read
+operations can continue. Edits and commands with unknown effects are denied with
+an inspection alternative. Saved native director identity authorizes its own
+calls and descendants; a title or a claim in a prompt does not grant ownership.
+Workers retain their recorded workspace authority. An independent worktree can
+be used for unrelated local work; shared issue and delivery ownership still applies.
+
+This protection covers supported Codex hook calls. It does not isolate the
+filesystem or stop external writers, already-running commands, existing terminal
+input sessions, or calls that bypass hooks. Hooks must be loaded and trusted;
+host hook failures or timeouts can also prevent enforcement. Arbitrary code from
+an unguarded checkout can conceal a write target that the hook cannot inspect.
+A missing runner
+PID or pause flag alone does not prove that workers and delivery stopped.
+With no active or uncertain automation, ordinary and synchronous work proceeds
+without this guard.
 
 ## Issue states
 
@@ -57,19 +107,22 @@ Release the hold and use the `reconcile` control with the issue's current
 `expectedRevision` to verify the landed commit and acceptance. This does not
 start another builder. Use `resume` for work whose PR has not landed.
 
-## Enable and use the director
+## Enable and use the automated director
 
-Set up the repository and review `conductor.json` first. In Codex Desktop,
-explicitly enable Conductor for this repository. If the current chat is already
-the saved director, reuse it. Otherwise create a persistent local project chat
-using Codex's native thread creation, name it `Conductor: <product name>`
-(for example, `Conductor: Steady Helm`),
-and start it with `$conductor:director`. Its initial instruction must make its
-first action `conductor enable --host desktop --thread <its own UUID>` before
-it inspects issues or dispatches work. Wait for that native thread's
-completion/status and verify the exact UUID is saved as the repository binding
-before reporting enablement complete. This keeps the new director from starting
-work before it is bound.
+Set up the repository and review `conductor.json` first. Explicitly request
+automated operation; an unspecified mode means synchronous. Resolve the requested
+chat and inspect the saved owner and any pending handoff before creating another.
+For a fresh native local project chat, supply `$conductor:director`, automated
+mode, repository, authorized operation, and expected prior binding. Use the
+director title and model settings above.
+
+The destination verifies its own actual UUID, repository, saved owner, and
+pending handoff. Resolve initial human questions before enabling new execution;
+keep initial admission paused when questions or execution authority remain
+unresolved. Then enable with `conductor enable --host desktop --thread <its own
+UUID>` or use the authorized attach path for an existing director. Verify the
+saved binding and native completion before reporting startup complete. Existing
+holds and admission/runner pauses must not be released as an onboarding shortcut.
 
 Enabling uses the existing bound director chat or binds the supplied Desktop
 thread when no director is bound. It starts the local observer. Check
@@ -273,16 +326,16 @@ requires the appropriate evidence and verified delivery. Durable meaning stays
 with the project's existing owner. Unchanged evidence reuses valid
 analysis rather than triggering repeated planner calls or duplicate issue comments.
 
-An ordinary request in an unbound chat can authorize planning and issue work
-within the request's scope. Prepare and show the concrete change or issue result,
-then ask whether to start Conductor's ongoing director. That request alone does
-not authorize adopting the chat, creating a director, starting the runner,
-activating admission or dispatching work. An explicit request to start a director
-allows the required binding path.
+An ordinary request in an unbound chat authorizes work within that request,
+including implementation when requested. The ordinary skills keep its issues
+current and report their changes. Do not ask whether to start a director or
+adopt the chat. Director operation requires an explicit request, defaults to
+synchronous work, and binds the automated runtime only when automation is selected.
 
 Use ordinary chat for questions, approvals and issue direction. The optional
 `$onepersonlabs:human-collaboration` inbox can carry longer reviews or phone
-responses; it is not required. An inbox draft is not a submitted answer.
+responses only when explicitly requested. Do not start or connect it merely
+because the skill is available. An inbox draft is not a submitted answer.
 
 ## Move the director to another chat
 
@@ -308,9 +361,10 @@ it does not establish the cause of a missing receipt or require routine toggles.
 
 Ask the current director “Move Conductor to a fresh chat”, or open a chat in
 the same project and say “Make this the Conductor runner”. Both requests use
-`$conductor:director`. A fresh chat is named `Conductor: <product>` and reads
-current instructions; it receives brief context and relevant links rather than
-inheriting the old conversation.
+`$conductor:director`. A fresh chat uses Sol 6.1 Low and the title
+`🎬 <project> <MM/DD/YYYY hh:mm AM/PM>`. It reads current instructions and receives
+the automated mode, repository, authorized operation, expected prior binding,
+brief context, and relevant links rather than inheriting the old conversation.
 
 The underlying command, run from the configured repository, is:
 
@@ -333,14 +387,10 @@ destination cannot silently replace it. Service restart retains the pending
 request, but a stopped service does not prove the old chat is idle.
 
 Do not use `conductor stop` for a chat handoff, because it also stops workers.
-After a successful handoff, the replacement automatically archives the old
-director through the native app operation, preserving its conversation history.
-It verifies the saved binding, completed recovery and absence of active turns or
-queued user input first, using the old UUID from the attach receipt or event.
+After a successful handoff, the former director chat stays visible. Archive it
+only on an explicit user request, after verifying ownership and outstanding work.
 Pending handoffs retain the current owner. Builders, reviewers and worktrees are
-unaffected. Ask to keep the old chat visible if you want to retain it in the
-sidebar. Archive failures are reported for reconciliation during an ordinary
-check. After replacement, old-chat controls are rejected; talking there does
+unaffected. After replacement, old-chat controls are rejected; talking there does
 not automatically reclaim ownership.
 
 ## Idle behavior, wakeup and restart
@@ -349,6 +399,11 @@ Worker outcomes, relevant issue changes and verified Conductor actions signal
 the bound director. A local observer also reconciles external GitHub changes on
 the configured interval, defaulting to 30 minutes. This check uses ordinary
 code. If nothing changed, it does not start a model turn.
+
+The terminal reports meaningful progress, waits, requests, and errors, without a
+periodic status heartbeat. One-second local command and lifecycle checks do not
+fetch GitHub. Events and explicit checks can reconcile GitHub before the scheduled
+interval; the interval is not a promise that no earlier network request occurs.
 
 The service checks the director's actual host status. If it is idle, Conductor
 sends one wakeup to reconcile current state. If the director is already
@@ -500,8 +555,8 @@ repositories are cleaned on the next invocation, so no off-process timer is
 promised.
 After verified delivery, startup and maintenance automatically clean eligible
 completed worktrees. Cleanup candidates and the full deletion boundary are in the
-[PR delivery guide](../skills/github-workflow/references/delivery.md#completed-worktree-cleanup).
+[PR delivery guide](../skills/implement/references/delivery.md#completed-worktree-cleanup).
 
 See [configuration](configuration.md) for repository labels, checks and
-migration. `$conductor:director` is the interactive entry point;
-`$conductor:github-workflow` documents issue and delivery rules.
+migration. The [shared workflow](../references/workflow.md) supplies issue rules
+for ordinary skills and explicit director operation.

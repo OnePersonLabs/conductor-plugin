@@ -58,6 +58,9 @@ test('native root identity authorizes only the recorded director and valid hando
   assert.equal((await handleCheckoutGuard({ ...f.payload(), session_id: 'destination' })).denied, true);
   f.state.director.threadHostOwnership.threadId = 'different'; await f.save();
   assert.equal((await handleCheckoutGuard({ ...f.payload(), session_id: DIRECTOR })).denied, true);
+  f.state.director.threadHostOwnership = { threadId: DIRECTOR, host: 'codex-app-server-daemon' }; await f.save();
+  assert.equal((await handleCheckoutGuard({ ...f.payload(), session_id: DIRECTOR })).guarded, false);
+  assert.equal((await handleCheckoutGuard(f.payload())).denied, true);
 });
 
 test('read-only inspection works; patches, GitHub writes, queues and ambiguous tools are denied', async t => {

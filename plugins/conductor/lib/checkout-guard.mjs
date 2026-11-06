@@ -62,8 +62,8 @@ function authorizedDirector(state, sessionId) {
   if (typeof sessionId !== 'string' || !sessionId) return false;
   const director = state.director;
   const ownership = director?.threadHostOwnership;
-  if (ownership?.host !== 'codex-desktop' || (ownership.threadId && ownership.threadId !== director.threadId)) return false;
-  return director.threadId === sessionId || (director.handoff?.fromThreadId === director.threadId && director.handoff.toThreadId === sessionId);
+  if (!['codex-desktop', 'codex-app-server-daemon'].includes(ownership?.host) || (ownership.threadId && ownership.threadId !== director.threadId)) return false;
+  return director.threadId === sessionId || (ownership.host === 'codex-desktop' && director.handoff?.fromThreadId === director.threadId && director.handoff.toThreadId === sessionId);
 }
 
 // This intentionally accepts a small shell language: a single literal command.

@@ -1,53 +1,63 @@
 # Conductor
 
-Conductor is a conversational director for issue-driven project work. In chat,
-it autonomously triages reports, prepares accepted work, repairs the backlog,
-manages holds and directs implementation. The director handles routine triage
-and uses the configured planner (default Astra) for hard decisions when justified.
-It applies and verifies supported changes. It asks you when a concrete
-human dependency remains, with a recommendation, rather than requiring approval
-for routine planning within accepted goals. It batches useful questions in chat
-and records answers on their issues so interrupted or replaced chats can continue
-without repeating resolved decisions. A small local service handles worker ownership,
-capacity, events, recovery and delivery. When nothing needs attention, the
-director ends its turn; an unchanged idle check does not call a model.
+Conductor provides GitHub issue skills for planning, implementation, review, and
+human decisions. Use them during ordinary agent work, or explicitly start a
+director to coordinate a set of issues.
 
-Issues move through familiar workflow states: `triage`, `proposal`, `ready` and
-`on-hold`. A `needs-input` label marks a specific question. Conductor can start
-bounded work from `ready` issues after it checks authorization, dependencies,
-holds and current issue contents. It retains original builder sessions through
-repair, verifies checks and reviews, and closes work only after acceptance and
-landing are confirmed.
+An ordinary request such as “implement this plan” stays in the current chat and
+within that request. It does not start or suggest a director, create a chat,
+start a background runner, or take on the rest of the backlog. The agent reports
+Conductor-driven issue changes with links and their effect on the work.
 
-OnePersonLabs can guide task, model and context judgment independently. With
-Conductor enabled, Conductor owns durable issues, dependencies, dispatch and
-delivery. Builders may delegate bounded local steps within their assigned job;
-they integrate and reconcile helpers before completing or handing off the work.
-The parent's model alone does not select a helper's model.
+## Choose the work
 
-Repositories can also require a reviewed Conceptor design before builder
-execution. The director prepares it through native planning and independent
-review; Conductor validates and supplies the resulting design and implementation
-increment to the original builder. Missing or stale handoffs block that job
-without starting a model turn. See [design handoff configuration](plugins/conductor/docs/configuration.md#reviewed-design-handoffs).
+| Skill | Example request | Result |
+| --- | --- | --- |
+| `$conductor:manage-issues` | “Split #12 into deliverable issues and record its dependencies.” | Updated issues, acceptance criteria, states, priorities, and native relationships. |
+| `$conductor:ask-user` | “Walk me through the decisions blocking these issues.” | Questions in chat, recorded answers, and verified integration into the owning issues or specifications. |
+| `$conductor:plan` | “Plan this change and keep its issue current.” | A bounded, evidence-based plan with observable acceptance criteria. |
+| `$conductor:implement` | “Implement the accepted plan for #12.” | Work by the current agent, appropriate verification and review, and issue updates within the authorized delivery boundary. |
+| `$conductor:review` | “Review this change and address the PR feedback.” | Independent findings and feedback handling; the original builder owns implementation and repairs. |
+| `$conductor:director` | “Start a director for these issues.” | Explicit coordination, synchronous by default. |
+| `$conductor:setup-repo-workflow` | “Configure this repository for Conductor.” | Prepared configuration without starting execution. |
 
-An ordinary request to change a repository does not start a director. The
-director can prepare the change within the request's scope, create or update its
-issue, and show you the concrete result. It then asks whether you want to start
-Conductor's ongoing director for that repository. Setup and issue preparation
-do not bind a chat or start observation.
+The delegated `$conductor:planner` is an adviser for bounded planning questions;
+it returns recommendations to its assigning agent. It does not own issue writes
+or start another coordinator. Shared [workflow rules](plugins/conductor/references/workflow.md)
+apply across the public skills.
 
-Once you explicitly start Conductor for a configured repository, it keeps one
-Desktop director chat bound to that repository. Relevant changes wake that
-chat when it is idle. If it is already working, Conductor records that there is
-more to check and lets the current turn sort out the next work without extra
-wakeup messages. When it has no further work or useful input to resolve, it tells you to say
-“wakeup” to check again.
+## Choose how a director works
 
-## First use
+| Mode | Who does the work | Workspace and lifetime |
+| --- | --- | --- |
+| Ordinary work | The current agent and any authorized helpers | Current checkout; ends with the requested task. No director. |
+| Synchronous director (default when requested) | The current agent coordinates the selected issues and subagent reviews | Current checkout; no worktrees, runner, polling, or automatic wakeups. |
+| Automated director (explicit opt-in) | A director chat and background coordinator manage original builder/reviewer threads | Isolated issue worktrees; event-driven recovery and delivery. |
 
-Install the Codex plugin and CLI separately. Node.js 24+, Git, GitHub CLI and
-Codex App Server must be available in the environment that runs the service.
+When you explicitly request a director and do not specify its chat, Conductor
+asks whether to use this chat or a fresh one. Fresh chats use `gpt-6.1-sol` at
+`low` reasoning effort. An existing chat keeps its current model. A director
+names itself `🎬 <project> <MM/DD/YYYY hh:mm AM/PM>` using local time, for example
+`🎬 Psychord 11/06/2026 06:30 PM`. Former director chats remain visible unless
+you ask to archive them.
+
+Startup begins with `$conductor:ask-user`: inspect existing issues and recorded
+answers, then surface useful unresolved decisions before implementation. It does
+not repeat answered questions or invent a questionnaire when scope is clear.
+Questions use native question cards or chat. The human-collaboration web inbox
+starts only when explicitly requested; existing drafts and submissions remain
+recoverable.
+
+Synchronous operation does not bind a background director. If automation already
+owns the repository, first reconcile and stop its work before using that checkout
+synchronously. A saved stop or a dead runner alone does not prove workers ended.
+Changes to an actively owned issue must go through its existing director's hold
+or pause barrier before changing its scope, acceptance, or dependencies.
+
+## Install and configure
+
+Install the Codex plugin and CLI separately. The automated service requires
+Node.js 24+, Git, authenticated GitHub CLI, and Codex App Server.
 
 ```powershell
 codex plugin marketplace add 'C:\path\to\conductor-plugin'
@@ -55,120 +65,83 @@ codex plugin add conductor@conductor
 npm install -g 'C:\path\to\conductor-plugin'
 ```
 
-In WSL, install through that environment's own paths, Node/npm
-and authenticated GitHub CLI. Windows and WSL have separate local runtimes.
+From the target repository, use `$conductor:setup-repo-workflow`. Review its
+`conductor.json`, label mapping, real verification commands, concurrency, and
+delivery authority. Configuration preparation starts nothing. Ordinary skills
+can use existing repository issue conventions without enabling the service.
+Windows and WSL use separate local runtimes; operate in the environment that owns
+the work.
 
-From the target repository, ask Codex to use `$conductor:setup-repo-workflow`.
-Review its proposed `conductor.json`, issue label mapping, checks, concurrency,
-delivery settings and scope authority. Preparing setup does not start Conductor.
+For automation, explicitly request the automated director and choose its chat.
+Conductor checks the saved owner and pending handoff before creating anything.
+The destination verifies the repository, authorized operation, expected prior
+binding, and its actual native UUID before enablement or attachment. Initial
+questions precede execution; existing holds and pauses remain in force. See
+[workflow and recovery](plugins/conductor/docs/workflow.md) for the full path.
 
-Only when you explicitly ask to start Conductor does the setup flow bind a
-Desktop director and start observation. It first checks the saved owner and any
-pending handoff. It reuses that owner or continues the handoff; it does not make
-a duplicate. If no director is bound, it creates a fresh native local project
-chat titled `Conductor: <product>`, starts it with `$conductor:director`, and
-passes the repository, start request and expected prior binding. The new chat
-verifies its actual native UUID, saved owner and any pending handoff before its
-first enable or attach control. A matching title or skill does not establish
-ownership.
+## Issue state and verified delivery
 
-In the new chat, enable the configured repository with its native UUID:
+- `triage`: a concrete investigation is unfinished.
+- `proposal`: a materially new or competing direction needs a decision.
+- `ready`: accepted, bounded, sufficiently specified, authorized work; dependencies
+  can still block execution.
+- `on-hold`: deliberately suspended until its hold is released.
+- `needs-input`: an additional label for an actual unresolved human dependency.
 
-```powershell
-conductor enable --host desktop --thread THREAD_UUID
-```
+Use native blocked-by relationships for prerequisites and native sub-issues for
+separate outcomes. Parent proposals and holds constrain descendants. Priority
+orders compatible work; it does not select between incompatible directions.
+Issue labels never authorize new product scope. Report delivery only after
+acceptance, required checks/review, and landing in the configured base are verified.
 
-Verify the saved binding with `conductor status`. Merely installing the plugin
-or preparing configuration does not enable processing.
+Automated builders and reviewers start in separate contexts using the host's
+configured permissions and tools. Requests use the normal explicit-answer path.
+Review findings return to the original builder; revision checks prevent stale
+clearance. An automated builder does not own GitHub writes or publication: the
+coordinator retains those duties. Manual implementation follows the user's
+requested delivery boundary.
 
-Review and trust the Conductor lifecycle hooks when Desktop prompts you to do
-so. Routine refresh does not require a blanket Desktop restart or hook toggle.
-If lifecycle receipts are missing, diagnose the event delivery path and actual
-hook execution before changing host settings. Cross-chat messaging bypasses
-`UserPromptSubmit`; use the native queue for programmatic director messages.
-Normal operation uses the native queue and hooks without UI automation. The final automatic
-test restarted the observer with `conductor wakeup` and delivered through
-the queue, without a composer submission.
-If lifecycle status is unknown, automatic wakeups are suppressed instead of
-assuming the director is idle. The October 27 bounded trial verified automatic
-delivery, matching lifecycle tracking, service restart with the same chat, and
-busy-signal suppression. See the [runtime evidence](docs/runtime-selection-2026-10-20.md)
-for scope and the Windows shutdown persistence repair.
-If status reports `lifecycle-receipt-missing`, inspect the native chat and hook
-execution before manually resuming; settlement alone does not prove turn completion.
+## Automated runner controls
 
-Use the director chat for issue triage, decisions and execution. Say `wakeup`
-there at any time to make Conductor check for work. From a terminal, wake an
-already-enabled repository with:
+The Windows runner has a visible console with timestamped progress and errors,
+also written to its rotating log. It reports meaningful changes and requests;
+it does not print a periodic status heartbeat. Scheduled external reconciliation
+defaults to 30 minutes, with earlier checks on events or explicit requests.
+Local command and lifecycle checks do not poll GitHub at their one-second cadence.
+An unchanged reconciliation does not start a model turn.
 
-```powershell
-conductor wakeup
-```
+| Command | Effect |
+| --- | --- |
+| `conductor status` | Inspect saved service and recovery state. |
+| `conductor stop` | Persist a runner pause, interrupt owned workers, and retain recovery. Ctrl+C and closing the console use the same stop path. |
+| `conductor wakeup` | Restart observation without clearing the runner pause. |
+| `conductor resume` | Clear the runner pause and continue eligible interrupted work, preserving separate issue pauses, holds, and admission restrictions. |
+| `conductor resume ISSUE` | Reconcile and recover the original issue job through eligibility checks. |
+| `conductor cleanup --preview` | Show worktree cleanup candidates and retention reasons. |
+| `conductor cleanup` | Remove eligible delivered worktrees while the runner is stopped. |
 
-Before creating a director, Conductor checks the saved owner and any pending
-handoff. It reuses the saved owner or completes that handoff; a title or skill
-match does not establish ownership. `conductor status` shows service and recovery
-state. On Windows, keep the runner's console visible to see timestamped progress;
-its existing log rotates. `Ctrl+C`, closing the console, or `conductor stop`
-persists a runner pause. Bare `conductor resume` clears only that stop pause and
-restarts observation; holds, job pauses and admission restrictions remain.
+Unexpected coordinator loss is treated as paused until explicit resumption.
+Finished worktrees are cleaned after verified delivery and worker shutdown;
+dirty, held, unfinished, and uncertain worktrees remain. Cleanup retains branches
+and job history. Read the [delivery and cleanup guide](plugins/conductor/skills/implement/references/delivery.md)
+before applying cleanup.
 
-`conductor wakeup` observes and reports a paused reason without clearing the
-pause. Run `conductor --help` for controls and the
-[workflow guide](plugins/conductor/docs/workflow.md) for holds, release, event
-handling and recovery.
+While automation owns a repository, the checkout hook warns unrelated chats in
+the main checkout and rejects edits and commands with unknown effects. Recognized
+inspection calls remain available. This is a guard over supported Codex hook
+calls, not filesystem isolation; disabled hooks, existing interactive processes,
+and external programs are outside its protection. See [checkout protection](plugins/conductor/docs/workflow.md#main-checkout-protection).
 
-To get a fresh director context, say “Move Conductor to a fresh chat” in the
-current runner, or “Make this the Conductor runner” in another project chat.
-The [chat handoff](plugins/conductor/docs/workflow.md#move-the-director-to-another-chat)
-preserves worker ownership, holds and execution pauses and waits for an active
-director to finish before switching. The replacement automatically archives the
-superseded runner after verifying the handoff; its conversation history remains
-recoverable. You can explicitly ask to keep it visible.
-For plugin rollouts, finish bundle changes, checks and publication first. Then
-refresh the Windows local installation, verify hook trust, and complete required
-post-refresh configuration and global-instruction checks before creating
-replacements. Do not refresh WSL or another local Codex home unless requested.
-Keep the installed bundle unchanged through handoff and lifecycle verification;
-see the same guide for the full order.
+## Development and evidence
 
-## How issue states work
+Run `npm run test:installed` for package validation, deterministic tests, and
+installation in a temporary Codex home. This does not refresh the global plugin
+or start production workers. Source checks, installed discovery, live hook
+execution, and delivered work are distinct claims.
 
-- `triage`: investigate incoming or unclassified work.
-- `proposal`: develop an unaccepted direction; no implementation dispatch until
-  that direction is accepted. Conductor removes the label when the underlying
-  decision is resolved; a rejection does not make the work ready.
-- `ready`: accepted bounded work; dependencies can still block admission.
-- `on-hold`: paused until you explicitly release it.
-- `needs-input`: a specific unresolved decision blocks the affected work. It is
-  removed when no human input remains; partial decisions retain only the remaining
-  blocker.
-
-Accepted implementation issues created from a plan can be ready immediately.
-Newly reported bugs normally enter triage. Conductor investigates and fills
-planning gaps to make authorized work ready, including defining acceptance
-criteria. It verifies satisfaction of those criteria from appropriate evidence;
-writing them does not establish success. An admission pause still permits
-authorized backlog preparation, but remains a barrier to implementation.
-Open dependencies are checked
-automatically; when a valid prerequisite completes, the ready issue is
-reconsidered on the next scan.
-
-The service signals the same chat when work completes, relevant issue changes
-occur, or attention is needed, and checks GitHub changes every 30 minutes. If
-the director is already active, new activity is recorded for its next check
-instead of queuing more wakeup messages. An unchanged check causes no model
-turn. Human-collaboration is an optional side channel; regular chat is
-sufficient.
-
-## Limits and evidence
-
-The service does not install a startup task, authorize new product decisions,
-or establish human or platform qualification. Source tests, installed plugin
-state, live service operation and end-to-end delivery are separate evidence.
-No production workers are started by installation or setup.
-
-See [configuration](plugins/conductor/docs/configuration.md),
-[workflow and recovery](plugins/conductor/docs/workflow.md),
-[$conductor:director](plugins/conductor/skills/director/SKILL.md), and
-[$conductor:github-workflow](plugins/conductor/skills/github-workflow/SKILL.md).
+See [configuration](plugins/conductor/docs/configuration.md) for checks, labels,
+models, reviewed design handoffs, and migration. For an authorized live rollout,
+finish bundle changes, checks, and publication before refreshing and verifying
+hook trust. Create replacement director chats only after the final bundle is
+installed; keep it unchanged during handoff. A request to leave Conductor disabled
+or skip global refresh takes precedence over that rollout procedure.

@@ -141,7 +141,8 @@ follow-ups. Do not prescribe routine restarts or hook toggles without diagnosis.
 The service queues wakes only when the director is known idle. Desktop must be
 available to consume them; the service does not launch its private server.
 
-The observer reconciles external GitHub changes every 30 minutes without a model
+The observer reconciles external GitHub changes on the configured interval
+(30 minutes by default), without a model
 turn when unchanged. An active director retains new events for its next check.
 Signals and successful turns are not evidence of complete delivery or lifecycle
 qualification. Report missing receipts and unresolved recovery explicitly.

@@ -2,10 +2,11 @@
 
 Conductor reads `conductor.json` from the target Git repository root. Use
 `$conductor:setup-repo-workflow` to prepare or migrate this configuration.
-Setup inspects repository policy and prepares the file. The user must explicitly
-start the director to bind a chat and start issue observation. An ordinary request
-to make a change may prepare the work and create or update its issue; it does not
-authorize a director binding, runner start, admission activation or dispatch.
+Setup inspects repository policy and prepares the file without starting work.
+Ordinary planning, implementation, review, and issue management stay in the
+current chat. An explicitly requested director defaults to synchronous operation
+without a runner or worktrees. Only explicitly requested automation binds a
+runtime director and starts issue observation.
 
 ## Repository and execution settings
 
@@ -24,6 +25,7 @@ authorize a director binding, runner start, admission activation or dispatch.
   },
   "priorityLabels": [],
   "agents": 1,
+  "admissionPaused": true,
   "pollInterval": "30m",
   "directorModel": "gpt-6.1-sol",
   "plannerModel": "gpt-6-astra",
@@ -40,13 +42,19 @@ boolean `true` only when the configured workflow has genuine implementation and
 PR-delivery authority. It is an execution gate, not blanket permission for new
 product scope.
 
-`directorModel` is the setup preference for the invoking chat, not a runtime
-model switch. Select Sol in that chat. `plannerModel` instructs the director's
+`directorModel` defaults to `gpt-6.1-sol`. Newly created director chats use Sol 6.1
+with `low` reasoning effort unless the user specifies otherwise. Adopting the
+current chat does not silently change its model. `plannerModel` instructs the director's
 native subagent delegation; the service does not create a second planner runner.
 It is the preference for deliberately delegated hard architecture or substantial
 planning decisions. Routine triage and backlog repair can stay with the director.
 The director verifies host model availability and reports unsupported required
 models. An Astra invoking chat alone does not select Astra helpers.
+
+Initial setup keeps `admissionPaused: true` through onboarding and the first user
+decision phase. This field initializes new runtime state; editing it is not a
+control for an already-running coordinator. Existing pauses require their own
+explicit release through the bound director.
 
 Builder and reviewer threads use the host's configured model, effort, permissions
 and tools on start and resume; Conductor supplies no role-specific override.
@@ -130,12 +138,15 @@ design merely by changing code; Conceptor checks the governing meaning, request,
 design and increment. Existing checks and independent code review still qualify
 the delivered commit.
 
+This adapter is enforced by the automated delivery path. Manual and synchronous
+planning must preserve the same repository design requirements before implementation;
+they do not dispatch through this runtime adapter.
 Without this configuration, Conductor retains its existing execution behavior.
 Configuring it does not release an interaction gate, hold or admission pause.
 Changing an installed bundle during a live director rollout still requires the
 coordinated refresh described in the repository's rollout instructions.
 
-## Before starting
+## Before starting automation
 
 Confirm `origin` matches `repository`, the configured base branch exists, and
 `gh auth status` succeeds in the intended environment. Check configured
@@ -144,8 +155,8 @@ App Server are available.
 
 The source exposes explicit repository enablement and recovery controls; a
 configuration file alone does not start a watcher or authorize production
-dispatch. `conductor enable` starts the configured repository's director after
-setup. Follow [workflow and recovery](workflow.md) for wakeup, stop and migration
+dispatch. `conductor enable` explicitly starts the automated repository runner after
+setup; it is not the synchronous director entrypoint. Follow [workflow and recovery](workflow.md) for wakeup, stop and migration
 behavior. Windows and WSL maintain separate GitHub, Node and Codex environments;
 recover work in the environment that owns it.
 

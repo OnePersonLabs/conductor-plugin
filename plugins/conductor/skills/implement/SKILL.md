@@ -20,8 +20,11 @@ local choices in this assignment. Use `$conductor:ask-user` for a missing human
 decision or authority. Preserve holds, spending restrictions and required design
 handoffs. Do not invent acceptance.
 
-Before editing a checkout associated with automation, inspect current runtime and
-worker recovery state. Proceed only when automation is quiescent and no unresolved
+For a coordinator-assigned builder, verify the saved job, thread and worktree
+match this assignment, then work within that ownership. The active coordinator
+does not prevent its own assigned builder from implementing the issue.
+For ordinary or synchronous work, inspect current runtime and worker recovery
+state before editing a checkout associated with automation. Proceed only when no
 owned worker or delivery operation can conflict with the edits. A stopped service
 or paused admission alone does not prove workers have stopped. Do not silently
 stop automation, take over its binding or transfer a writer's ownership. Report
