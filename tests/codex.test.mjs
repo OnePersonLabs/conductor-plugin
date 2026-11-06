@@ -61,9 +61,10 @@ test('starts a session with explicit transport options and names it by its durab
     const configured = await client.readConfig({ cwd: process.cwd() });
     assert.deepEqual(Object.keys(configured.config.additional), ['mcp_servers', 'apps', 'plugins']);
     const started = nextMatching(client, 'notification', item => item.method === 'fixture/threadStarted');
-    const options = { cwd: process.cwd(), sandbox: 'workspace-write', approvalPolicy: 'on-request', config: { model_reasoning_effort: 'medium' } };
+    const options = { cwd: process.cwd(), sandbox: 'workspace-write', approvalPolicy: 'on-request', model: 'gpt-6.1-sol', reasoningEffort: 'low', config: { model_reasoning_effort: 'medium', 'features.example': true } };
     const thread = await client.startThread(options);
-    assert.deepEqual((await started).params, options);
+    const { reasoningEffort, ...wireOptions } = options;
+    assert.deepEqual((await started).params, { ...wireOptions, config: { ...options.config, model_reasoning_effort: reasoningEffort } });
     const named = nextMatching(client, 'notification', item => item.method === 'fixture/threadNamed');
     await client.setThreadName({ threadId: thread.id, name: 'example/project #42 - reviewer' });
     assert.deepEqual((await named).params, { threadId: 'thread-new', name: 'example/project #42 - reviewer' });

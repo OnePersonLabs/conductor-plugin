@@ -120,7 +120,9 @@ export class CodexClient extends EventEmitter {
     if (approvalPolicy !== undefined) params.approvalPolicy = approvalPolicy;
     if (config !== undefined) params.config = config;
     if (model !== undefined) params.model = model;
-    if (reasoningEffort !== undefined) params.reasoningEffort = reasoningEffort;
+    // thread/start accepts reasoning effort through its config overrides, not
+    // as a top-level field. Preserve other explicit caller configuration.
+    if (reasoningEffort !== undefined) params.config = { ...config, model_reasoning_effort: reasoningEffort };
     const result = await this._request('thread/start', params);
     return requireResultObject(result, 'thread/start', 'thread');
   }
