@@ -1,6 +1,7 @@
 # Repository choices for Conductor
 
-Use this reference during explicit setup. Inspect existing policy, issue
+Use this reference during explicit automated-workflow setup. Ordinary skills and
+synchronous coordination do not require this runtime lane. Inspect existing policy, issue
 conventions, protections, and checks before proposing configuration. Preserve
 the project's owners of product meaning and acceptance evidence.
 
@@ -72,14 +73,16 @@ incomplete acceptance also stays open for operator action.
 
 ## Tracker writes and feedback receipts
 
-The conversational director owns routine issue-state and scope edits. The
+For manual or synchronous work, the current root owns authorized issue writes.
+In automation, the conversational director owns routine issue-state and scope edits. The
 deterministic coordinator owns dispatch enforcement, PR creation, auto-merge
 and acceptance-based issue closure. Builders propose issue changes to the
 director. Issue or review text never grants permission to expand implementation
 scope. Standalone skill use must follow the user's and repository's publication
 authority.
 
-The included feedback receipt helper is for preserving a manually judged PR
+The [review skill's feedback receipt helper](../../review/references/review-feedback.md)
+is for preserving a manually judged PR
 feedback batch across interruption. It validates local receipts and can inspect
 publication with read-only GitHub API requests; it never sends replies,
 resolves threads, merges, or changes issue state. The running coordinator uses

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Plan a change"
+  short_description: "Plan bounded work in the current chat"
+  default_prompt: "Use $conductor:plan to investigate the requested outcome and prepare a bounded, evidence-grounded plan in this chat. Preserve authority, dependencies and unresolved decisions. Do not start a director."
+policy:
+  allow_implicit_invocation: true

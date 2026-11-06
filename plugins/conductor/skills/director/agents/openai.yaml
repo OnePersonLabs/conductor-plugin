@@ -1,6 +1,6 @@
 interface:
   display_name: "Conductor Director"
-  short_description: "Prepare issue work or manage an explicitly started director"
-  default_prompt: "Use $conductor:director to prepare issue work within the user's request, manage a bound Conductor director, start one when explicitly requested, use the configured planner for hard decisions when justified, coordinate eligible execution, or hand the runner to a fresh or current chat when requested. An ordinary change request does not authorize binding or starting the runner."
+  short_description: "Explicit synchronous or automated coordination"
+  default_prompt: "Use $conductor:director only for an explicit director request. Default to synchronous coordination, confirm current versus fresh chat when unspecified, begin with unanswered user decisions, and use full automation only when explicitly selected."
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false

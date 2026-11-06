@@ -15,7 +15,7 @@ For a caller-supplied path, preserve that exact path. Preflight refuses existing
 paths and tests exclusive temporary-file creation in the parent.
 
 ```powershell
-$skillDir = (Resolve-Path '<absolute github-workflow skill directory>').Path
+$skillDir = (Resolve-Path '<absolute review skill directory>').Path
 python "$skillDir/scripts/pending-feedback.py" preflight --path '<handoff path>'
 ```
 

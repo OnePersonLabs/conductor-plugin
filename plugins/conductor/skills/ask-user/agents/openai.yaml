@@ -1,0 +1,6 @@
+interface:
+  display_name: "Ask the user"
+  short_description: "Resolve user decisions and integrate answers"
+  default_prompt: "Use $conductor:ask-user to recover existing decisions, investigate facts, ask only unanswered consequential questions in chat and verify integration of answers. Use an optional inbox only on explicit request."
+policy:
+  allow_implicit_invocation: true

@@ -1,9 +1,8 @@
----
-name: github-workflow
-description: Manage GitHub issue state, dependencies and verified delivery under Conductor's project policy.
----
+# Shared issue and delivery policy
 
-# GitHub workflow
+Read this reference when a Conductor skill manages issue scope, state,
+dependencies or delivery. It applies to ordinary chat, synchronous directors and
+explicit automation; only the automated branch needs a bound runtime.
 
 GitHub owns issue acceptance, prerequisites and delivery status. Keep product
 meaning and its evidence with the existing specification or decision owner.
@@ -25,7 +24,7 @@ question. Unlabeled issues enter triage. An open issue, label, issue creator or
 GitHub authentication does not alone authorize implementation of new scope.
 Newly discovered speculative ideas are proposals; proven, already authorized
 bugs can be marked ready after triage establishes their repair scope and
-acceptance. Through the director's planning policy, actively resolve
+acceptance. Through the current root's planning work, actively resolve
 missing details, define observable acceptance criteria and apply supported
 transitions. Routine planning within accepted goals does not require fresh user
 approval. Keep triage only for a concrete unfinished investigation and proposal
@@ -49,14 +48,17 @@ completed only after verifying the writes. Preserve explicit holds and admission
 pauses. Defining acceptance is planning; declaring it satisfied requires evidence
 appropriate to the complete claim and the existing delivery requirements.
 
-The director owns ordinary issue writes under the user's configured workflow.
+The current root owns authorized ordinary issue writes. In automation, its saved
+director owns conversational issue edits and the deterministic coordinator owns
+delivery transitions. State the intended GitHub writes before making them.
 Builders return suggested issue changes; the coordinator owns automated issue
 closure and delivery transitions. Before every write, read current state,
 preserve unrelated metadata and reconcile uncertain outcomes before retrying.
-Use expected issue revisions when the service offers them.
+Use expected issue revisions when the service offers them. Ordinary skills use
+direct authorized GitHub operations and do not adopt a director to obtain controls.
 
-After an issue change can affect eligible work, signal the configured Conductor
-service to reconcile. The service wakes its designated director only when it is
+After a verified issue change can affect eligible automated work, signal the
+enabled Conductor service to reconcile. The service wakes its designated director only when it is
 idle; while active, leave new changes pending for that turn's next check. When
 using a tool or script that the local issue-change hook cannot identify, signal
 the service explicitly after confirming the write succeeded. A signal requests
@@ -77,8 +79,11 @@ the blocker succeeded: rejected or abandoned prerequisites require acceptance
 and dependency reconciliation.
 
 Do not introduce holds merely for routine reconciliation of idle issues. When a
-revision affects active work, establish the local barrier and verify issue labels
-before making dependent edits. Preserve the prior primary state in the hold
+revision affects active automated work, its existing bound director must establish
+the local barrier and verify issue labels before dependent edits. An ordinary
+agent must not adopt a chat merely to obtain these controls. Read-only inspection,
+planning and unaffected-issue changes can proceed within existing authority.
+Preserve the prior primary state in the hold
 receipt. User-requested holds require explicit user release. A temporary barrier
 introduced solely by the director for an authorized repair is released by that
 director after verified completion and reconciliation, using its exact hold ID.
@@ -109,17 +114,20 @@ existing meaning owner before marking work ready.
 
 ## Carry work through verified delivery
 
-The deterministic coordinator creates/reconciles isolated worktrees, starts
+In full automation, the deterministic coordinator creates/reconciles isolated worktrees, starts
 builders, runs configured checks, publishes branches and PRs, routes feedback
 to the original builder and handles merge. Preserve the original builder and
-reviewer sessions through repair and recovery. Independent reviews are
-read-only and apply only to the current checked base/head and issue revision.
+reviewer sessions through repair and recovery. Independent reviews apply only to
+the current checked base/head and issue revision. Reviewers retain the same
+configured permissions and tools as builders. The original builder owns
+implementation and repairs; the reviewer reports findings.
 
-Close an issue only after complete acceptance, required checks and review, and
+For completed delivery, close an issue only after complete acceptance, required checks and review, and
 verified landing in the configured base. A completed model turn, successful
 push, open PR, merged child issue or closed unmerged PR does not prove complete
-acceptance.
+acceptance. Rejection, cancellation and duplicate cleanup require their own
+authorized disposition and reconciliation of dependent acceptance.
 
 At handoff, state what was checked, delivered, left uncertain and what remains.
 Never report installed, running, published or qualified state without its own
-evidence. For operator recovery, follow [workflow and recovery](../../docs/workflow.md).
+evidence. For operator recovery, follow [workflow and recovery](../docs/workflow.md).
