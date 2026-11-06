@@ -249,8 +249,8 @@ export async function serve({ coordinator, store, config, options = {}, inputStr
   });
   const onSignal = () => { void stop(); };
   for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) signals.on(name, onSignal);
-  let watcher, fallback, heartbeat;
-  function cleanup() { watcher?.close(); clearInterval(fallback); clearInterval(heartbeat); input.close(); for (const name of ['SIGINT','SIGTERM','SIGHUP','SIGBREAK']) signals.removeListener(name, onSignal); }
+  let watcher, fallback;
+  function cleanup() { watcher?.close(); clearInterval(fallback); input.close(); for (const name of ['SIGINT','SIGTERM','SIGHUP','SIGBREAK']) signals.removeListener(name, onSignal); }
   coordinator.once('stopped', () => { report(coordinator.state?.runnerPause ? RUNNER_PAUSED_MESSAGE : 'Runner stopped; saved work is retained'); cleanup(); });
   try {
     const saved = await store.read();
@@ -262,7 +262,6 @@ export async function serve({ coordinator, store, config, options = {}, inputStr
     fallback = setInterval(controls, 1000);
     process.title = `Conductor: ${config.repository}`;
     report(`Conductor: ${config.repository}; ${config.agents} worker slot(s). Ctrl+C or closing this window pauses work. Run conductor resume from this project to continue.`);
-    heartbeat = setInterval(() => { if (controlsReady && coordinator.state && !coordinator.stopping) report(activityLines(coordinator.state)[0]); }, 60_000);
     await coordinator.start({ threadId: options.threadId, host: options.host, enable: options.enable === true, manualWake: options.manualWake === true, resumeRunner: options.resumeRunner === true, attachOnly: options.attachOnly, handoffThreadId: options.handoffThreadId, beforeScan: async () => { controlsReady = true; if (stopRequested) await stop(); else await controls(); } });
     starting = false;
   } catch (error) { cleanup(); throw error; }

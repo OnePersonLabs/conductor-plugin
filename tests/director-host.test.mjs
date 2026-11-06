@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { DirectorHost } from '../plugins/conductor/lib/director-host.mjs';
+import { DirectorHost, directorTitle } from '../plugins/conductor/lib/director-host.mjs';
 
 class FakeCodex extends EventEmitter {
   constructor() { super(); this.threads = []; this.statusValue = { type: 'idle' }; this.calls = []; this.queued = []; }
@@ -24,7 +24,7 @@ function fixture(overrides = {}) {
   let saves = 0;
   const host = new DirectorHost({
     client, cwd: 'C:\\repo', repository: 'owner/repo', model: 'gpt-6.1-sol',
-    reasoningEffort: 'medium', skillPath: 'C:\\plugin\\skills\\director\\SKILL.md',
+    skillPath: 'C:\\plugin\\skills\\director\\SKILL.md',
     state, save: async () => { saves++; }, ...overrides,
   });
   return { host, client, state, saves: () => saves };
@@ -47,6 +47,10 @@ test('creates, names, and durably binds one persistent director before its first
   assert.equal(await f.host.ensureThread(), 'new-thread');
   assert.equal(f.state.threadId, 'new-thread');
   assert.equal(f.state.threadCreationIntent, undefined);
+  const creation = f.client.calls.find(call => call[0] === 'startThread')[1];
+  assert.equal(creation.model, 'gpt-6.1-sol');
+  assert.equal(creation.reasoningEffort, 'low');
+  assert.match(f.client.calls.find(call => call[0] === 'setThreadName')[1].name, /^🎬 repo \d{2}\/\d{2}\/\d{4} \d{2}:\d{2} (AM|PM)$/);
   const started = await f.host.startRunner({ prompt: 'Inspect ready work', revision: 'r1' });
   assert.equal(started.id, 'turn-1');
   assert.ok(f.client.calls.findIndex(x => x[0] === 'setThreadName') < f.client.calls.findIndex(x => x[0] === 'startTurn'));
@@ -57,14 +61,19 @@ test('creates, names, and durably binds one persistent director before its first
   await f.host.close();
 });
 
-test('reuses an exact named repository director and preserves its identity', async () => {
+test('a matching title alone does not authorize adopting a conversation', async () => {
   const client = new FakeCodex();
-  client.threads.push({ id: 'existing', name: 'Conductor: owner/repo', cwd: 'C:\\repo', status: { type: 'idle' } });
   const f = fixture({ client });
+  client.threads.push({ id: 'existing', name: f.host.directorName, cwd: 'C:\\repo', status: { type: 'idle' } });
   await f.host.connect();
-  assert.equal(await f.host.ensureThread(), 'existing');
-  assert.equal(client.calls.some(x => x[0] === 'startThread'), false);
-  assert.equal(f.state.threadId, 'existing');
+  assert.equal(await f.host.ensureThread(), 'new-thread');
+  assert.equal(client.calls.some(x => x[0] === 'resumeThread' && x[1].threadId === 'existing'), false);
+  assert.equal(f.state.threadId, 'new-thread');
+});
+
+test('director names use local calendar dates and a twelve-hour clock', () => {
+  assert.equal(directorTitle('Psychord', new Date(2026, 10, 6, 0, 5)), '🎬 Psychord 11/06/2026 12:05 AM');
+  assert.equal(directorTitle('Psychord', new Date(2026, 10, 6, 18, 9)), '🎬 Psychord 11/06/2026 06:09 PM');
 });
 
 test('retains uncertain thread creation intent and never blindly creates a duplicate', async () => {

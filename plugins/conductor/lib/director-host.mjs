@@ -16,8 +16,14 @@ function isMissingThread(error) {
   return /thread.{0,30}(not found|does not exist)|(?:not found|does not exist).{0,30}thread/i.test(error?.message ?? '');
 }
 
+export function directorTitle(product, date = new Date()) {
+  const pad = value => String(value).padStart(2, '0');
+  const hour = date.getHours();
+  return `🎬 ${product} ${pad(date.getMonth() + 1)}/${pad(date.getDate())}/${date.getFullYear()} ${pad(hour % 12 || 12)}:${pad(date.getMinutes())} ${hour >= 12 ? 'PM' : 'AM'}`;
+}
+
 export class DirectorHost extends EventEmitter {
-  constructor({ client, cwd, repository, model, reasoningEffort = 'medium', skillPath = fileURLToPath(new URL('../skills/director/SKILL.md', import.meta.url)), threadId, state, save, execute = run, activity, host } = {}) {
+  constructor({ client, cwd, repository, model = 'gpt-6.1-sol', reasoningEffort = 'low', skillPath = fileURLToPath(new URL('../skills/director/SKILL.md', import.meta.url)), threadId, state, save, execute = run, activity, host } = {}) {
     super();
     if (typeof cwd !== 'string' || !cwd) throw new TypeError('cwd is required.');
     if (typeof repository !== 'string' || !/^[^/]+\/[^/]+$/.test(repository)) throw new TypeError('repository must be owner/name.');
@@ -31,6 +37,8 @@ export class DirectorHost extends EventEmitter {
     }
     Object.assign(this, { client: client ?? new CodexClient({ cwd, transport: 'proxy', experimentalApi: hostMode === 'codex-desktop' }), cwd: resolve(cwd), repository, model, reasoningEffort, skillPath, state, save, execute, activity, hostMode });
     this.threadId = threadId ?? state.threadId ?? null;
+    // Keep a creation attempt's name stable across retries and minute boundaries.
+    this.creationTitle = state.threadCreationIntent?.name ?? directorTitle(repository.split('/').at(-1));
     this.codexHome = resolve(process.env.CODEX_HOME ?? `${homedir()}/.codex`);
     this.threadEnsured = false;
     this.currentStatus = { type: 'unknown', activeFlags: [] };
@@ -64,7 +72,7 @@ export class DirectorHost extends EventEmitter {
     return this;
   }
 
-  get directorName() { return `Conductor: ${this.repository}`; }
+  get directorName() { return this.creationTitle; }
 
   async ensureThread() {
     if (this.hostMode === 'codex-desktop') return this._ensureDesktopThread();
@@ -102,10 +110,8 @@ export class DirectorHost extends EventEmitter {
       throw new Error(`Director creation outcome is uncertain for ${intent.name}. No matching thread is visible; inspect Codex sessions before retrying to avoid a duplicate.`);
     }
 
-    const existing = (await this.client.listThreads({ cwd: this.cwd })).filter(thread => thread.name === this.directorName && thread.cwd && resolve(thread.cwd) === this.cwd);
-    if (existing.length > 1) throw new Error(`Found multiple threads named ${this.directorName} in this repository: ${existing.map(thread => thread.id).join(', ')}.`);
-    if (existing.length === 1) return this._bind(existing[0]);
-
+    // A matching title does not authorize adopting an unrelated conversation.
+    // Only a saved binding or our pending creation intent can recover a chat.
     this.state.threadCreationIntent = { id: randomUUID(), name: this.directorName, cwd: this.cwd, createdAt: new Date().toISOString() };
     await this.save();
     const thread = await this.client.startThread({ cwd: this.cwd, model: this.model, reasoningEffort: this.reasoningEffort });
