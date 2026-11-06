@@ -39,6 +39,17 @@
       {
         "hooks": [
           {
+            "command": "node \"${PLUGIN_ROOT}/hooks/checkout-guard.mjs\"",
+            "timeout": 3,
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/checkout-guard.mjs\"",
+            "additionalContextLimit": 2500,
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/hooks/director-lifecycle.mjs\"",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/director-lifecycle.mjs\"",
@@ -68,6 +79,19 @@
             "command": "node \"${PLUGIN_ROOT}/hooks/director-lifecycle.mjs\"",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/director-lifecycle.mjs\"",
             "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "node \"${PLUGIN_ROOT}/hooks/checkout-guard.mjs\"",
+            "timeout": 3,
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/checkout-guard.mjs\"",
+            "additionalContextLimit": 2500,
+            "type": "command"
           }
         ]
       }
