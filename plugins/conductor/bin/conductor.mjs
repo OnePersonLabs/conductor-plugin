@@ -185,8 +185,7 @@ export async function serve({ coordinator, store, config, options = {}, inputStr
   const error = message => report(`ERROR: ${message}`, { error: true });
   coordinator.on('notice', message => report(message));
   coordinator.on('request', request => {
-    const reviewer = request.role === 'reviewer';
-    report(`WAITING FOR YOU -- Issue #${request.issue} ${request.role ?? 'builder'} needs input (${request.method}).\n${JSON.stringify(request.params, null, 2)}\n${reviewer ? 'Reviewer requests cannot be approved; stop and reconcile the read-only review.' : `Answer in the director chat or enter: answer ${request.key} <explicit decision or JSON response>`}`);
+    report(`WAITING FOR YOU -- Issue #${request.issue} ${request.role ?? 'builder'} needs input (${request.method}).\n${JSON.stringify(request.params, null, 2)}\nAnswer in the director chat or enter: answer ${request.key} <explicit decision or JSON response>`);
   });
   let seen = new Set(), starting = true;
   coordinator.on('status', state => {

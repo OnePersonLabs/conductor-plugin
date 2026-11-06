@@ -11,7 +11,7 @@ import { validateConfig, duration } from '../plugins/conductor/lib/config.mjs';
 import { admission, WakeLoop } from '../plugins/conductor/lib/scheduler.mjs';
 import { Store, atomicJSON } from '../plugins/conductor/lib/state.mjs';
 import { GitHub, checkState } from '../plugins/conductor/lib/github.mjs';
-import { Coordinator, reviewerIsolationConfig } from '../plugins/conductor/lib/coordinator.mjs';
+import { Coordinator } from '../plugins/conductor/lib/coordinator.mjs';
 import { createRequestRevision, parseReviewResult } from '../plugins/conductor/lib/prompts.mjs';
 import { inspectRepository, createWorktree } from '../plugins/conductor/lib/worktrees.mjs';
 import { parseArgs } from '../plugins/conductor/bin/conductor.mjs';
@@ -47,22 +47,6 @@ test('capacity includes waiting/blocked work; priorities and ties are determinis
   assert.equal(parseArgs(['--agents','2','--poll-interval','5m']).overrides.agents, 2);
   assert.deepEqual(parseArgs(['resume','3','--role','reviewer','--thread','review-3']), { command: 'resume', overrides: {}, issue: 3, role: 'reviewer', threadId: 'review-3' });
   assert.throws(() => parseArgs(['cancel','x']), /positive/);
-});
-
-test('reviewer isolation disables configured MCP servers, Apps and plugins without reading credentials', () => {
-  assert.deepEqual(reviewerIsolationConfig({ config: { additional: {
-    mcp_servers: { github: { command: 'hidden' }, linear: {} },
-    apps: { github: { enabled: true } },
-    plugins: { 'review-tools@local': { enabled: true } },
-  } } }), {
-    'apps._default.enabled': false,
-    'plugins._default.enabled': false,
-    'mcp_servers.github': { enabled: false },
-    'mcp_servers.linear': { enabled: false },
-    'apps.github.enabled': false,
-    'plugins.review-tools@local.enabled': false,
-  });
-  assert.throws(() => reviewerIsolationConfig(null), /read-only reviewer/);
 });
 
 test('request revision ignores labels but changes with request content; review results fail closed', () => {
@@ -187,11 +171,10 @@ async function fixture(t, { agents = 1, hold = false, maxTurns, reviewEnabled = 
   class Client extends EventEmitter {
     constructor({ cwd }) { super(); this.cwd = cwd; this.pid = undefined; world.clients.push(this); }
     async connect() {}
-    async readConfig() { return { config: { additional: { mcp_servers: { github: {} }, apps: { github: {} }, plugins: { 'example@local': {} } } } }; }
-    async startThread(options = {}) { this.sandbox = options.sandbox; this.threadId = `thread-${++world.starts}`; world.threads.set(this.threadId, { turns: [], name: null, sandbox: options.sandbox, approvalPolicy: options.approvalPolicy, config: options.config }); return { id: this.threadId }; }
+    async startThread(options = {}) { this.threadId = `thread-${++world.starts}`; world.threads.set(this.threadId, { turns: [], name: null, startOptions: options }); return { id: this.threadId }; }
     async setThreadName({ threadId, name }) { world.threads.get(threadId).name = name; }
     async readThread({ threadId }) { return world.threads.get(threadId); }
-    async resumeThread({ threadId, sandbox, approvalPolicy, config: roleConfig }) { this.threadId = threadId; world.resumes.push(threadId); if (sandbox) Object.assign(world.threads.get(threadId), { sandbox, approvalPolicy, config: roleConfig }); return { id: threadId }; }
+    async resumeThread(options) { const { threadId } = options; this.threadId = threadId; world.resumes.push(threadId); world.threads.get(threadId).resumeOptions = options; return { id: threadId }; }
     async startTurn({ prompt, outputSchema }) {
       const id = `turn-${++world.turns}`;
       world.prompts.push({ threadId: this.threadId, prompt, outputSchema });
@@ -355,7 +338,7 @@ test('parallel owners retain slots while idle; dependencies skip; serialized lan
   assert.equal(world.turns, count);
 });
 
-test('review finding returns to builder, then the same isolated reviewer clears the repaired head', async t => {
+test('review finding returns to builder, then the same independent reviewer clears the repaired head with configured permissions', async t => {
   const { world, coordinator } = await fixture(t, { reviewEnabled: true });
   world.issues = world.issues.slice(0, 1);
   world.reviewResults = [
@@ -371,15 +354,10 @@ test('review finding returns to builder, then the same isolated reviewer clears 
   assert.notEqual(job.builderThreadId, job.reviewerThreadId);
   assert.deepEqual(world.resumes, [job.builderThreadId, job.reviewerThreadId]);
   assert.equal(world.threads.get(job.reviewerThreadId).name, 'example/project #1 - reviewer');
-  assert.equal(world.threads.get(job.reviewerThreadId).sandbox, 'read-only');
-  assert.equal(world.threads.get(job.reviewerThreadId).approvalPolicy, 'never');
-  assert.deepEqual(world.threads.get(job.reviewerThreadId).config, {
-    'apps._default.enabled': false,
-    'plugins._default.enabled': false,
-    'mcp_servers.github': { enabled: false },
-    'apps.github.enabled': false,
-    'plugins.example@local.enabled': false,
-  });
+  for (const threadId of [job.builderThreadId, job.reviewerThreadId]) {
+    assert.deepEqual(world.threads.get(threadId).startOptions, { cwd: job.worktree });
+    assert.deepEqual(world.threads.get(threadId).resumeOptions, { threadId, cwd: job.worktree });
+  }
   assert.equal(world.publishedReviews.length, 2);
   assert.equal(world.publishedReviews[0].result.status, 'findings');
   assert.equal(world.publishedReviews[1].result.status, 'clear');
@@ -387,6 +365,7 @@ test('review finding returns to builder, then the same isolated reviewer clears 
   assert.equal(job.reviewClearance.base, job.checkBase);
   assert.equal(job.reviewClearance.requestRevision, job.requestRevision);
   const reviewedPrompt = world.prompts.filter(item => item.threadId === job.reviewerThreadId).at(-1).prompt;
+  assert.ok(reviewedPrompt.startsWith('You are Conductor’s independent reviewer. Review the supplied change and report findings. The original builder owns implementation and repairs.\n'));
   for (const context of [`https://github.com/example/project/pull/${job.pr}`, job.branch,
     'into main', `git merge-base ${job.checkBase} ${job.checkHead}`]) {
     assert.ok(reviewedPrompt.includes(context), `Reviewer needs current PR comparison context: ${context}`);
@@ -471,6 +450,16 @@ test('reviewer interruption preserves and resumes its named thread; role turns s
   const c = coordinator(); await c.start();
   await until(() => c.state.jobs[0]?.phase === 'reviewing', 'reviewer turn to interrupt');
   const job = c.state.jobs[0], reviewerThread = job.reviewerThreadId, builderThread = job.builderThreadId;
+  const reviewer = world.clients.find(client => client.threadId === reviewerThread);
+  reviewer.emit('request', { id: 99, method: 'item/commandExecution/requestApproval', params: { command: 'example' } });
+  await c.wake(); assert.equal(reviewer.response, undefined);
+  await assert.rejects(() => c.answer('1:99', ''), /explicitly/);
+  await c.answer('1:99', 'accept');
+  assert.deepEqual(reviewer.response, { id: 99, response: { decision: 'accept' } });
+  reviewer.emit('request', { id: 100, method: 'item/tool/requestUserInput', params: { questions: [] } });
+  await assert.rejects(() => c.answer('1:100', 'accept'), /explicit JSON response/);
+  await c.answer('1:100', '{"answers":{}}');
+  assert.deepEqual(reviewer.response, { id: 100, response: { answers: {} } });
   await c.stop();
   assert.equal(job.phase, 'stopped');
   assert.equal(job.nextRole, 'reviewer');

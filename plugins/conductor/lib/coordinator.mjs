@@ -22,19 +22,6 @@ const skillPath = fileURLToPath(new URL('../skills/github-workflow/SKILL.md', im
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const activePhases = new Set(['building','reviewing','launching','starting','preparing']);
 
-export function reviewerIsolationConfig(effectiveConfig) {
-  const config = effectiveConfig?.config?.additional ?? effectiveConfig?.additional ?? effectiveConfig;
-  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Codex did not return effective configuration for the read-only reviewer.');
-  const overrides = { 'apps._default.enabled': false, 'plugins._default.enabled': false };
-  for (const [key, entries] of [['mcp_servers', config.mcp_servers], ['apps', config.apps], ['plugins', config.plugins]]) {
-    if (entries !== undefined && (!entries || typeof entries !== 'object' || Array.isArray(entries))) throw new Error(`Codex returned invalid ${key} configuration; reviewer isolation cannot be guaranteed.`);
-    for (const name of Object.keys(entries ?? {})) {
-      if (name !== '_default') overrides[`${key}.${name}${key === 'mcp_servers' ? '' : '.enabled'}`] = key === 'mcp_servers' ? { enabled: false } : false;
-    }
-  }
-  return overrides;
-}
-
 export class Coordinator extends EventEmitter {
   constructor({ repo, config, store, github, Client = CodexClient, Host = DirectorHost, execute = run, workspace = { createWorktree, copyWorktreeIncludes, refreshBranch } }) {
     super(); Object.assign(this, { repo, config, store, Client, Host, execute, workspace });
@@ -840,16 +827,15 @@ export class Coordinator extends EventEmitter {
       this.assertRunning();
       await client.connect(); job.childPid = client.pid; await this.save();
       if (job.intent || this.executionBlocked()) return;
-      const reviewerConfig = role === 'reviewer' ? reviewerIsolationConfig(await client.readConfig({ cwd: job.worktree })) : undefined;
       if (threadId) {
         const recovered = await client.readThread({ threadId });
         if (recovered.turns?.some(turn => turn.status === 'inProgress')) throw new Error(`Original ${role} thread still has an active turn; reconcile its owner before resuming.`);
         this.assertRunning();
-        await client.resumeThread({ threadId, cwd: job.worktree, ...(role === 'reviewer' ? { sandbox: 'read-only', approvalPolicy: 'never', config: reviewerConfig } : {}) });
+        await client.resumeThread({ threadId, cwd: job.worktree });
       }
       else {
         this.assertRunning();
-        const thread = await client.startThread({ cwd: job.worktree, ...(role === 'reviewer' ? { sandbox: 'read-only', approvalPolicy: 'never', config: reviewerConfig } : {}) });
+        const thread = await client.startThread({ cwd: job.worktree });
         threadId = thread.id; job[field] = threadId; if (role === 'builder') job.threadId = threadId; await this.save();
       }
       this.assertRunning();
@@ -1159,7 +1145,6 @@ export class Coordinator extends EventEmitter {
     this.assertRunning();
     const request = this.requests.get(key);
     if (!request) throw new Error('That request is no longer pending.');
-    if (request.issue && this.state.jobs.find(job => job.issue === request.issue)?.activeRole === 'reviewer') throw new Error('Reviewer sessions are read-only and cannot receive approval. Stop and reconcile the review instead.');
     let response;
     if (['item/commandExecution/requestApproval','item/fileChange/requestApproval'].includes(request.method)) {
       if (!['accept','acceptForSession','decline','cancel'].includes(value)) throw new Error('Type accept, acceptForSession, decline or cancel explicitly.');

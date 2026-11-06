@@ -48,9 +48,10 @@ planning decisions. Routine triage and backlog repair can stay with the director
 The director verifies host model availability and reports unsupported required
 models. An Astra invoking chat alone does not select Astra helpers.
 
-Builder and reviewer threads use the host's configured model and effort defaults;
-Conductor supplies no role-specific override. They retain their original threads
-for repair. Native helpers inside a builder job follow task-specific model,
+Builder and reviewer threads use the host's configured model, effort, permissions
+and tools on start and resume; Conductor supplies no role-specific override.
+They retain their original threads for repair. Native helpers inside a builder
+job follow task-specific model,
 effort and context judgment. They do not inherit a project-coordination role.
 OnePersonLabs supplies general judgment when available; Conductor remains usable
 without it and owns durable issue/dependency coordination, dispatch and delivery.

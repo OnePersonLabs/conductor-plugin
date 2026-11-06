@@ -461,7 +461,8 @@ For each admitted issue, the service creates an isolated branch and worktree,
 runs configured preparation and checks, and starts or resumes the original
 builder session. The coordinator retains ownership of publishing branches,
 opening PRs, routing review and failed-check feedback, merging, and issue
-closure. Independent review is read-only. Builder completion or a successful
+closure. The independent reviewer reports findings; the original builder owns
+implementation and repairs. Builder completion or a successful
 push does not establish acceptance or delivery.
 
 The reviewer receives a direct review prompt with the PR, linked issue,
@@ -469,6 +470,10 @@ worktree branch, merge target and checked commits. It checks actionable defects
 and acceptance, citing applicable repository rules when they support a finding.
 It does not depend on an additional review skill. The coordinator turns its
 structured result into readable PR feedback.
+
+Builder and reviewer requests use the same explicit-answer flow. Answer in the
+director chat or enter the displayed `answer ISSUE:REQUEST VALUE` command in the
+runner console. Pressing Enter alone checks for changes without answering a request.
 
 The issue's acceptance, dependencies and project instructions are rechecked
 when relevant inputs change. The configured checks must pass on the current

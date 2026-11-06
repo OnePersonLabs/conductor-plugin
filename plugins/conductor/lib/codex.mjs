@@ -13,8 +13,8 @@ const CLIENT_INFO = Object.freeze({
 /**
  * A small JSON-RPC client for Codex App Server stdio or the shared-daemon proxy.
  *
- * The coordinator supplies reviewer-specific read-only sandbox, no-approval,
- * and tool-isolation overrides. Builder turns retain configured defaults.
+ * Worker threads use configured permissions and tools unless the caller supplies
+ * explicit overrides.
  * Server requests are surfaced to the caller and remain pending until respond().
  */
 export class CodexClient extends EventEmitter {
