@@ -54,8 +54,10 @@ The synchronous director owns the requested outcome and authorized issue writes.
 Use `$conductor:manage-issues`, `$conductor:plan`, `$conductor:implement` and
 `$conductor:review` as the work requires. Do routine planning in this agent. Use
 `$conductor:planner` for a bounded delegated decision when independent judgment or
-specialization justifies the cost. Give independent assignments fresh context and
-complete briefs; retain their own context for related follow-ups. Keep one
+specialization justifies the cost. For independent planning, design review, or
+self-contained assignments, explicitly set `fork_turns: "none"` and supply the
+requirements, governing sources, actual proposal, authority and evidence without
+the builder's verdict. Retain each helper's own context for related follow-ups. Keep one
 coordinator and explicit writer ownership. Reconcile helpers and outstanding
 operations before completion, cancellation or handoff.
 

@@ -65,9 +65,10 @@ explicit release through the bound director.
 
 Builder and reviewer threads use the host's configured model, effort, permissions
 and tools on start and resume; Conductor supplies no role-specific override.
-They retain their original threads for repair. Native helpers inside a builder
-job follow task-specific model,
-effort and context judgment. They do not inherit a project-coordination role.
+Each role starts in a separate fresh thread and retains its own thread for repair.
+A native planner or independent helper explicitly starts with `fork_turns: "none"`
+and a complete assignment. Related follow-ups reuse that helper's own context.
+They do not inherit a project-coordination role or the director's conversation.
 OnePersonLabs supplies general judgment when available; Conductor remains usable
 without it and owns durable issue/dependency coordination, dispatch and delivery.
 

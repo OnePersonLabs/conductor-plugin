@@ -78,8 +78,8 @@ Conductor uses one primary state per issue:
 `needs-input` marks a specific unresolved human question. It can accompany a
 primary state but prevents the affected work from advancing. When useful human
 input can unlock or clarify work, Conductor proactively gathers those questions
-into a focused chat interaction, including blockers that were not previously
-labeled. It explains the situation, terms, options and consequences in the chat
+into a focused human interaction, including blockers that were not previously
+labeled. It explains the situation, terms, options and consequences in the selected interface
 so the user does not need to know the agent's investigation or open issue links
 to answer. Unlabeled issues enter triage. A prepared issue created from an
 accepted plan may begin ready; new bug reports normally enter triage. The director
@@ -296,6 +296,10 @@ repair. For a concrete hard architecture or substantial planning decision that
 needs stronger reasoning, it deliberately selects the configured planner
 (default Astra) through native subagent delegation. The assignment names the
 unresolved decision, model, effort, context and required evidence. The director
+explicitly selects `fork_turns: "none"` for the initial planner and independent
+design reviewer, supplies a complete brief, and resumes their own sessions for
+related follow-ups. Builders and code reviewers already start in separate fresh
+App Server threads and retain their own context for repairs. The director
 applies and verifies supported changes, rechecking current state and preserving
 unrelated edits. If a required planner model is unavailable, it reports the
 unfinished judgment and continues independent authorized work.
@@ -339,10 +343,24 @@ current and report their changes. Do not ask whether to start a director or
 adopt the chat. Director operation requires an explicit request, defaults to
 synchronous work, and binds the automated runtime only when automation is selected.
 
-Use ordinary chat for questions, approvals and issue direction. The optional
-`$onepersonlabs:human-collaboration` inbox can carry longer reviews or phone
-responses only when explicitly requested. Do not start or connect it merely
-because the skill is available. An inbox draft is not a submitted answer.
+Use ordinary chat for questions, approvals and issue direction. Use the
+`$onepersonlabs:human-collaboration` web inbox only when explicitly requested.
+On that selected path, enroll the actual bound root as contribution owner and
+use `connect --wake-root` so Web Send can notify it. End the turn while waiting.
+A listener without wake notifications needs an authorized restart before
+automatic pickup works; pending submissions remain recoverable.
+
+The inbox brief identifies the issue decision and reviewed revision. On return,
+claim the submission, check source drift, integrate the answer through the owning
+issue decision path, and record the inbox outcome. The inbox owns submissions;
+issue records own accepted decisions and their integration. An inbox draft or
+queue receipt is not an integrated answer. Only blocking decision batches need
+the automation interaction gate; optional reviews do not suspend admission.
+Host-required approval interfaces remain in use.
+
+If an inbox was selected, a director handoff must enroll the destination root
+and bind its contributions through the human-collaboration procedure after
+reconciling partial work. Conductor attach does not transfer those contributions.
 
 ## Move the director to another chat
 
