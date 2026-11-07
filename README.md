@@ -30,6 +30,20 @@ it returns recommendations to its assigning agent. It does not own issue writes
 or start another coordinator. Shared [workflow rules](plugins/conductor/references/workflow.md)
 apply across the public skills.
 
+## Work in phases
+
+For a broad roadmap with human review and replanning checkpoints, an available
+`$onepersonlabs:rolling-wave-workflow` can coordinate the process:
+**plot → implement → review and repair → report → replot**. Conductor supplies
+the applicable planning, implementation, review, and issue-management steps.
+Together they use one plan and the existing work records. Rolling Wave Workflow
+owns phase cadence and checkpoint stories; Conductor retains repository setup,
+GitHub delivery, holds, and runtime ownership.
+
+Both plugins work independently. A routine issue edit does not select the phase
+process, and neither companion starts a director. See
+[optional phase composition](plugins/conductor/references/phase-workflow.md).
+
 ## Choose how a director works
 
 | Mode | Who does the work | Workspace and lifetime |

@@ -37,3 +37,8 @@ Setup does not grant execution authority. A valid file with `authorized: false`
 passes this gate for manual skills and synchronous coordination. A stopped
 runner, paused admission or missing director binding does not invalidate setup.
 Automation still requires its separate authority and lifecycle checks.
+
+After this gate passes, use [the companion phase workflow](phase-workflow.md)
+when the assignment involves a multi-phase roadmap and human review or replanning
+checkpoints. It composes with available process skills; no companion is required
+for ordinary Conductor work.

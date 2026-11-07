@@ -1,6 +1,6 @@
 ---
 name: implement
-description: Only for repositories with valid Conductor setup. Implement an authorized bounded change or accepted plan in the current chat, verify connected behavior and carry it to its authorized delivery boundary.
+description: Only for repositories with valid Conductor setup. Implement and verify an authorized change or accepted plan in the current chat. For work with human phase checkpoints, compose with an available phase workflow and preserve Conductor's delivery boundary.
 ---
 
 # Implement a change

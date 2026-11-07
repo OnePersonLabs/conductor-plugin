@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Only for repositories with valid Conductor setup. Investigate and plan a bounded change in the current chat, including affected consumers, acceptance, dependencies and unresolved decisions.
+description: Only for repositories with valid Conductor setup. Investigate and plan a bounded change in the current chat. For multi-phase work with human checkpoints, compose with an available phase workflow.
 ---
 
 # Plan a change
