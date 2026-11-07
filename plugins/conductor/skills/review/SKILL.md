@@ -1,9 +1,12 @@
 ---
 name: review
-description: Independently review a plan, change, PR or current review feedback; report source-anchored findings and preserve original-builder repair ownership.
+description: Only for repositories with valid Conductor setup. Independently review a plan, change, PR or current review feedback; report source-anchored findings and preserve original-builder repair ownership.
 ---
 
 # Review a change
+
+Before using this skill, follow the [repository setup gate](../../references/repository-scope.md).
+If the gate fails, stop this skill before any task work.
 
 Review the supplied scope in the current assignment. No director or runtime
 binding is required. For independent judgment, start with fresh context and a

@@ -1,7 +1,8 @@
 # Repository choices for Conductor
 
-Use this reference during explicit automated-workflow setup. Ordinary skills and
-synchronous coordination do not require this runtime lane. Inspect existing policy, issue
+Use this reference during explicit repository setup. All skills require setup;
+ordinary skills and synchronous coordination can use `authorized: false` without
+enabling this automated runtime lane. Inspect existing policy, issue
 conventions, protections, and checks before proposing configuration. Preserve
 the project's owners of product meaning and acceptance evidence.
 

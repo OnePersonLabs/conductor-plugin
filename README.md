@@ -1,8 +1,12 @@
 # Conductor
 
 Conductor provides GitHub issue skills for planning, implementation, review, and
-human decisions. Use them during ordinary agent work, or explicitly start a
-director to coordinate a set of issues.
+human decisions. After setting up a repository, use them during ordinary agent
+work, or explicitly start a director to coordinate a set of issues.
+
+Run `$conductor:setup-repo-workflow` once for each repository. Every other skill
+first checks that repository's setup and does no Conductor task work if the check
+fails. Installing the plugin alone does not opt a repository in.
 
 An ordinary request such as “implement this plan” stays in the current chat and
 within that request. It does not start or suggest a director, create a chat,
@@ -67,8 +71,12 @@ npm install -g 'C:\path\to\conductor-plugin'
 
 From the target repository, use `$conductor:setup-repo-workflow`. Review its
 `conductor.json`, label mapping, real verification commands, concurrency, and
-delivery authority. Configuration preparation starts nothing. Ordinary skills
-can use existing repository issue conventions without enabling the service.
+delivery authority. Configuration preparation starts nothing. Use
+`authorized: false` for manual skills and synchronous coordination; automation
+requires separate authority. Ordinary skills use the configured repository
+conventions without enabling the service. A linked worktree can use its main
+checkout's setup when it has no local `conductor.json`. Run `conductor check-setup`
+to inspect setup without starting anything.
 Windows and WSL use separate local runtimes; operate in the environment that owns
 the work.
 

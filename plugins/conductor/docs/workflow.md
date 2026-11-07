@@ -1,5 +1,12 @@
 # Direct work and recover Conductor
 
+First set up the target repository with `$conductor:setup-repo-workflow`.
+All other skills check its configuration before doing Conductor task work.
+If setup is missing or invalid, an explicit invocation reports the setup failure;
+implicit selection leaves ordinary work to the host and repository instructions.
+Manual skills and synchronous direction work with `authorized: false` and do not
+need a running service. See [configuration](configuration.md) for the setup check.
+
 Use `$conductor:manage-issues`, `$conductor:ask-user`, `$conductor:plan`,
 `$conductor:implement`, and `$conductor:review` during ordinary agent work.
 They complete the requested scope in the current chat and report issue changes.

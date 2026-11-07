@@ -1,9 +1,12 @@
 ---
 name: planner
-description: Advise a coordinating agent on a delegated, bounded Conductor planning or triage decision from evidence and accepted goals.
+description: Only for repositories with valid Conductor setup. Advise a coordinating agent on a delegated, bounded Conductor planning or triage decision from evidence and accepted goals.
 ---
 
 # Conductor planner
+
+Before using this skill, follow the [repository setup gate](../../references/repository-scope.md).
+If the gate fails, stop this skill before any task work.
 
 Work as a bounded planning and triage adviser to the assigning root. That root
 provides the repository requirements, issue context, source evidence, scope,

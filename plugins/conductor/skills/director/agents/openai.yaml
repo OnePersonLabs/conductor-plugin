@@ -1,6 +1,6 @@
 interface:
   display_name: "Conductor Director"
   short_description: "Explicit synchronous or automated coordination"
-  default_prompt: "Use $conductor:director only for an explicit director request. Default to synchronous coordination, confirm current versus fresh chat when unspecified, begin with unanswered user decisions, and use full automation only when explicitly selected."
+  default_prompt: "First pass this skill's repository setup gate; if it fails, do no Conductor task work. Use $conductor:director only for an explicit director request. Default to synchronous coordination, confirm current versus fresh chat when unspecified, begin with unanswered user decisions, and use full automation only when explicitly selected."
 policy:
   allow_implicit_invocation: false

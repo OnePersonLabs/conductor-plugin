@@ -1,9 +1,12 @@
 ---
 name: implement
-description: Implement an authorized bounded change or accepted plan in the current chat, verify connected behavior and carry it to its authorized delivery boundary.
+description: Only for repositories with valid Conductor setup. Implement an authorized bounded change or accepted plan in the current chat, verify connected behavior and carry it to its authorized delivery boundary.
 ---
 
 # Implement a change
+
+Before using this skill, follow the [repository setup gate](../../references/repository-scope.md).
+If the gate fails, stop this skill before any task work.
 
 Carry out the authorized change as the current agent. This skill needs no director,
 runtime binding, background service or new worktree. An ordinary change or

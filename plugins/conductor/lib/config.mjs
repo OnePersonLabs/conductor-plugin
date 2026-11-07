@@ -9,11 +9,11 @@ export function duration(value) {
   return amount;
 }
 
-export function validateConfig(raw) {
+function validateRepositorySettings(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Configuration must be an object.');
   if (!/^[\w.-]+\/[\w.-]+$/.test(raw.repository ?? '')) throw new Error('repository must be owner/name.');
   if (typeof raw.baseBranch !== 'string' || !raw.baseBranch || raw.baseBranch.startsWith('-')) throw new Error('baseBranch is required.');
-  if (raw.authorized !== true) throw new Error('Setup must explicitly set authorized: true for ready-issue execution.');
+  if (typeof raw.authorized !== 'boolean') throw new Error('authorized must be a boolean.');
   if (!Array.isArray(raw.checks) || !raw.checks.length) throw new Error('Configure at least one existing verification command in checks.');
   for (const key of ['checks', 'prepare']) {
     if (raw[key] !== undefined && !Array.isArray(raw[key])) throw new Error(`${key} must be an array.`);
@@ -38,6 +38,15 @@ export function validateConfig(raw) {
   return { ...raw, agents, implementationInstructions: raw.implementationInstructions ?? '', reviewEnabled: raw.reviewEnabled ?? true, reviewInstructions: raw.reviewInstructions ?? '', readyLabel: raw.readyLabel ?? 'conductor:ready', priorityLabels: raw.priorityLabels ?? [], pollMs: duration(raw.pollInterval ?? '5m'), requiredApprovals, mergeMethod, prepare: raw.prepare ?? [] };
 }
 
+function requireExecutionAuthority(config) {
+  if (config.authorized !== true) throw new Error('Setup must explicitly set authorized: true for ready-issue execution.');
+  return config;
+}
+
+export function validateConfig(raw) {
+  return requireExecutionAuthority(validateRepositorySettings(raw));
+}
+
 export async function loadConfig(root, overrides = {}) {
   let raw;
   try { raw = JSON.parse(await readFile(join(root, 'conductor.json'), 'utf8')); }
@@ -48,8 +57,13 @@ export async function loadConfig(root, overrides = {}) {
 }
 
 export function validateDirectorConfig(raw) {
-  if (raw.version !== 2) throw new Error('Conductor director configuration must set version: 2.');
-  const base = validateConfig({ ...raw, authorized: raw.authorized, readyLabel: raw.labels?.ready ?? DEFAULT_LABELS.ready, pollInterval: raw.pollInterval ?? '30m' });
+  return requireExecutionAuthority(validateSetupConfig(raw));
+}
+
+// Repository setup also supports manual skills; execution has its own authority gate.
+export function validateSetupConfig(raw) {
+  if (raw?.version !== 2) throw new Error('Conductor director configuration must set version: 2.');
+  const base = validateRepositorySettings({ ...raw, readyLabel: raw.labels?.ready ?? DEFAULT_LABELS.ready, pollInterval: raw.pollInterval ?? '30m' });
   const labels = { ...DEFAULT_LABELS, ...(raw.labels ?? {}) };
   if (Object.values(labels).some(value => typeof value !== 'string' || !value.trim())) throw new Error('labels must map each workflow state to a nonempty string.');
   if (new Set([labels.triage, labels.proposal, labels.ready, labels.hold, labels.needsInput].map(value => value.trim().toLowerCase())).size !== 5) throw new Error('triage, proposal, ready, hold and needsInput labels must be distinct.');

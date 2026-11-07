@@ -1,9 +1,12 @@
 ---
 name: director
-description: Explicitly start or manage a Conductor director, choose synchronous coordination or full automation, or hand an existing automated director to another chat.
+description: Only for repositories with valid Conductor setup. Explicitly start or manage a Conductor director, choose synchronous coordination or full automation, or hand an existing automated director to another chat.
 ---
 
 # Conductor director
+
+Before using this skill, follow the [repository setup gate](../../references/repository-scope.md).
+If the gate fails, stop this skill before any task work.
 
 Use only when the user explicitly selects a director or asks to manage an existing
 one. Ordinary issue, planning and implementation requests use the corresponding

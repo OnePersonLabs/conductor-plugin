@@ -1,9 +1,12 @@
 ---
 name: plan
-description: Investigate and plan a bounded change in the current chat, including affected consumers, acceptance, dependencies and unresolved decisions.
+description: Only for repositories with valid Conductor setup. Investigate and plan a bounded change in the current chat, including affected consumers, acceptance, dependencies and unresolved decisions.
 ---
 
 # Plan a change
+
+Before using this skill, follow the [repository setup gate](../../references/repository-scope.md).
+If the gate fails, stop this skill before any task work.
 
 Plan the requested outcome as the current agent. No director, runtime binding,
 background service or issue creation is required. A request to plan or implement

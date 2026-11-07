@@ -3,6 +3,11 @@
 Conductor reads `conductor.json` from the target Git repository root. Use
 `$conductor:setup-repo-workflow` to prepare or migrate this configuration.
 Setup inspects repository policy and prepares the file without starting work.
+Every other skill requires valid setup whose `repository` matches the checkout's
+GitHub origin. A missing local file in a linked worktree can use setup from the
+same Git repository's main checkout; an invalid local file cannot. No parent or
+unrelated repository supplies setup. `conductor check-setup` validates this
+relationship locally without creating runtime state or contacting GitHub.
 Ordinary planning, implementation, review, and issue management stay in the
 current chat. An explicitly requested director defaults to synchronous operation
 without a runner or worktrees. Only explicitly requested automation binds a
@@ -15,7 +20,7 @@ runtime director and starts issue observation.
   "version": 2,
   "repository": "owner/repository",
   "baseBranch": "main",
-  "authorized": true,
+  "authorized": false,
   "labels": {
     "triage": "triage",
     "proposal": "proposal",
@@ -37,10 +42,12 @@ runtime director and starts issue observation.
 
 This illustrates the configuration shape. Select actual labels, checks, review
 requirements, concurrency, model roles and delivery settings from the target
-repository's conventions and explicit authority. `authorized` must be the
-boolean `true` only when the configured workflow has genuine implementation and
-PR-delivery authority. It is an execution gate, not blanket permission for new
-product scope.
+repository's conventions and explicit authority. `authorized: false` supports
+manual skills and synchronous coordination. Set the boolean to `true` only when
+the automated workflow has genuine implementation and PR-delivery authority.
+It is an execution gate, not a setup prerequisite or blanket permission for new
+product scope. Stopped runners, paused admission and missing director bindings
+do not invalidate repository setup.
 
 `directorModel` defaults to `gpt-6.1-sol`. Newly created director chats use Sol 6.1
 with `low` reasoning effort unless the user specifies otherwise. Adopting the

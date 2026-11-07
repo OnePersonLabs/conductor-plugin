@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { hostname } from 'node:os';
 import { inspectRepository } from '../lib/worktrees.mjs';
 import { loadConfig } from '../lib/config.mjs';
+import { checkRepositorySetup } from '../lib/repository-setup.mjs';
 import { Store } from '../lib/state.mjs';
 import { Coordinator } from '../lib/coordinator.mjs';
 import { GitHub } from '../lib/github.mjs';
@@ -21,6 +22,7 @@ import { cleanupWorktrees } from '../lib/cleanup.mjs';
 
 const HELP = `Conductor 0.1.0 -- conversational GitHub issue director
 Usage: conductor enable [--thread UUID]
+       conductor check-setup              (read-only repository setup check)
        conductor enable --host desktop --thread UUID
        conductor attach --host desktop --thread UUID
        conductor wakeup
@@ -41,7 +43,7 @@ Migration preview makes no changes; migrated configuration remains admission-pau
 export function parseArgs(args) {
   const result = { command: 'run', overrides: {} };
   if (args[0] && !args[0].startsWith('-')) result.command = args.shift();
-  if (!['run','signal','status','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup','observe','attach'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
+  if (!['run','signal','status','check-setup','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup','observe','attach'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
   if (result.command === 'cleanup') {
     const option = args.shift();
     if (option !== undefined && option !== '--preview') throw new Error('cleanup accepts only --preview.');
@@ -83,6 +85,10 @@ async function main() {
   if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
   if (args.includes('--version')) { console.log('0.1.0'); return; }
   const options = parseArgs(args);
+  if (options.command === 'check-setup') {
+    console.log(JSON.stringify(await checkRepositorySetup(process.cwd()), null, 2));
+    return;
+  }
   const repo = await inspectRepository(process.cwd());
   const store = new Store(repo.commonDir);
   const cliPath = fileURLToPath(import.meta.url);

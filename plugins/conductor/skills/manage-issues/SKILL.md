@@ -1,9 +1,12 @@
 ---
 name: manage-issues
-description: Create, inspect, edit or close GitHub issues; manage issue status, dependencies, sub-issues and backlog readiness within authorized scope.
+description: Only for repositories with valid Conductor setup. Create, inspect, edit or close GitHub issues; manage issue status, dependencies, sub-issues and backlog readiness within authorized scope.
 ---
 
 # Manage issues
+
+Before using this skill, follow the [repository setup gate](../../references/repository-scope.md).
+If the gate fails, stop this skill before any task work.
 
 Manage the requested issues in the current chat. Read [shared issue policy](../../references/workflow.md)
 before changing acceptance, state or relationships. This skill needs no director,
