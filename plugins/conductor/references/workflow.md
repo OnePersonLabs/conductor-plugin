@@ -77,7 +77,9 @@ or proposal ancestors, human-input requirement, stale revision or duplicate job.
 Closing a blocker makes an issue eligible for re-evaluation. It does not prove
 the blocker succeeded: rejected, abandoned, held or uncertain prerequisites
 require acceptance and dependency reconciliation. A closed blocker with an active
-hold or conflicting workflow labels does not release dependent implementation.
+hold, proposal, human-input requirement or conflicting workflow labels does not
+release dependent implementation. An unlabeled completed prerequisite remains
+completed; do not infer a new investigation from its lack of a primary label.
 
 Do not introduce holds merely for routine reconciliation of idle issues. When a
 revision affects active automated work, its existing bound director must establish
