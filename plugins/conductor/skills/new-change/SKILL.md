@@ -51,7 +51,7 @@ falling back to labels, use another available authorized API path, such as:
 ```text
 gh api --method POST repos/OWNER/REPO/issues --input ISSUE.json
 gh api --method PATCH repos/OWNER/REPO/issues/NUMBER -f type=Bug
-gh api repos/OWNER/REPO/issues/NUMBER
+gh api repos/OWNER/REPO/issues/NUMBER --jq '{number, type_name: (.type.name // null), labels: [.labels[].name]}'
 ```
 
 The POST example is an alternative creation path, not a second issue creation.
@@ -59,13 +59,22 @@ The POST example is an alternative creation path, not a second issue creation.
 `type`. Preserve unrelated fields when patching. Dispose of a temporary payload
 after its remote effects are reconciled. Reconcile an uncertain POST before retrying.
 
-Read back the issue's native `type.name` and labels. GitHub can silently drop
-type or labels without sufficient repository access; a successful request alone
-does not prove that either was applied. If the selected type is unavailable or
-no authorized API path can apply it, report the concrete limitation and use the
-repository's conventional labels where supported. Do not silently drop an
-explicit override, substitute another native type or claim that labels fulfilled
-the native-type request. Report any remaining mismatch.
+Count the native type as applied only when a fresh issue GET returns `type.name`
+exactly matching the selected canonical name. An absent, null or mismatched value
+is not success, even if enumeration lists the type or a write echoes its input.
+If needed and authorized, make one same-issue PATCH followed by another GET;
+do not repeat a PATCH already attempted for this mismatch. If the value still
+does not match, report native assignment as unavailable or unconfirmed for this
+operation and use the repository's conventional labels where supported.
+
+Verify the returned labels separately. GitHub can silently drop fields without
+sufficient access, but missing native assignment can also reflect repository-owner
+feature availability. Do not diagnose missing permissions from a null type alone.
+GitHub documents [organization issue types](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/managing-issue-types-in-an-organization)
+and [removal of types on transfer to a personal account](https://docs.github.com/en/repositories/creating-and-managing-repositories/transferring-a-repository#whats-transferred-with-a-repository).
+Report the observed type and labels, any known limitation and the unsatisfied
+override. Do not silently substitute another native type or claim that labels
+fulfilled a native-type request.
 
 See GitHub's [enabled repository types](https://docs.github.com/en/rest/repos/issue-types#list-issue-types-for-a-repository),
 [issue creation](https://docs.github.com/en/rest/issues/issues#create-an-issue),
