@@ -7,6 +7,14 @@ session, this worktree, then this repository's work context. Never choose the ne
 global current issue. If no issue is established and the user gave a direct local
 request, work from that request without forcing issue creation.
 
+If the action requires an issue and none is established or explicitly identified,
+list the repository's relevant issues and ask the user which issue ID to use.
+Do not stop with only a request for an identifier. Format every selection list as
+`[ID]: [name]` and sort numerically from highest issue number to lowest. Include
+closed issues when the action can reopen them. Exhaust relevant result pages and
+exclude pull requests. If no relevant issues exist, say so instead of inventing
+a current issue.
+
 For a URL, verify the repository against the checkout. A foreign repository URL
 does not authorize a checkout switch. Report the mismatch and establish the
 intended target before dependent work.
@@ -14,8 +22,8 @@ intended target before dependent work.
 For a name, search all relevant result pages and exclude pull requests. First try
 a unique normalized exact title match (trim/collapse whitespace and compare case
 insensitively). If there are duplicate exact matches or only ambiguous partial
-matches, show every relevant candidate as `[ID]: [name]`, followed by its number
-and a short description when useful. Ask for an ID; do not pick the newest or
+matches, show every relevant candidate as `[ID]: [name]` in descending issue-number
+order. Add a short description when useful. Ask for an ID; do not pick the newest or
 highest-ranked result. Include closed issues for $conductor:open-change and every
 explicit target. Do not omit a matching candidate
 because it appears on a later page.
