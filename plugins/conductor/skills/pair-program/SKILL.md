@@ -64,7 +64,8 @@ the accepted approach; apply the two-failed-repair reassessment rule.
 
 ## Report, decide and finish
 
-Use $conductor:rolling-wave-report after review and repair. Commit its authored report,
+After review and repair, explicitly read and use
+[$conductor:rolling-wave-report](../rolling-wave-report/SKILL.md). Commit its authored report,
 then have the same reviewer confirm the documentation delta and exact final head.
 Reuse unaffected checks and review evidence; do not start a report recursion.
 Return the phase result, limits and tracked report to the human. Let the human
