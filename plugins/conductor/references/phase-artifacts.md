@@ -8,7 +8,7 @@ Use tracked files in the target Git repository:
 ```
 
 The timestamp is UTC with zero-padded fields and milliseconds:
-`yyyyMMddTHHmmssfffZ`, for example `20261108T112233047Z`. Derive a readable slug
+`yyyy-MM-ddTHH-mm-ss-fffZ`, for example `2026-11-08T11-22-33-047Z`. Derive a readable slug
 from the phase name. Create files without overwriting existing paths. If a name
 collides, obtain a fresh timestamp or append a distinguishing suffix and retry
 exclusive creation. Do not replace an unrelated artifact.
@@ -21,8 +21,10 @@ uncertain. A substantive replan creates a linked successor plan; identify the
 superseded plan in both directions. Do not silently rewrite accepted history.
 
 The visible coordinator normally stays in Default mode while its managed worker
-plans in actual Plan Mode. After the planning turn completes and the human phase
-decision is established, the coordinator saves the agreed plan. The worker returns
+plans in actual Plan Mode. After the planning turn completes, the coordinator saves
+the plan within its existing authority. Pair programming also requires the human's
+phase decision before saving the agreed plan. Synchronous autonomous work saves
+and continues an authorized plan without a routine human phase gate. The worker returns
 plan content and evidence; the coordinator owns saving and issue updates. If the
 coordinator's host is itself in Plan Mode, its write restrictions still apply.
 Do not bypass that host restriction through a worker or another execution path.
