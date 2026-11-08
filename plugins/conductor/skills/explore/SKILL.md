@@ -1,9 +1,14 @@
 ---
 name: explore
-description: Read and explain a local system, repository or issue without changing files or requiring a plan or issue.
+description: Investigate product source and explore ideas, requirements or design options through a read-only discussion. Map what exists and what is missing without implementing changes or requiring an issue or plan artifact.
 ---
 
 # Explore the current system
+
+Follow the question that helps the user understand the problem or choose a
+direction. Trace concrete source behavior, clarify requirements and compare
+grounded alternatives as needed. Do not force an implementation plan or a fixed
+interview sequence.
 
 Identify the user's question and target directory. Read current instructions and
 relevant source, consumers and failure paths. Read-only local exploration needs
