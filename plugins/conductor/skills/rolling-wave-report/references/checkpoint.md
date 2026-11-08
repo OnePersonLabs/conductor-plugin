@@ -8,10 +8,11 @@ unresolved historical fact changes the report. Do not reconstruct every command.
 ## Write a concise report
 
 When available, use $onepersonlabs:write-technical for the report and chart text.
-Conductor remains usable without it. Explain what was built or
-changed through what it does. Then say whether it worked and what remains
-unfinished. The reader must understand the result without the conversation's
-internal labels or history.
+Conductor remains usable without it. Start with a short plain-language account of
+what the user can do now, what prevents their goal, and the next decision. Define
+unfamiliar mechanisms through a concrete example. Put technical history behind
+optional detail; omit caveats that do not change the decision. The reader must
+understand the result without the conversation's internal labels or history.
 
 Retain causes and decisions only when they explain the result or next action.
 Separate completed work, experiments, interrupted reviews, and proposed work.

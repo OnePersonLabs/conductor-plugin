@@ -11,11 +11,20 @@ a direct local request does not require one. Read [phase artifacts](../../refere
 for tracked plans and [phase workflow](../../references/phase-workflow.md) when
 coordinating phases. A planning request does not start a director.
 
-Read instructions, accepted meaning and relevant source. Identify the intended
-outcome, complete consumers, failure paths, constraints, authority and current
+Read instructions, accepted meaning and relevant source. Recover accepted outcomes
+separately from candidate mechanisms. When the user has rejected an architectural
+framing, do not carry it forward through renamed components or treat existing
+implementation as a prerequisite. Before proposing a component-level phase,
+explain which user-facing capability it serves and why that component remains
+the appropriate route. Distinguish model purposes when several models cooperate.
+
+Identify complete consumers, failure paths, constraints, authority and current
 evidence. Resolve discoverable facts and routine choices. Compare consequential
-structural alternatives when their effects could change the approach. Distinguish
-evidence, assumptions and unanswered product decisions. Use $conductor:ask-user
+structural alternatives when their effects could change the approach. For ML work,
+distinguish model training from new algorithm or infrastructure development.
+Prefer an existing runnable baseline when it serves the intended capability;
+justify custom machinery against that baseline before making it the next phase.
+Distinguish evidence, assumptions and unanswered product decisions. Use $conductor:ask-user
 only for a consequential gap the user must resolve; continue independent work.
 
 Keep future phases broad and make the next connected phase complete. Specify

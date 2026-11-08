@@ -32,8 +32,10 @@ Do not bypass that restriction through a worker or another path. Saving the plan
 requires an authorized writable coordinator turn; this exceptional host gate does
 not make a user mode switch part of the ordinary workflow.
 
-Recover accepted goals, current roadmap, constraints and decisions. Use
-$conductor:plan-change to develop complete next-phase behavior, consumers,
+Recover accepted goals, current roadmap and constraints. Use
+$conductor:plan-change to distinguish accepted outcomes from candidate mechanisms
+and explain which user-facing capability the next phase serves before discussing
+component-level choices. Develop complete next-phase behavior, consumers,
 interfaces, owners, acceptance, verification, resources and stopping point.
 Keep later phases broad. Discuss consequential choices with the human and use
 $conductor:ask-user for decisions that remain theirs. Do not require repeated
