@@ -17,6 +17,14 @@ function fixture({ issues = [makeIssue(1)], jobs = [], agents = 1 } = {}) {
   const github = {
     repository: REPO,
     ensureWorkflowLabels: async () => {},
+    applyIssueHold: async (...args) => GitHub.prototype.applyIssueHold.call(github, ...args),
+    releaseIssueHold: async (...args) => GitHub.prototype.releaseIssueHold.call(github, ...args),
+    gh: async args => {
+      const issue = records.get(Number(args[2]));
+      if (args.includes('--add-label')) issue.labels.push(args[args.indexOf('--add-label') + 1]);
+      if (args.includes('--remove-label')) issue.labels = issue.labels.filter(label => label !== args[args.indexOf('--remove-label') + 1]);
+      return '';
+    },
     openIssues: async () => [...records.values()].map(issue => structuredClone(issue)),
     issue: async number => structuredClone(records.get(number)),
     dependencies: async () => [],

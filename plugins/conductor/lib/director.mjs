@@ -195,7 +195,7 @@ export class Director {
       const receipt = await createRemoteHoldReceipt(c.github, { number, holdId: record.id, reason: record.reason, previous: record.previous[number], labels: c.config.labels }, () => c.assertRunning?.());
       record.previous[number] = receipt.record.previous;
       record.attempted.push(number); await c.save();
-      await applyRemoteHold(c.github, { number, labels: c.config.labels }, () => c.assertRunning?.());
+      await applyRemoteHold(c.github, { number, holdId: record.id, labels: c.config.labels }, () => c.assertRunning?.());
     }
     record.labelsApplied = true;
     record.applied = record.deliveryBarrierEstablished; await c.save();

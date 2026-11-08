@@ -5,7 +5,8 @@ export function remoteHolds(comments, issue) {
     let record;
     try { record = JSON.parse(comment.body.trim().split('\n').at(-1)); } catch {}
     if (!record?.holdId || record.issue !== issue || !comment.body.startsWith(`<!-- conductor:hold:${record.holdId} -->`) ||
-        !['triage', 'proposal', 'ready', 'hold', 'conflict'].includes(record.previous)) {
+        !['triage', 'proposal', 'ready', 'hold', 'conflict'].includes(record.previous) ||
+        (record.previousLabels !== undefined && (!Array.isArray(record.previousLabels) || record.previousLabels.some(name => typeof name !== 'string')))) {
       throw new Error(`Malformed hold receipt on issue #${issue}; reconcile it before changing a hold.`);
     }
     return { comment, record };
@@ -26,8 +27,10 @@ export async function createRemoteHoldReceipt(github, { number, holdId, reason =
     if (existing.record.releasedAt) throw new Error('This holdId was released; do not revive it.');
     return existing;
   }
-  if (workflowState(await github.issue(number), labels).state !== previous) throw new Error(`Issue #${number} workflow changed before hold creation; inspect it before retrying.`);
-  const record = { holdId, issue: number, previous };
+  const current = await github.issue(number);
+  if (workflowState(current, labels).state !== previous) throw new Error(`Issue #${number} workflow changed before hold creation; inspect it before retrying.`);
+  const previousLabels = (current.labels ?? []).map(label => typeof label === 'string' ? label : label.name).filter(name => ['triage', 'proposal', 'ready', 'hold'].some(key => name?.toLowerCase() === labels[key].toLowerCase()));
+  const record = { holdId, issue: number, previous, previousLabels };
   const body = receiptBody(record, reason);
   await beforeWrite();
   try { await github.api(`repos/${github.repository}/issues/${number}/comments`, { method: 'POST', fields: { body } }); }
@@ -68,11 +71,13 @@ export async function inspectRemoteHold(github, { number, holdId, labels }) {
     workflow, otherHoldIds: receipts.filter(item => item.record.holdId !== holdId && !item.record.releasedAt).map(item => item.record.holdId) };
 }
 
-export async function applyRemoteHold(github, { number, labels }, beforeWrite = () => {}) {
+export async function applyRemoteHold(github, { number, holdId, labels }, beforeWrite = () => {}) {
+  const owned = unique(remoteHolds(await github.comments(number), number), holdId, number);
+  if (!owned || owned.record.releasedAt) throw new Error(`Hold ${holdId} has no active receipt on issue #${number}.`);
   await beforeWrite();
   await github.ensureWorkflowLabels(labels, ['hold']);
   await beforeWrite();
-  return github.setWorkflowState(number, 'hold', labels);
+  return github.applyIssueHold(number, labels, owned.record.previousLabels);
 }
 
 export async function releaseRemoteHold(github, { number, holdId, labels, otherHold = false }, beforeWrite = () => {}) {
@@ -95,10 +100,8 @@ export async function releaseRemoteHold(github, { number, holdId, labels, otherH
       }
       if (!['triage', 'proposal', 'ready'].includes(previous)) previous = 'triage';
       await beforeWrite();
-      await github.ensureWorkflowLabels(labels, [previous]);
-      await beforeWrite();
       const fresh = remoteHolds(await github.comments(number), number);
-      if (!fresh.some(item => item.record.holdId !== holdId && !item.record.releasedAt)) await github.setWorkflowState(number, previous, labels);
+      if (!fresh.some(item => item.record.holdId !== holdId && !item.record.releasedAt)) await github.releaseIssueHold(number, labels, previous);
     }
   }
   await updateReceipt(github, number, owned, { releaseCompletedAt: new Date().toISOString() }, beforeWrite);

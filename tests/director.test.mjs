@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Director } from '../plugins/conductor/lib/director.mjs';
+import { GitHub } from '../plugins/conductor/lib/github.mjs';
 
 const THREAD = '019c6e27-e55b-73d1-87d8-4e01f1f75043';
 const REPO = 'example/project';
@@ -16,6 +17,14 @@ function setup({ issues = [], jobs = [], execute = async () => ({ code: 0, stdou
   const github = {
     repository: REPO,
     ensureWorkflowLabels: async () => {},
+    applyIssueHold: async (...args) => GitHub.prototype.applyIssueHold.call(github, ...args),
+    releaseIssueHold: async (...args) => GitHub.prototype.releaseIssueHold.call(github, ...args),
+    gh: async args => {
+      const issue = records.get(Number(args[2]));
+      if (args.includes('--add-label')) issue.labels.push(args[args.indexOf('--add-label') + 1]);
+      if (args.includes('--remove-label')) issue.labels = issue.labels.filter(label => label !== args[args.indexOf('--remove-label') + 1]);
+      return '';
+    },
     openIssues: async () => [...records.values()].filter(issue => issue.state === 'open').map(issue => structuredClone(issue)),
     issue: async number => { const issue = records.get(number); if (!issue) throw new Error(`missing #${number}`); return structuredClone(issue); },
     dependencies: async () => [],
@@ -65,10 +74,10 @@ const issue = (number, labels = ['ready'], body = `Work ${number}`) => ({ number
 
 test('releasing a partially applied group hold leaves untouched issues unchanged', async () => {
   const h = setup({ issues: [issue(1), issue(2, ['proposal'])] });
-  const write = h.github.setWorkflowState;
-  h.github.setWorkflowState = async (number, state, labels) => {
-    if (number === 1 && state === 'hold') throw new Error('transport failure before label write');
-    return write(number, state, labels);
+  const write = h.github.applyIssueHold;
+  h.github.applyIssueHold = async (number, ...args) => {
+    if (number === 1) throw new Error('transport failure before label write');
+    return write(number, ...args);
   };
   await assert.rejects(h.director.hold({ issues: [1,2] }), /transport failure/);
   assert.equal(h.state.holds[0].active, true);

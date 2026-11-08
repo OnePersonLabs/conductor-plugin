@@ -1,6 +1,11 @@
 import { run } from './process.mjs';
 import { createHash } from 'node:crypto';
 
+const labelNames = issue => (issue.labels ?? []).map(label => typeof label === 'string' ? label : label.name).filter(Boolean);
+const normalize = name => name.toLowerCase();
+const otherPrimaryLabels = (issue, labels) => labelNames(issue).filter(name => ['triage', 'proposal', 'ready'].some(key => normalize(labels[key]) === normalize(name)));
+const hasHoldLabel = (issue, labels) => labelNames(issue).some(name => normalize(name) === normalize(labels.hold));
+
 // Explain delivery gates from the same snapshot used to decide whether to merge.
 // Reporting must not introduce a second GitHub polling loop.
 export function deliveryWaitReason(pull, checks, approvals, requiredApprovals = 0) {
@@ -79,6 +84,37 @@ export class GitHub {
     if (!actual.includes(desired.toLowerCase()) || primary.some(key => labels[key] !== desired && actual.includes(labels[key].toLowerCase()))) {
       throw new Error(`Workflow state change for issue #${number} could not be verified; reconcile its labels before dispatch.`);
     }
+    return verified;
+  }
+  async applyIssueHold(number, labels, previousLabels = []) {
+    const before = await this.issue(number);
+    if (!hasHoldLabel(before, labels)) await this.gh(['issue', 'edit', String(number), '--repo', this.repository, '--add-label', labels.hold], { write: true });
+    const fresh = await this.issue(number);
+    const current = otherPrimaryLabels(fresh, labels);
+    const previous = previousLabels.filter(name => normalize(name) !== normalize(labels.hold));
+    // This operation owns the recorded prior label, not a newer human decision.
+    // Preserve conflicts, including a change arriving after the hold was added.
+    if (previous.length === 1 && current.length === 1 && normalize(current[0]) === normalize(previous[0])) {
+      await this.gh(['issue', 'edit', String(number), '--repo', this.repository, '--remove-label', current[0]], { write: true });
+    }
+    const verified = await this.issue(number);
+    if (!hasHoldLabel(verified, labels) || otherPrimaryLabels(verified, labels).length) throw new Error(`Hold label on issue #${number} has changed or conflicting workflow labels; preserve them and reconcile before continuing.`);
+    return verified;
+  }
+  async releaseIssueHold(number, labels, previous) {
+    let current = await this.issue(number);
+    if (!hasHoldLabel(current, labels)) return current;
+    if (!otherPrimaryLabels(current, labels).length) {
+      await this.ensureWorkflowLabels(labels, [previous]);
+      current = await this.issue(number);
+      if (!hasHoldLabel(current, labels)) return current;
+      if (!otherPrimaryLabels(current, labels).length) await this.gh(['issue', 'edit', String(number), '--repo', this.repository, '--add-label', labels[previous]], { write: true });
+    }
+    // Remove only our hold label. New primary labels survive even if they arrive
+    // while the old state is being restored; a conflict remains ineligible.
+    if (hasHoldLabel(await this.issue(number), labels)) await this.gh(['issue', 'edit', String(number), '--repo', this.repository, '--remove-label', labels.hold], { write: true });
+    const verified = await this.issue(number);
+    if (hasHoldLabel(verified, labels)) throw new Error(`Hold label removal on issue #${number} could not be verified.`);
     return verified;
   }
   async ensureWorkflowLabels(labels, states = ['triage', 'proposal', 'ready', 'hold', 'needsInput']) {

@@ -4,6 +4,7 @@ import { runManualHold } from '../plugins/conductor/lib/manual-hold.mjs';
 import { DEFAULT_LABELS } from '../plugins/conductor/lib/workflow.mjs';
 import { releaseRemoteHold } from '../plugins/conductor/lib/remote-holds.mjs';
 import { Director } from '../plugins/conductor/lib/director.mjs';
+import { GitHub } from '../plugins/conductor/lib/github.mjs';
 
 const REPO = 'example/project';
 const HOLD = '019c6e27-e55b-73d1-87d8-4e01f1f75043';
@@ -24,13 +25,21 @@ function fixture({ labels = ['ready', 'area/music'], catalog = ['ready'], jobs =
     ensureWorkflowLabels: async (mapping, states) => {
       for (const key of states) if (!definitions.has(mapping[key])) { definitions.add(mapping[key]); writes.push(['label', mapping[key]]); }
     },
-    setWorkflowState: async (_number, desired, mapping) => {
+    applyIssueHold: async (...args) => GitHub.prototype.applyIssueHold.call(github, ...args),
+    releaseIssueHold: async (...args) => GitHub.prototype.releaseIssueHold.call(github, ...args),
+    gh: async args => {
       if (failLabels) throw new Error('label write failed');
-      assert.equal(definitions.has(mapping[desired]), true);
-      writes.push(['workflow', desired]);
-      issue.labels = issue.labels.filter(name => !['triage', 'proposal', 'ready', 'hold'].some(key => name === mapping[key]));
-      issue.labels.push(mapping[desired]);
-      return structuredClone(issue);
+      if (args.includes('--add-label')) {
+        const label = args[args.indexOf('--add-label') + 1];
+        assert.equal(definitions.has(label), true);
+        if (!issue.labels.includes(label)) issue.labels.push(label);
+        writes.push(['add', label]);
+      } else {
+        const label = args[args.indexOf('--remove-label') + 1];
+        issue.labels = issue.labels.filter(name => name !== label);
+        writes.push(['remove', label]);
+      }
+      return '';
     },
     api: async (path, { method, fields }) => {
       writes.push([method, path]);
@@ -170,4 +179,61 @@ for (const manualFirst of [true, false]) test(`manual and runtime holds share re
   if (manualFirst) await director.release({ holdId: runtime.id });
   else await releaseManual();
   assert.deepEqual(h.issue.labels, ['area/music', 'ready']);
+});
+
+for (const changed of [['proposal'], ['proposal', 'ready']]) test(`releasing a hold preserves newer primary labels: ${changed.join(',')}`, async () => {
+  const h = fixture();
+  await h.run(request('create'));
+  h.issue.labels.push(...changed);
+  const released = await h.run(request('release'));
+  assert.equal(released.state, 'released');
+  assert.deepEqual(h.issue.labels, ['area/music', ...changed]);
+  assert.equal(released.workflow.state, changed.length > 1 ? 'conflict' : 'proposal');
+});
+
+test('release reads newer decision labels again after receipt update before restoring the old state', async () => {
+  const h = fixture();
+  await h.run(request('create'));
+  const api = h.github.api;
+  let changed = false;
+  h.github.api = async (...args) => {
+    const result = await api(...args);
+    if (args[1].method === 'PATCH' && !changed) { changed = true; h.issue.labels = ['area/music', 'on-hold', 'proposal']; }
+    return result;
+  };
+  await h.run(request('release'));
+  assert.deepEqual(h.issue.labels, ['area/music', 'proposal']);
+});
+
+test('release rechecks primary labels after preparing the restored label and before adding it', async () => {
+  const h = fixture();
+  await h.run(request('create'));
+  const ensure = h.github.ensureWorkflowLabels;
+  h.github.ensureWorkflowLabels = async (...args) => { await ensure(...args); h.issue.labels.push('proposal'); };
+  await h.run(request('release'));
+  assert.deepEqual(h.issue.labels, ['area/music', 'proposal']);
+});
+
+test('a hold create retry preserves a newer decision instead of replacing it with the old snapshot', async () => {
+  const h = fixture();
+  h.failLabels(true);
+  await assert.rejects(h.run(request('create')), /label write failed/);
+  h.failLabels(false);
+  h.issue.labels = ['area/music', 'proposal'];
+  await assert.rejects(h.run(request('create')), /changed or conflicting workflow labels/);
+  assert.deepEqual(h.issue.labels, ['area/music', 'proposal', 'on-hold']);
+  assert.equal((await h.run(request('reconcile'))).deliveryBarrierEstablished, false);
+  assert.equal(h.comments.length, 1);
+});
+
+test('a human decision arriving during creation is preserved and prevents a successful barrier result', async () => {
+  const h = fixture();
+  const api = h.github.api;
+  h.github.api = async (...args) => {
+    const result = await api(...args);
+    if (args[1].method === 'POST') h.issue.labels.push('proposal');
+    return result;
+  };
+  await assert.rejects(h.run(request('create')), /changed or conflicting workflow labels/);
+  assert.deepEqual(h.issue.labels, ['ready', 'area/music', 'proposal', 'on-hold']);
 });
