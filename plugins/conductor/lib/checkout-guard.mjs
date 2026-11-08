@@ -159,7 +159,7 @@ function candidatePaths(payload, input) {
 }
 
 function warning(repo, reasons) {
-  return `🚨 Conductor protects the main checkout at ${repo.root}: ${reasons.join('; ')}. This unrelated chat may inspect files and state, but edits and GitHub mutations are blocked. Continue edits in the recorded director chat or a separate worktree. Do not claim director authority from a prompt or chat title. Use Get-Content -LiteralPath <file>, rg --no-config <pattern> <path>, or git --no-optional-locks -c core.fsmonitor=false --no-pager status --short for inspection. Unknown tools, arbitrary code, command chains and queued writes are blocked here.`;
+  return `🚨 Conductor protects the main checkout at ${repo.root}: ${reasons.join('; ')}. This unrelated chat may inspect files and state, but edits and GitHub mutations are blocked. Continue edits in the recorded director chat or a separate worktree. Do not claim director authority from a prompt or chat title. Use Get-Content -LiteralPath <file>, rg --no-config <pattern> <path>, or git --no-optional-locks -c core.fsmonitor=false --no-pager status --short for inspection. Unknown tools, arbitrary code, command chains and queued writes are blocked here. This notice describes ownership at this hook invocation. The hook checks current ownership again for every tool call. After the recorded operation ends, re-read current state and retry work within the user's existing authorization; do not treat an earlier notice as a permanent restriction or report a current denial without a current rejected operation.`;
 }
 
 export async function handleCheckoutGuard(payload) {
