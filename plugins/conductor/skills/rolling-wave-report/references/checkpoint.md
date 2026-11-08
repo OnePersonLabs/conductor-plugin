@@ -20,8 +20,9 @@ interrupted check is not a passing check. Keep qualifications beside the claims
 they limit; omit those that do not affect the takeaway. Link supporting detail
 instead of narrating the work process.
 
-State each consequential limit once beside the result it qualifies. Do not repeat
-it in the introduction, every card, supporting detail and footer. Omit inventories
+Explain each consequential limit once beside the result it qualifies. Keep the
+graph's required status labels consistent with the summary; those labels do not
+need repeated explanatory paragraphs. Omit inventories
 of actions not taken and repeated disclaimers about supplied facts or source links.
 Use the shortest account that explains the result and remaining decision; a card
 does not require a second explanation below it.
