@@ -22,8 +22,11 @@ intended target before dependent work.
 For a name, search all relevant result pages and exclude pull requests. First try
 a unique normalized exact title match (trim/collapse whitespace and compare case
 insensitively). If there are duplicate exact matches or only ambiguous partial
-matches, show every relevant candidate as `[ID]: [name]` in descending issue-number
-order. Add a short description when useful. Ask for an ID; do not pick the newest or
+matches, each request for an ID must show every current candidate as
+`[ID]: [name]` in descending issue-number order. Repeat the complete list when a
+later query changes the candidates; an earlier list, match count or title summary
+does not identify the current choices. Add a short description when useful.
+Ask for an ID; do not pick the newest or
 highest-ranked result. Include closed issues for $conductor:open-change and every
 explicit target. Do not omit a matching candidate
 because it appears on a later page.
