@@ -78,6 +78,7 @@ export async function resolveIssue(cwd, { target, current } = {}, dependencies =
     const exact = issues.filter(issue => normalizedTitle(issue.title) === explicit.name);
     if (exact.length === 1) {
       const issue = await readIssue(github, exact[0].number);
+      if (normalizedTitle(issue.title) !== explicit.name) throw new Error('Issue title changed during resolution; repeat the literal request before acting.');
       return { status: 'resolved', repository, query: target, issue };
     }
     matches = exact.length ? exact : issues.filter(issue => normalizedTitle(issue.title).includes(explicit.name));

@@ -112,6 +112,11 @@ test('only a successful unmatched name is not-found; it never falls back to curr
   assert.equal(h.calls.length, 2);
 });
 
+test('a title changed between listing and fresh read cannot resolve a different named issue', async () => {
+  const h = fixture([[issue(3, 'Requested title')]], [issue(3, 'A different request')]);
+  await assert.rejects(resolveIssue('checkout', { target: 'Requested title', current: 1 }, h.dependencies), /title changed during resolution/);
+});
+
 test('foreign URLs, invalid targets, pull requests, API failures and malformed scope remain errors', async () => {
   const h = fixture([], [{ ...issue(4, 'A PR'), pull_request: {} }]);
   for (const target of ['https://github.com/other/project/issues/1', 'https://github.com/example/project/pull/1', 'https://notgithub.com/example/project/issues/1', 'https://github.com:8443/example/project/issues/1', '#0', 'https:/broken', '']) {

@@ -1,8 +1,12 @@
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { hostname } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { inspectRepository } from './worktrees.mjs';
 import { processExists } from './process.mjs';
+import { parseIssueTargetArgs } from './issue-context.mjs';
+
+const READ_ONLY_CLI = fileURLToPath(new URL('../bin/conductor.mjs', import.meta.url));
 
 const ACTIVE_PHASES = new Set(['preparing', 'starting', 'launching', 'building', 'reviewing', 'checking', 'cancelling', 'uncertain']);
 const SHELL_TOOLS = new Set(['exec_command', 'shell', 'shell_command', 'Bash']);
@@ -100,6 +104,12 @@ export function readOnlyShell(command) {
   if (!tokens?.length) return false;
   const [executable, ...args] = tokens;
   const name = executable.toLowerCase();
+  if (name === 'node' || name === 'node.exe' || (isAbsolute(executable) && samePath(resolve(executable), process.execPath))) {
+    // Approve one reviewed read capability from this exact package. Relative or
+    // look-alike scripts and other CLI actions retain the normal write guard.
+    if (!isAbsolute(args[0] ?? '') || !samePath(resolve(args[0]), READ_ONLY_CLI) || args[1] !== 'resolve-issue') return false;
+    try { parseIssueTargetArgs(args.slice(2)); return true; } catch { return false; }
+  }
   if (name === 'get-content') {
     if (args[0]?.toLowerCase() !== '-literalpath' || !args[1] || args[1].startsWith('-')) return false;
     return optionsAllowed(args.slice(2).map(x => x.toLowerCase()), new Set(['-raw']), new Set(['-totalcount', '-tail', '-encoding']));

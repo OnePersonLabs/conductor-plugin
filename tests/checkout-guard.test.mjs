@@ -9,6 +9,7 @@ import { checkoutActivity, handleCheckoutGuard, readOnlyShell } from '../plugins
 
 const DIRECTOR = 'director-root';
 const HOOK = fileURLToPath(new URL('../plugins/conductor/hooks/checkout-guard.mjs', import.meta.url));
+const CLI = fileURLToPath(new URL('../plugins/conductor/bin/conductor.mjs', import.meta.url));
 const SAFE_GIT = 'git --no-optional-locks -c core.fsmonitor=false --no-pager';
 
 async function fixture(t) {
@@ -100,6 +101,25 @@ test('shell allowlist rejects execution features and read-command escape hatches
     'Get-Content -LiteralPath $(Remove-Item file)', 'Get-Content -LiteralPath file | Invoke-Expression',
     'Get-Content -LiteralPath file\nRemove-Item file', 'Get-Content -LiteralPath "$env:FILE"',
     'python -c "print(1)"', 'node --version', 'npm test',
+  ]) assert.equal(readOnlyShell(command), false, command);
+});
+
+test('protected checkouts permit only the package-owned read-only issue resolver', async t => {
+  const f = await fixture(t);
+  for (const command of [
+    `node "${CLI}" resolve-issue`,
+    `node "${CLI}" resolve-issue --target "Same title" --current 2`,
+  ]) {
+    assert.equal(readOnlyShell(command), true, command);
+    assert.equal((await handleCheckoutGuard(f.payload('exec_command', { cmd: command }))).denied, undefined);
+  }
+  for (const command of [
+    `node "${join(f.root, 'conductor.mjs')}" resolve-issue --target 1`,
+    'node plugins/conductor/bin/conductor.mjs resolve-issue --target 1',
+    `node "${CLI}" hold --request-file request.json`,
+    `node "${CLI}" resolve-issue --target 1 --state closed`,
+    `node "${CLI}" resolve-issue --target 1; gh issue close 1`,
+    `node --eval "${CLI}" resolve-issue --target 1`,
   ]) assert.equal(readOnlyShell(command), false, command);
 });
 
