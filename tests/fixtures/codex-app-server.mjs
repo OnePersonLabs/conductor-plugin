@@ -57,7 +57,18 @@ input.on('line', (line) => {
   }
 
   if (message.method === 'thread/resume') {
-    frame({ id: message.id, result: { thread: { id: message.params.threadId, cwd: message.params.cwd, resumed: true } } });
+    frame({ id: message.id, result: { thread: { id: message.params.threadId, cwd: message.params.cwd, resumed: true }, model: 'gpt-6.1-sol', reasoningEffort: 'high', collaborationMode: { mode: 'default' } } });
+    return;
+  }
+
+  if (message.method === 'model/list') {
+    frame({ id: message.id, result: { data: [{ id: message.params.cursor ? 'second' : 'first' }], nextCursor: message.params.cursor ? null : 'next' } });
+    return;
+  }
+
+  if (message.method === 'thread/settings/update' || message.method === 'thread/compact/start') {
+    frame({ method: 'fixture/managedControl', params: { method: message.method, ...message.params } });
+    frame({ id: message.id, result: {} });
     return;
   }
 
@@ -73,12 +84,12 @@ input.on('line', (line) => {
         params: { threadId: message.params.threadId, turnId: 'terminal-turn', item: { type: 'agentMessage', text: 'finished response' } },
       });
     }
-    if (mode === 'request' && !globalThis.sentApproval) {
+    if (['request', 'request-terminal'].includes(mode) && !globalThis.sentApproval) {
       globalThis.sentApproval = true;
       frame({
         id: 'approval:one',
         method: 'item/commandExecution/requestApproval',
-        params: { command: ['git', 'status'], reason: 'fixture approval request' },
+        params: { command: ['git', 'status'], reason: 'fixture approval request', ...(mode === 'request-terminal' ? { threadId: message.params.threadId, turnId: `turn-${text}` } : {}) },
       });
     }
     if (mode === 'exit') {
@@ -88,6 +99,7 @@ input.on('line', (line) => {
     const complete = () => frame({ id: message.id, result: { turn: { id: `turn-${text}`, status: 'inProgress' } } });
     if (mode === 'out-of-order') setTimeout(complete, text === 'slow' ? 35 : 2);
     else complete();
+    if (mode === 'request-terminal') frame({ method: 'turn/completed', params: { threadId: message.params.threadId, turn: { id: `turn-${text}`, status: 'interrupted' } } });
     return;
   }
 

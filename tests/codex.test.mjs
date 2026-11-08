@@ -56,6 +56,29 @@ test('connects, starts and resumes threads, and uses configured cwd defaults', a
   });
 });
 
+test('managed controls expose catalogue pages, native mode settings and asynchronous compaction acknowledgements', async () => {
+  const client = createClient(); client.experimentalApi = true;
+  try {
+    await client.connect();
+    assert.deepEqual((await client.listModels()).map(model => model.id), ['first', 'second']);
+    const updated = nextMatching(client, 'notification', event => event.method === 'fixture/managedControl');
+    await client.updateThreadSettings({ threadId: 'owned', mode: 'plan', model: 'gpt-6-astra', effort: 'high' });
+    assert.deepEqual((await updated).params, { method: 'thread/settings/update', threadId: 'owned', collaborationMode: { mode: 'plan', settings: { model: 'gpt-6-astra', reasoning_effort: 'high', developer_instructions: null } } });
+    const compacted = nextMatching(client, 'notification', event => event.method === 'fixture/managedControl');
+    assert.deepEqual(await client.compactThread({ threadId: 'owned' }), {});
+    assert.deepEqual((await compacted).params, { method: 'thread/compact/start', threadId: 'owned' });
+    const resumed = await client.resumeThread({ threadId: 'owned', includeSettings: true });
+    assert.equal(resumed.thread.id, 'owned'); assert.equal(resumed.model, 'gpt-6.1-sol');
+    assert.equal(resumed.reasoningEffort, 'high'); assert.equal(resumed.collaborationMode.mode, 'default');
+  } finally { await client.close(); }
+});
+
+test('native mode mutation requires experimental capability negotiation', async () => {
+  await withClient('normal', async client => {
+    await assert.rejects(client.updateThreadSettings({ threadId: 'owned', mode: 'plan', model: 'gpt-6-astra', effort: 'high' }), /experimentalApi=true/);
+  });
+});
+
 test('starts a session with explicit transport options and names it by its durable thread ID', async () => {
   await withClient('normal', async client => {
     const configured = await client.readConfig({ cwd: process.cwd() });
@@ -85,7 +108,7 @@ test('routes out-of-order responses to their matching calls and sends skill inpu
     const slow = client.startTurn({
       threadId: 'thread',
       prompt: 'slow',
-      skillPath: 'C:/skills/implement/SKILL.md',
+      skillPath: 'C:/skills/apply-change/SKILL.md',
       outputSchema: { type: 'object' },
     });
     const fast = client.startTurn({ threadId: 'thread', prompt: 'fast' });
@@ -95,8 +118,8 @@ test('routes out-of-order responses to their matching calls and sends skill inpu
     const sent = await inputPromise;
     assert.deepEqual(sent.params.input[0], {
       type: 'skill',
-      name: 'implement',
-      path: resolve('C:/skills/implement/SKILL.md'),
+      name: 'apply-change',
+      path: resolve('C:/skills/apply-change/SKILL.md'),
     });
     assert.deepEqual(sent.params.input[1], { type: 'text', text: 'slow' });
     assert.deepEqual(sent.params.outputSchema, { type: 'object' });
@@ -128,6 +151,16 @@ test('sends a turn interrupt with both owning identifiers', async () => {
   });
 });
 
+test('terminal host turn retires unanswered requests without sending a fabricated answer', async () => {
+  await withClient('request-terminal', async client => {
+    const terminal = nextMatching(client, 'notification', event => event.method === 'turn/completed');
+    await client.startTurn({ threadId: 'owned', prompt: 'cancel-question' });
+    await terminal;
+    assert.deepEqual(client.pendingRequests, []);
+    await assert.rejects(client.respond('approval:one', { decision: 'accept' }), /No pending/);
+  });
+});
+
 test('negotiates experimental API and queues/list pages a Desktop wake message', async () => {
   const client = new CodexClient({
     cwd: process.cwd(), command: process.execPath, args: [fixture],
@@ -139,10 +172,10 @@ test('negotiates experimental API and queues/list pages a Desktop wake message',
     const initialized = await initializedPromise;
     assert.equal(initialized.params.capabilities.experimentalApi, true);
     const addNotice = nextMatching(client, 'notification', item => item.method === 'fixture/queueAdd');
-    const queued = await client.addQueuedMessage({ threadId: 'desktop-thread', text: '$conductor:director\nmarker', clientUserMessageId: 'conductor-director-batch-1' });
+    const queued = await client.addQueuedMessage({ threadId: 'desktop-thread', text: '$conductor:direct-workflow\nmarker', clientUserMessageId: 'conductor-director-batch-1' });
     assert.equal(queued.id, 'queue-item-1');
     assert.deepEqual((await addNotice).params, {
-      threadId: 'desktop-thread', input: [{ type: 'text', text: '$conductor:director\nmarker', textElements: [] }],
+      threadId: 'desktop-thread', input: [{ type: 'text', text: '$conductor:direct-workflow\nmarker', textElements: [] }],
       clientUserMessageId: 'conductor-director-batch-1',
     });
     const items = await client.listQueuedMessages({ threadId: 'desktop-thread' });

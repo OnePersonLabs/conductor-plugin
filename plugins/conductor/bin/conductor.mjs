@@ -7,7 +7,9 @@ import { resolve } from 'node:path';
 import { hostname } from 'node:os';
 import { inspectRepository } from '../lib/worktrees.mjs';
 import { loadConfig } from '../lib/config.mjs';
-import { checkRepositorySetup } from '../lib/repository-setup.mjs';
+import * as repositorySetup from '../lib/repository-setup.mjs';
+import { runManagedBridge } from '../lib/managed-work.mjs';
+import { managedSessionId } from '../lib/managed-state.mjs';
 import { Store } from '../lib/state.mjs';
 import { Coordinator } from '../lib/coordinator.mjs';
 import { GitHub } from '../lib/github.mjs';
@@ -23,6 +25,9 @@ import { cleanupWorktrees } from '../lib/cleanup.mjs';
 const HELP = `Conductor 0.1.0 -- conversational GitHub issue director
 Usage: conductor enable [--thread UUID]
        conductor check-setup              (read-only repository setup check)
+       conductor check-scope [local|issues|automation] (read-only work scope check)
+       conductor managed --session ID     (foreground JSONL worker bridge)
+       conductor hold --request-file PATH (manual issue hold barrier)
        conductor enable --host desktop --thread UUID
        conductor attach --host desktop --thread UUID
        conductor wakeup
@@ -43,7 +48,18 @@ Migration preview makes no changes; migrated configuration remains admission-pau
 export function parseArgs(args) {
   const result = { command: 'run', overrides: {} };
   if (args[0] && !args[0].startsWith('-')) result.command = args.shift();
-  if (!['run','signal','status','check-setup','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup','observe','attach'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
+  if (!['run','signal','status','check-setup','check-scope','managed','hold','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup','observe','attach'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
+  if (result.command === 'check-scope') {
+    result.scope = args.shift() ?? 'local';
+    if (!['local', 'issues', 'automation'].includes(result.scope) || args.length) throw new Error('check-scope accepts only local, issues or automation.');
+    return result;
+  }
+  if (result.command === 'managed') {
+    if (args.shift() !== '--session') throw new Error('managed requires --session ID.');
+    result.sessionId = managedSessionId(args.shift());
+    if (args.length) throw new Error('managed accepts only --session ID.');
+    return result;
+  }
   if (result.command === 'cleanup') {
     const option = args.shift();
     if (option !== undefined && option !== '--preview') throw new Error('cleanup accepts only --preview.');
@@ -67,7 +83,7 @@ export function parseArgs(args) {
     else if (flag === '--enable' && result.command === 'serve') result.enable = true;
     else if (flag === '--manual-wake' && result.command === 'serve') result.manualWake = true;
     else if (flag === '--resume-runner' && result.command === 'serve') result.resumeRunner = true;
-    else if (flag === '--request-file' && result.command === 'rpc') { result.requestFile = args.shift(); if (!result.requestFile) throw new Error('--request-file requires a JSON file.'); }
+    else if (flag === '--request-file' && ['rpc', 'hold'].includes(result.command)) { result.requestFile = args.shift(); if (!result.requestFile) throw new Error('--request-file requires a JSON file.'); }
     else if (flag === '--apply' && result.command === 'migrate') result.apply = true;
     else if (flag === '--mapping' && result.command === 'migrate') { result.mappingFile = args.shift(); if (!result.mappingFile) throw new Error('--mapping requires a JSON file.'); }
     else throw new Error(`Unknown option: ${flag}`);
@@ -77,6 +93,7 @@ export function parseArgs(args) {
   if (result.command === 'serve' && result.handoffThreadId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.handoffThreadId)) throw new Error('--handoff-thread must be an existing Desktop chat UUID.');
   if (result.command === 'enable' && result.host === 'desktop' && !result.threadId) throw new Error('Desktop mode requires --thread with the current Codex Desktop chat UUID; Conductor cannot create a private replacement chat.');
   if (result.command !== 'run' && Object.keys(result.overrides).length) throw new Error('Runtime options apply only to run.');
+  if (result.command === 'hold' && !result.requestFile) throw new Error('hold requires --request-file PATH.');
   return result;
 }
 
@@ -86,10 +103,22 @@ async function main() {
   if (args.includes('--version')) { console.log('0.1.0'); return; }
   const options = parseArgs(args);
   if (options.command === 'check-setup') {
-    console.log(JSON.stringify(await checkRepositorySetup(process.cwd()), null, 2));
+    console.log(JSON.stringify(await repositorySetup.checkRepositorySetup(process.cwd()), null, 2));
     return;
   }
+  if (options.command === 'check-scope') {
+    console.log(JSON.stringify(await repositorySetup.checkWorkScope(process.cwd(), options.scope), null, 2)); return;
+  }
+  if (options.command === 'hold') {
+    const { runManualHold } = await import('../lib/manual-hold.mjs');
+    console.log(JSON.stringify(await runManualHold(process.cwd(), JSON.parse(readFileSync(resolve(options.requestFile), 'utf8'))), null, 2)); return;
+  }
   const repo = await inspectRepository(process.cwd());
+  if (options.command === 'managed') {
+    // Foreground work has its own recovery owner; never instantiate the automated Store.
+    await repositorySetup.checkWorkScope(process.cwd(), 'local');
+    await runManagedBridge({ commonDir: repo.commonDir, cwd: repo.root, sessionId: options.sessionId }); return;
+  }
   const store = new Store(repo.commonDir);
   const cliPath = fileURLToPath(import.meta.url);
   const launch = async (command, argv, spawnOptions) => {

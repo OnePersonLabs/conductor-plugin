@@ -134,7 +134,7 @@ export class CodexClient extends EventEmitter {
     return this._request('thread/name/set', { threadId, name });
   }
 
-  async resumeThread({ threadId, cwd = this.cwd, sandbox, approvalPolicy, config } = {}) {
+  async resumeThread({ threadId, cwd = this.cwd, sandbox, approvalPolicy, config, includeSettings = false } = {}) {
     this._assertConnected();
     requireString(threadId, 'threadId');
     const params = { threadId, cwd: resolve(cwd) };
@@ -142,13 +142,41 @@ export class CodexClient extends EventEmitter {
     if (approvalPolicy !== undefined) params.approvalPolicy = approvalPolicy;
     if (config !== undefined) params.config = config;
     const result = await this._request('thread/resume', params);
-    return requireResultObject(result, 'thread/resume', 'thread');
+    const thread = requireResultObject(result, 'thread/resume', 'thread');
+    return includeSettings ? { ...result, thread } : thread;
   }
 
   async readThread({ threadId, includeTurns = true } = {}) {
     this._assertConnected();
     requireString(threadId, 'threadId');
     return requireResultObject(await this._request('thread/read', { threadId, includeTurns }), 'thread/read', 'thread');
+  }
+
+  async listModels() {
+    this._assertConnected();
+    const data = []; let cursor;
+    do {
+      const page = await this._request('model/list', { limit: 100, ...(cursor ? { cursor } : {}) });
+      if (!Array.isArray(page?.data)) throw new Error('model/list did not return a model catalogue.');
+      data.push(...page.data); cursor = page.nextCursor;
+    } while (cursor);
+    return data;
+  }
+
+  async compactThread({ threadId } = {}) {
+    this._assertConnected(); requireString(threadId, 'threadId');
+    // The acknowledgement is not completion. Observe the compaction item and turn.
+    return this._request('thread/compact/start', { threadId });
+  }
+
+  async updateThreadSettings({ threadId, mode, model, effort } = {}) {
+    this._assertConnected(); requireString(threadId, 'threadId');
+    if (!this.experimentalApi) throw new Error('Collaboration mode requires initialize.capabilities.experimentalApi=true.');
+    if (!['plan', 'default'].includes(mode)) throw new Error('mode must be plan or default.');
+    requireString(model, 'model'); requireString(effort, 'effort');
+    return this._request('thread/settings/update', {
+      threadId, collaborationMode: { mode, settings: { model, reasoning_effort: effort, developer_instructions: null } },
+    });
   }
 
   async addQueuedMessage({ threadId, text, clientUserMessageId } = {}) {
@@ -403,6 +431,14 @@ export class CodexClient extends EventEmitter {
         });
         this._emitSafely('request', { id: message.id, method: message.method, params: message.params });
       } else {
+        if (message.method === 'turn/completed') {
+          // A terminal host turn cannot consume another answer. Long-lived
+          // clients must retire its cancelled questions instead of blocking the
+          // next phase or sending a stale answer to an unrelated request.
+          for (const [id, request] of this._serverRequests) {
+            if (request.params?.threadId === message.params?.threadId && request.params?.turnId === message.params?.turn?.id) this._serverRequests.delete(id);
+          }
+        }
         // Keep notification params unchanged. Terminal assistant text is
         // available at item/completed params.item.text when item.type is
         // "agentMessage"; consumers decide which messages are final.
