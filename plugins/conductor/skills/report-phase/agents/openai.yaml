@@ -1,6 +1,0 @@
-interface:
-  display_name: "Conductor Report Phase"
-  short_description: "Present phase results as a linked visual story"
-  default_prompt: "Use $conductor:report-phase to report the completed phase, its evidence and unfinished work in a static HTML graph."
-policy:
-  allow_implicit_invocation: true

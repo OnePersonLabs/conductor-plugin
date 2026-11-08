@@ -49,12 +49,10 @@ Complete substantive issue-body changes before independent review.
 Begin implementation only when the phase is authorized. Compact the completed
 planning turn and switch the managed worker to Default mode through the supported
 bridge protocol. Use $conductor:apply-change through that same owned worker.
-Verify catalogue availability. Use Astra high for complex production planning
-and Sol 6.1 xhigh for bounded planning. Use Sol 6.1 high for implementation and
-Astra medium for independent review. Follow the managed-work protocol: compact at a
-completed-turn boundary before changing model or effort, await correlated success,
-apply settings atomically, then start the next turn. Report missing required
-models; do not silently substitute.
+Use the model selection and completed-turn transition in
+[managed work](../../references/managed-work.md#select-the-production-model-and-effort).
+That reference owns the production choices, availability checks, compaction and
+atomic settings changes.
 
 Finish connected implementation and required checks, then commit task-owned work.
 Start $conductor:review-change with fresh initial context, complete requirements,
@@ -66,7 +64,7 @@ the accepted approach; apply the two-failed-repair reassessment rule.
 
 ## Report, decide and finish
 
-Use $conductor:report-phase after review and repair. Commit its authored report,
+Use $conductor:rolling-wave-report after review and repair. Commit its authored report,
 then have the same reviewer confirm the documentation delta and exact final head.
 Reuse unaffected checks and review evidence; do not start a report recursion.
 Return the phase result, limits and tracked report to the human. Let the human

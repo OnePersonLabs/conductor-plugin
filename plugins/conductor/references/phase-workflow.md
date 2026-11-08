@@ -15,7 +15,7 @@ action never starts either coordinator or background automation.
 | Implement, check and repair authorized work | `$conductor:apply-change` |
 | Review the complete stable change independently | `$conductor:review-change` |
 | Assess acceptance from scenario evidence | `$conductor:verify-change` |
-| Present the completed phase and its limits | `$conductor:report-phase` |
+| Present the completed phase and its limits | `$conductor:rolling-wave-report` |
 | Select one next action | `$conductor:continue-change` |
 | Close completed work or reopen a closed issue | `$conductor:close-change`, `$conductor:open-change` |
 
@@ -42,13 +42,17 @@ without routine human phase gates. It asks for genuine product or authority
 decisions. Explicit background mode retains the existing lifecycle, original
 worker identity, holds, admission pauses, issue revisions and delivery controls.
 
-Production complex planning uses Astra high; bounded planning uses Sol 6.1 xhigh;
-implementation uses Sol 6.1 high; independent review uses Astra medium. Verify
-the actual catalogue identifiers and availability. Do not silently substitute.
-Use one live JSONL client through worker questions. At a completed-turn boundary,
-compact before changing model or effort; await correlated success, apply settings
-atomically, then start the next turn. Follow the managed-work owner for exact
-protocol details. An unavailable required model blocks that dependent step.
+Follow [managed work](managed-work.md#select-the-production-model-and-effort) for
+production model selection, availability and completed-turn settings transitions.
+Keep one live JSONL client through worker questions. An unavailable required
+model blocks that dependent step.
+
+When available, use $onepersonlabs:write-technical for developer explanations,
+specifications, plans, reports and PR text; use $onepersonlabs:write-documentation
+for user or contributor documentation and $onepersonlabs:write-ui for application
+copy. These are optional writing helpers, not Conductor prerequisites. Lead with
+the reader's goal or result, explain concrete behavior and preserve consequential
+conditions, evidence and uncertainty.
 
 During implementation through $conductor:apply-change, for each significant batch,
 state an evidence-based agent elapsed-time range

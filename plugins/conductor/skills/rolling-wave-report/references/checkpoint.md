@@ -7,8 +7,8 @@ unresolved historical fact changes the report. Do not reconstruct every command.
 
 ## Write a concise report
 
-Use $onepersonlabs:write's concise-report guidance when available for the report
-and chart text. Explain what was built or
+When available, use $onepersonlabs:write-technical for the report and chart text.
+Conductor remains usable without it. Explain what was built or
 changed through what it does. Then say whether it worked and what remains
 unfinished. The reader must understand the result without the conversation's
 internal labels or history.
@@ -38,13 +38,21 @@ Replace the illustrative content directly in the HTML and SVG before delivery.
 Escape story text and attribute values for their HTML context. Evidence links
 may use local files, HTTP, or HTTPS; reject executable link schemes.
 
-Show only route details needed to explain the result, unfinished work, or the
-next decision. Do not turn the chart into a command history or worker diary.
+Select meaningful events that explain the result, unfinished work, or the next
+decision. Omit routine events that do not change that account. Preserve supported
+connections among the selected events, including consequential failed branches,
+repairs, reunions and unfinished endpoints. Do not fabricate a branch or remove a
+consequential branch to simplify the chart. Do not turn it into a command history
+or worker diary.
 Update the title, summary, checkpoint, actor labels, roadmap, graph cards,
-story, accounting, and next action together. Give each beat a stable story anchor,
-actor, label, state, summary, story paragraphs, and available evidence links.
+supporting detail, accounting, and next action together. Give each event a stable
+anchor, actor, name, state and short description. Add supporting prose or evidence
+links when they explain a cause, decision, result or limit beyond the card itself;
+do not require a separate story paragraph for every event.
 Show a bold numbered name, a short description below it, and a visible owner and
-status on each linked card. Match card numbers and names to story headings.
+status on each linked card. Match card numbers and names to any linked detail
+headings. A card can link directly to supporting evidence or another relevant
+report section when a separate detail entry adds no information.
 Do not add a separate key that repeats the card names. Use concrete names and
 descriptions that explain the actual goal, attempt, result, or limitation.
 Update SVG paths, arrowheads, accessible descriptions, and grid placement to fit
@@ -63,8 +71,8 @@ in roughly equal columns with a 24-pixel gap. Keep card names and descriptions
 readable at a 360-pixel viewport and in the half-width column at 768 pixels.
 Wrap card text instead of scaling it with SVG geometry.
 If the graph becomes too dense, split it into connected figures
-with explicit continuation labels and stable beat numbers. Preserve every
-supported branch and reunion; do not hide or discard the graph on narrow screens
+with explicit continuation labels and stable event numbers. Preserve consequential
+supported branches and reunions; do not hide or discard the graph on narrow screens
 or in print, shrink its text beyond legibility, or clip overflow to conceal it.
 
 Use actor colors for the root and worker paths. Labels, symbols, and line styles
@@ -74,8 +82,8 @@ did not finish cannot rejoin as approval. Label planned routes as proposed.
 Do not fabricate branches to make the chart more interesting.
 
 Give the broad roadmap a current position and direction. Expand only the
-selected phase. Use native anchor links from graph cards
-to each beat's full story and evidence. Include outgoing connections as text
+selected phase. Use native links from graph cards to relevant detail or evidence.
+Include outgoing connections as text
 links so the route remains understandable without the drawing. Describe unfinished
 work and its existing owner. The report records results and possible next actions;
 it does not issue workflow, mode-switch or human-stop commands.
@@ -92,7 +100,7 @@ Open the saved HTML file directly in the available browser. Do not start a web
 server to preview or deliver the checkpoint. Check desktop and phone sizes,
 long labels, branch directions and reunion points. With JavaScript disabled,
 confirm that all content and the graph render. Exercise graph-to-story links,
-return links, keyboard focus, story connections, and evidence links. Check that
+return links where present, keyboard focus, text connections, and evidence links. Check that
 the page has no horizontal overflow or nested scroll containers at either size.
 Check at 360 pixels, at the 768-pixel layout transition, and at desktop width.
 Check that numbered card names, descriptions, statuses, arrowheads, branch

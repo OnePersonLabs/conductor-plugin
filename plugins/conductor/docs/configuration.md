@@ -63,13 +63,11 @@ planning decisions. Routine triage and backlog repair can stay with the director
 The director verifies host model availability and reports unsupported required
 models. An Astra invoking chat alone does not select Astra helpers.
 
-For managed pair programming and synchronous phase work, complex unsettled
-architecture planning uses Astra high; bounded planning against an established
-design uses Sol 6.1 xhigh. Implementation uses Sol 6.1 high. Initial independent
-review uses Astra medium with fresh context. Honor explicit bounded assignments.
-The worker enters actual Plan or Default mode through the
-[managed work connection](../references/managed-work.md), compacts at completed
-turn boundaries before changing model or effort, and awaits the applied settings.
+For managed pair programming and synchronous phase work,
+[managed work](../references/managed-work.md#select-the-production-model-and-effort)
+owns the production model/effort choices, catalogue checks and completed-turn
+settings transitions. The worker enters actual Plan or Default mode through that
+connection and waits for verified applied settings before its next turn.
 The visible coordinator keeps its host-selected model and permissions. A
 coordinator in Plan Mode cannot use a worker to bypass its own mutation restriction.
 

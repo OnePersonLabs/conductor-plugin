@@ -1,0 +1,6 @@
+interface:
+  display_name: "Conductor Rolling Wave Report"
+  short_description: "Report phase results, evidence and unfinished work"
+  default_prompt: "Use $conductor:rolling-wave-report to report the completed phase, its evidence and unfinished work in a static HTML graph."
+policy:
+  allow_implicit_invocation: false

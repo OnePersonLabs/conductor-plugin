@@ -16,8 +16,9 @@ because a change was requested.
 
 For one issue or local request, `$conductor:pair-program` provides rolling-wave
 planning, implementation, independent review and repair, and a phase report before
-the human decides what follows. `$conductor:report-phase` can also report the
-previous phase without executing more work. Plans and reports are tracked under
+the human decides what follows. Explicitly invoke `$conductor:rolling-wave-report`
+to report an existing phase independently, without executing more work or entering
+a planning mode. Plans and reports are tracked under
 `.conductor/plans/` and `.conductor/reports/`; the issue keeps high-level scope,
 acceptance and native relationships. See [phase work](../references/phase-workflow.md).
 
@@ -317,7 +318,9 @@ applies and verifies supported changes, rechecking current state and preserving
 unrelated edits. If a required planner model is unavailable, it reports the
 unfinished judgment and continues independent authorized work.
 
-Native helpers can execute bounded local steps within an assigned builder job.
+Native helpers can execute bounded local steps within an assigned builder job
+when expected time or quality gains exceed briefing, coordination and integration
+cost. Give each helper explicit ownership, required evidence and a stop condition.
 Choose model, effort and context for the helper's task and integration cost;
 an Astra parent alone does not select an Astra child. The builder integrates and
 reconciles its descendants before completion or handoff. Conductor keeps durable

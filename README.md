@@ -33,7 +33,7 @@ Conductor-driven issue changes with links and their effect on the work.
 | `$conductor:open-change` | “Reopen Keyboard navigation.” | Reopens the matching issue, or warns that it is already open. |
 | `$conductor:pair-program` | “Use a rolling wave workflow for this change.” | One task in phases, with human decisions between phases. |
 | `$conductor:direct-workflow` | “Direct these issues synchronously.” | Autonomous continuation within the selected scope and authority. |
-| `$conductor:report-phase` | “Generate the previous phase's result report.” | A tracked, standalone HTML report; no next-phase execution. |
+| `$conductor:rolling-wave-report` (explicit invocation) | “Use $conductor:rolling-wave-report for the previous phase.” | A tracked, standalone HTML report; no next-phase execution. |
 | `$conductor:manage-issues` | “Split #12 into deliverable issues and record its dependencies.” | Updated issues, acceptance criteria, states, priorities, and native relationships. |
 | `$conductor:ask-user` | “Walk me through the decisions blocking these issues.” | Questions in chat, recorded answers, and verified integration into the owning issues or specifications. |
 | `$conductor:setup-repo-workflow` | “Configure this repository for Conductor.” | Prepared configuration without starting execution. |

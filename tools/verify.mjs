@@ -79,7 +79,7 @@ function validatePackage() {
   const expected = new Map([
     ['direct-workflow', false],
     ['pair-program', true],
-    ['report-phase', true],
+    ['rolling-wave-report', false],
     ['manage-issues', true],
     ['ask-user', true],
     ['explore', true],

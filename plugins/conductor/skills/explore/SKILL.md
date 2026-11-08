@@ -22,6 +22,13 @@ Explain the observable behavior, the evidence that supports it and what remains
 unknown. Recover accepted meaning from its existing owner when a distinction
 changes the answer. Distinguish recorded reasons from inference.
 
-Do not change files, create issues, save plans, start workers or start a director.
+Use source reads, read-only commands and bounded read-only helpers when they
+improve the investigation after setup and integration cost. Give helpers a clear
+question, scope, evidence requirement and stop condition. No issue, saved plan,
+Conductor configuration or director is a prerequisite.
+
+Do not mutate project files or external state, create issues, save plans or start
+a coordinator, director or background service. A helper has only the read-only
+authority of this exploration.
 Return findings and consequential unanswered questions. Exploration does not
 require a planning ceremony or authorize implementation.

@@ -31,8 +31,9 @@ verify the original saved job, thread, branch and worktree match this assignment
 
 State the affected responsibilities before a substantial change. Finish the
 behavior through its consumers, update reader instructions and remove obsolete
-machinery within scope. Preserve unrelated work. Delegate only with settled
-interfaces, explicit write ownership and authorized tools. Keep tightly coupled
+machinery within scope. Preserve unrelated work. Delegate when expected gains in
+elapsed time or quality exceed setup, handoff and integration cost, with settled
+interfaces, bounded outcomes, explicit write ownership and authorized tools. Keep tightly coupled
 work with its writer and reconcile descendants before handoff.
 
 After the implementation is stable, run affected existing checks and required

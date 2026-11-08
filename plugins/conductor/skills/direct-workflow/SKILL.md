@@ -18,7 +18,7 @@ Use [phase workflow](../../references/phase-workflow.md) and its inner action
 skills to plan, implement, check, independently review, repair and report. Use
 [managed work](../../references/managed-work.md) for persistent ordinary
 AppServer workers owned by the foreground bridge. Verify the model catalogue;
-use the production planning/implementation/review settings in the phase contract
+use the production planning/implementation/review settings in managed work
 without silent substitution. Preserve one writer per mutable scope and retain
 original builder/reviewer context through repair.
 
@@ -33,6 +33,11 @@ $conductor:ask-user for genuine unresolved product or authority decisions. If
 those decisions are settled, proceed without a questionnaire. Make the next
 phase complete, keep later phases broad, save tracked artifacts through the
 coordinator and report consequential results and limits.
+
+After review and repair, explicitly use $conductor:rolling-wave-report. Commit
+the report and return its documentation delta to the same reviewer for exact
+final-head confirmation under [phase artifacts](../../references/phase-artifacts.md).
+Reuse unaffected evidence, then continue only within the authorized scope.
 
 Before edits, verify no automation-owned worker or uncertain delivery conflicts.
 Do not stop, cancel or take over existing automation to make synchronous work

@@ -46,11 +46,29 @@ streamed deltas. The worker inherits
 the configured tools, sandbox and approvals; the bridge installs no special role
 permissions. A configured host restriction can still block a requested operation.
 
-The bridge checks the live model catalogue before configuration. It rejects an
-unavailable model or effort and never substitutes one. The production choices are
-Sol 6.1 xhigh for bounded planning, Astra high for complex planning, Sol 6.1 high
-for implementation, and Astra medium for independent review. Select the choice
-appropriate to the assignment; the transport does not choose policy for you.
+## Select the production model and effort
+
+This reference owns model selection for managed pair programming and synchronous
+phase work. Verify the live catalogue before configuration. Report an unavailable
+required model or effort; do not silently substitute.
+
+| Assignment | Model | Effort |
+| --- | --- | --- |
+| Bounded planning against an established design | `gpt-6.1-sol` | `xhigh` |
+| Complex unsettled architecture planning | `gpt-6-astra` | `high` |
+| Implementation | `gpt-6.1-sol` | `high` |
+| Independent review, initially with fresh context | `gpt-6-astra` | `medium` |
+
+Honor explicit bounded assignments. The visible coordinator keeps its host-selected
+model, tools and permissions. The transport validates availability; it does not
+choose policy. The completed-turn transition below owns compaction and atomic
+settings changes. Background builder/reviewer threads retain their host settings
+under [configuration](../docs/configuration.md); this table does not change them.
+
+Delegate only when expected gains in elapsed time or quality exceed briefing,
+coordination and integration cost. Give each helper a bounded outcome, ownership,
+model and effort, context, required evidence and stop condition. Keep tightly
+coupled work local and preserve the managed bridge and leaf-role constraints.
 
 ## Answer a question on the same client
 

@@ -31,7 +31,7 @@ Do not bypass that host restriction through a worker or another execution path.
 
 A phase report is authored durable content, not temporary diagnostics. Repair the
 same report in place when its account or presentation needs correction. Use
-`$conductor:report-phase` for the report and static HTML graph. Keep raw logs and
+`$conductor:rolling-wave-report` for the report and static HTML graph. Keep raw logs and
 disposable captures out of these records. Existing recovery owners retain only
 the unresolved state their contracts require.
 
