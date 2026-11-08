@@ -51,9 +51,6 @@
     .summary-panel:last-child { margin-bottom:0; }
     .summary-panel p:last-child { margin-bottom:0; }
     .next { border-color:#887348; }
-    .accounting div { border-bottom:1px solid var(--line); padding-bottom:12px; margin-bottom:12px; }
-    .accounting dt { font-weight:700; }
-    .accounting dd { margin:4px 0 0; color:var(--muted); }
     .story { list-style:none; padding:0; margin:32px 0 0; }
     .story > li { border-left:3px solid var(--actor); padding:18px 20px; margin-bottom:22px; background:var(--panel); scroll-margin-top:20px; }
     .story p { color:var(--muted); }
@@ -124,8 +121,8 @@
       <aside aria-label="Checkpoint result and next action">
         <section class="summary-panel" aria-labelledby="result-title"><h3 id="result-title">What works in this example</h3><p>Unsent text returns after a reload. Recovery leaves text already in the editor alone. The repair and worker's checks are integrated at <a href="#beat-join">step 6</a>.</p></section>
         <section class="summary-panel" aria-labelledby="unfinished-title"><h3 id="unfinished-title">What remains unfinished</h3><p>The independent reviewer stopped before reaching a verdict. Passing the demonstrated checks does not complete that review. <a href="#beat-review">See the review limit.</a></p></section>
-        <section class="summary-panel next" id="next" aria-labelledby="next-title"><p class="eyebrow">Remaining work</p><h3 id="next-title">The recovery review is unfinished</h3><p>The independent review retains its current owner. The evidence below supports draft recovery while that review remains incomplete.</p></section>
-        <section class="summary-panel" aria-labelledby="details-title"><h3 id="details-title">Supporting detail</h3><p><a href="#story">Read all eight steps</a>, including the rejected approach and the checks that supported integration. Replace this illustrative account with evidence links from the actual work.</p><dl class="accounting"><div><dt>Preparation</dt><dd>Duration unknown in this example.</dd></div><div><dt>Implementation and rework</dt><dd>Saving only on exit failed; saving each edit addressed the missed close event.</dd></div><div><dt>Verification and coordination</dt><dd>Worker checks and root work may overlap. Time and AI usage are unknown.</dd></div></dl></section>
+        <section class="summary-panel next" id="next" aria-labelledby="next-title"><p class="eyebrow">Next action</p><h3 id="next-title">Resume the independent review</h3><p>Return the repaired recovery flow and its check results to the existing reviewer.</p></section>
+        <section class="summary-panel" aria-labelledby="details-title"><h3 id="details-title">Why saving on exit failed</h3><p>A browser can close without sending the expected event. Saving each edit avoids relying on that final event. <a href="#story">Read the attempt, repair and checks.</a></p></section>
       </aside>
     </div>
   </section>

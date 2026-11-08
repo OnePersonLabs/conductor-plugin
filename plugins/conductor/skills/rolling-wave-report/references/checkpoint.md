@@ -20,10 +20,18 @@ interrupted check is not a passing check. Keep qualifications beside the claims
 they limit; omit those that do not affect the takeaway. Link supporting detail
 instead of narrating the work process.
 
+State each consequential limit once beside the result it qualifies. Do not repeat
+it in the introduction, every card, supporting detail and footer. Omit inventories
+of actions not taken and repeated disclaimers about supplied facts or source links.
+Use the shortest account that explains the result and remaining decision; a card
+does not require a second explanation below it.
+
 Account for preparation, implementation, verification, coordination, rework, and
 waiting when these distinctions affect the next action. Parallel durations
 overlap. Compare equivalent work; do not turn different workloads into a speedup
-claim. State unknown intervals or usage directly. Reuse any existing workflow
+claim. Include timing or usage only when it affects the decision or was requested;
+then state missing measurements directly without filling a table with unknowns.
+Reuse any existing workflow
 account, including findings from $onepersonlabs:optimize-workflow when available,
 rather than creating a separate ledger.
 
@@ -45,7 +53,8 @@ repairs, reunions and unfinished endpoints. Do not fabricate a branch or remove 
 consequential branch to simplify the chart. Do not turn it into a command history
 or worker diary.
 Update the title, summary, checkpoint, actor labels, roadmap, graph cards,
-supporting detail, accounting, and next action together. Give each event a stable
+supporting detail and next action together. Include accounting only when relevant.
+Give each event a stable
 anchor, actor, name, state and short description. Add supporting prose or evidence
 links when they explain a cause, decision, result or limit beyond the card itself;
 do not require a separate story paragraph for every event.
