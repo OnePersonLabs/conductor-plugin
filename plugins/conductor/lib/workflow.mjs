@@ -52,6 +52,9 @@ export async function eligibility(github, number, labels = DEFAULT_LABELS) {
   if (state.needsInput) reasons.push('issue needs human input');
   for (const blocker of dependencies) {
     const status = blockerState(blocker);
+    const workflow = workflowState(blocker, labels);
+    if (workflow.conflict) reasons.push(`blocker issue #${blocker.number} has conflicting primary workflow labels`);
+    else if (workflow.state === 'hold') reasons.push(`blocker issue #${blocker.number} is hold`);
     if (status === 'open') reasons.push(`blocked by open issue #${blocker.number}`);
     if (status === 'not-planned') reasons.push(`blocked by issue #${blocker.number} closed as not planned`);
     if (status === 'unknown') reasons.push(`blocker issue #${blocker.number} has an unrecognized closed reason`);
@@ -69,7 +72,9 @@ export async function eligibility(github, number, labels = DEFAULT_LABELS) {
   };
   const canonical = {
     issue: canonicalIssue,
-    dependencies: dependencies.map(item => ({ number: item.number, state: item.state, state_reason: item.state_reason ?? item.stateReason, title: item.title })).sort((a,b) => (a.number ?? 0) - (b.number ?? 0)),
+    dependencies: dependencies.map(item => ({ number: item.number, state: item.state, state_reason: item.state_reason ?? item.stateReason, title: item.title,
+      labels: labelNames(item).map(normalize).filter(name => PRIMARY.some(key => name === normalize(labels[key]))).sort(),
+    })).sort((a,b) => (a.number ?? 0) - (b.number ?? 0)),
     parents: parents.map(item => ({ number: item.number, state: item.state, title: item.title, labels: labelNames(item).map(normalize).sort() })).sort((a,b) => a.number - b.number),
     comments: comments.filter(item => !String(item.body ?? '').startsWith('<!-- conductor:'))
       .map(item => ({ id: item.id, body: item.body, updated_at: item.updated_at ?? item.created_at }))

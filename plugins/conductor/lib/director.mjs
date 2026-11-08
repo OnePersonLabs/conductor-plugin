@@ -7,6 +7,17 @@ import { runnerPause, RUNNER_PAUSED_MESSAGE } from './runner-state.mjs';
 
 const pauseSafeOperations = new Set(['status', 'settle', 'wakeup', 'decision-read', 'enable', 'events', 'ack', 'retry-wakeup', 'bind', 'attach', 'resume-runner', 'stop']);
 
+function remoteHolds(comments, issue) {
+  return comments.filter(comment => comment.body?.startsWith('<!-- conductor:hold:')).map(comment => {
+    let record;
+    try { record = JSON.parse(comment.body.trim().split('\n').at(-1)); } catch {}
+    if (!record?.holdId || record.issue !== issue || !comment.body.startsWith(`<!-- conductor:hold:${record.holdId} -->`)) {
+      throw new Error(`Malformed hold receipt on issue #${issue}; reconcile it before release.`);
+    }
+    return { comment, record };
+  });
+}
+
 // Policy is judged by the director. This owner enforces a fresh, bounded command
 // and retains barriers before attempting any non-atomic GitHub mutation.
 export class Director {
@@ -126,14 +137,20 @@ export class Director {
   async pause(number, reason = 'Paused by director') {
     const c = this.c, job = c.state.jobs.find(j => j.issue === number);
     c.assertRunning?.();
-    if (!job || ['complete','cancelled'].includes(job.phase)) return { issue: number, state: job?.phase ?? 'not-started' };
+    if (!job || ['complete','cancelled'].includes(job.phase)) return { issue: number, state: job?.phase ?? 'not-started', deliveryBarrierEstablished: !job?.deliveryReconciliationRequired };
     job.intent = 'pause'; job.summary = reason; await c.save();
     c.handoffChecks?.get(number)?.abort();
-    if (job.pr) {
-      try { await c.deliveryAction(() => c.disarm(job)); }
+    let warning;
+    if (job.pr && !(job.deliveryEvidence && !job.deliveryReconciliationRequired)) {
+      try {
+        await c.deliveryAction(() => c.disarm(job));
+        if (job.deliveryReconciliationRequired) job.lastError = null;
+        job.deliveryReconciliationRequired = false;
+      }
       catch (error) {
         job.lastError = error.message;
-        if (error.code === 'ALREADY_MERGED') job.deliveryReconciliationRequired = true;
+        warning = error.message;
+        job.deliveryReconciliationRequired = true;
         await c.save();
         // Continue stopping the worker even if a remote merge cannot be undone.
       }
@@ -144,8 +161,18 @@ export class Director {
     await c.tasks.get(number);
     job.phase = 'paused'; job.nextRole ??= job.activeRole ?? 'builder';
     await c.save();
-    await this.events.emit({ kind: 'paused', issue: number, reason, warning: job.lastError });
-    return { issue: number, state: 'paused', warning: job.lastError };
+    const result = { issue: number, state: 'paused', deliveryBarrierEstablished: !job.deliveryReconciliationRequired,
+      deliveryReconciliationRequired: !!job.deliveryReconciliationRequired, warning };
+    if (result.deliveryBarrierEstablished) this.recordDeliveryBarrier(job.issue);
+    await this.events.emit({ kind: 'paused', reason, ...result });
+    return result;
+  }
+  recordDeliveryBarrier(issue) {
+    for (const hold of this.c.state.holds.filter(item => item.active && item.deliveryReconciliationRequired?.includes(issue))) {
+      hold.deliveryReconciliationRequired = hold.deliveryReconciliationRequired.filter(number => number !== issue);
+      hold.deliveryBarrierEstablished = hold.deliveryReconciliationRequired.length === 0;
+      hold.applied = !!hold.labelsApplied && hold.deliveryBarrierEstablished;
+    }
   }
   async expand(numbers, descendants) {
     const found = new Set(numbers);
@@ -165,7 +192,12 @@ export class Director {
     c.state.holds.push(record); await c.save();
     // Root barriers protect descendants even while enumeration/label writes fail.
     record.issues = await this.expand(roots, request.descendants === true); await c.save();
-    for (const job of c.state.jobs) if (await this.barrier(job.issue)) await this.pause(job.issue, record.reason);
+    const pauses = [];
+    for (const job of c.state.jobs) if (await this.barrier(job.issue)) pauses.push(await this.pause(job.issue, record.reason));
+    // A stopped worker does not prove that GitHub stopped an armed merge. Keep
+    // the local hold, but never give contract-edit callers a successful barrier.
+    record.deliveryBarrierEstablished = pauses.every(result => result.deliveryBarrierEstablished);
+    record.deliveryReconciliationRequired = pauses.filter(result => !result.deliveryBarrierEstablished).map(result => result.issue);
     for (const number of record.issues) {
       const issue = await c.github.issue(number);
       record.previous[number] = workflowState(issue, c.config.labels).state;
@@ -179,8 +211,9 @@ export class Director {
       c.assertRunning?.();
       await c.github.setWorkflowState(number, 'hold', c.config.labels);
     }
-    record.applied = true; await c.save();
-    await this.events.emit({ kind: 'held', holdId: record.id, issues: record.issues });
+    record.labelsApplied = true;
+    record.applied = record.deliveryBarrierEstablished; await c.save();
+    await this.events.emit({ kind: 'held', holdId: record.id, issues: record.issues, applied: record.applied, deliveryReconciliationRequired: record.deliveryReconciliationRequired });
     return record;
   }
   async release(request) {
@@ -192,24 +225,43 @@ export class Director {
       // Recover only this explicit issue. A missing group record cannot prove
       // that other members were included, so never manufacture a group release.
       const comments = await c.github.comments(request.issue);
-      const candidates = comments.filter(x => x.body?.startsWith('<!-- conductor:hold:')).map(x => {
-        try { return JSON.parse(x.body.trim().split('\n').at(-1)); } catch { return null; }
-      }).filter(x => x?.issue === request.issue && (!request.holdId || x.holdId === request.holdId));
-      const previous = candidates.length === 1 ? candidates[0].previous : 'triage';
-      record = { id: request.holdId ?? randomUUID(), active: true, issues: [request.issue], previous: { [request.issue]: previous }, recovered: true };
+      const candidates = remoteHolds(comments, request.issue).map(item => item.record).filter(item => !item.releasedAt && (!request.holdId || item.holdId === request.holdId));
+      if (candidates.length !== 1) throw new Error('Identify one active remote holdId before releasing this issue.');
+      record = { id: candidates[0].holdId, active: true, issues: [request.issue], previous: { [request.issue]: candidates[0].previous }, recovered: true };
       c.state.holds.push(record); await c.save();
     }
     if (!record) throw new Error('An active holdId is required. Inspect status; never infer release from issue edits.');
+    for (const job of c.state.jobs) if (job.deliveryReconciliationRequired && activeHoldApplies([record], job.issue, await c.github.parents(job.issue))) {
+      throw new Error(`Issue #${job.issue} delivery needs reconciliation before release; retain the hold and use reconcile-delivery for a merged PR or retry pause to disarm it.`);
+    }
     for (const number of record.attempted ?? Object.keys(record.previous).map(Number)) {
+      // Release the existing receipt even when another local hold overlaps. Its
+      // remote ownership must survive recovery on a different local snapshot.
+      let receipts = remoteHolds(await c.github.comments(number), number);
+      const owned = receipts.filter(item => item.record.holdId === record.id);
+      if (owned.length !== 1) throw new Error(`Hold ${record.id} has no unique receipt on issue #${number}; reconcile before release.`);
+      if (!owned[0].record.releasedAt) {
+        const { comment, record: remote } = owned[0];
+        const body = comment.body.trim().split('\n').slice(0, -1).concat(JSON.stringify({ ...remote, releasedAt: new Date().toISOString() })).join('\n');
+        c.assertRunning?.();
+        try { await c.github.api(`repos/${c.config.repository}/issues/comments/${comment.id}`, { method: 'PATCH', fields: { body } }); }
+        catch (error) {
+          if (!(await c.github.comments(number)).some(item => item.id === comment.id && item.body === body)) throw error;
+        }
+        receipts = remoteHolds(await c.github.comments(number), number);
+        if (!receipts.some(item => item.record.holdId === record.id && item.record.releasedAt)) throw new Error(`Hold release receipt could not be verified on issue #${number}.`);
+      }
       const other = c.state.holds.some(h => h !== record && h.active && (h.all || h.issues.includes(number)));
-      if (other) continue;
+      if (other || receipts.some(item => item.record.holdId !== record.id && !item.record.releasedAt)) continue;
       const current = await c.github.issue(number);
       const hasHold = (current.labels ?? []).some(label => (typeof label === 'string' ? label : label.name).toLowerCase() === c.config.labels.hold.toLowerCase());
       if (!hasHold) continue; // A failed write or a later explicit edit is not ours to reset.
       let previous = record.previous[number];
       if (previous === 'hold') {
-        const original = c.state.holds.find(h => h !== record && h.previous[number] && h.previous[number] !== 'hold');
-        previous = original?.previous[number];
+        const ownIndex = receipts.findIndex(item => item.record.holdId === record.id);
+        const original = receipts.slice(0, ownIndex).reverse().find(item => item.record.previous && item.record.previous !== 'hold');
+        previous = original?.record.previous;
+        if (!previous) throw new Error(`The prior hold on issue #${number} has no recoverable owner; preserve its restriction and reconcile it.`);
       }
       if (!['triage','proposal','ready'].includes(previous)) previous = 'triage';
       c.assertRunning?.();
@@ -285,6 +337,21 @@ export class Director {
         return c.resumeIssue(request);
       }
       case 'pause': return this.pause(request.issue, request.reason);
+      case 'reconcile-delivery': {
+        const job = c.state.jobs.find(item => item.issue === request.issue);
+        if (!job?.pr || job.phase !== 'paused' || job.intent !== 'pause') throw new Error('Delivery evidence reconciliation requires a paused original job with its owned PR.');
+        const current = await this.snapshot(request.issue);
+        if (!request.expectedRevision || request.expectedRevision !== current.revision) throw new Error('Delivery evidence reconciliation requires the current expectedRevision.');
+        const evidence = await c.deliveryAction(() => c.mergedDeliveryEvidence(job));
+        if ((await this.snapshot(request.issue)).revision !== current.revision) throw new Error('Issue revision changed during delivery reconciliation; inspect the current evidence again.');
+        c.assertRunning?.();
+        job.deliveryEvidence = { ...evidence, eligibilityRevision: current.revision };
+        job.mergeArmed = false; job.deliveryReconciliationRequired = false; job.lastError = null;
+        this.recordDeliveryBarrier(job.issue);
+        await c.save();
+        await this.events.emit({ kind: 'delivery-reconciled', issue: job.issue });
+        return { issue: job.issue, phase: job.phase, deliveryBarrierEstablished: true, deliveryReconciliationRequired: false, evidence: job.deliveryEvidence };
+      }
       case 'reconcile': {
         if (!request.expectedRevision) throw new Error('Reconcile requires expectedRevision.');
         const current = await this.assertEligible(request.issue, request.expectedRevision, { allowCompleted: true });

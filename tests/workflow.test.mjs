@@ -55,6 +55,20 @@ test('eligibility revision changes when relevant issue, dependency, parent, or c
   assert.equal(base.revision, progressOnly.revision);
 });
 
+test('completed prerequisites remain blockers while held or carrying conflicting workflow labels', async () => {
+  const dependency = { number: 2, state: 'closed', state_reason: 'completed', labels: [] };
+  const complete = await eligibility(adapter({ dependencies: [dependency] }), 1);
+  assert.equal(complete.eligible, true);
+  for (const labels of [['on-hold'], ['ready', 'proposal'], ['ready', 'on-hold']]) {
+    const blocked = await eligibility(adapter({ dependencies: [{ ...dependency, labels }] }), 1);
+    assert.equal(blocked.eligible, false);
+    assert.match(blocked.reasons.join(' '), /blocker issue #2 (is hold|has conflicting)/);
+    assert.notEqual(blocked.revision, complete.revision);
+  }
+  const unrelated = await eligibility(adapter({ dependencies: [{ ...dependency, labels: ['area/music'] }] }), 1);
+  assert.equal(unrelated.revision, complete.revision);
+});
+
 test('GitHub adapter reads all open issues, dependencies, descendants and paginated comments', async () => {
   const calls = [];
   const execute = async (_command, args) => {

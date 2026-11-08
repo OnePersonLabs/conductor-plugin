@@ -12,6 +12,7 @@ function setup({ issues = [], jobs = [], execute = async () => ({ code: 0, stdou
   const childrenMap = new Map();
   const calls = [];
   const tasks = new Map();
+  let nextCommentId = 1;
   const github = {
     openIssues: async () => [...records.values()].filter(issue => issue.state === 'open').map(issue => structuredClone(issue)),
     issue: async number => { const issue = records.get(number); if (!issue) throw new Error(`missing #${number}`); return structuredClone(issue); },
@@ -34,7 +35,9 @@ function setup({ issues = [], jobs = [], execute = async () => ({ code: 0, stdou
     },
     api: async (path, { method, fields }) => {
       const match = path.match(/issues\/(\d+)\/comments$/);
-      if (match && method === 'POST') comments.get(Number(match[1])).push({ id: comments.get(Number(match[1])).length + 1, body: fields.body });
+      if (match && method === 'POST') comments.get(Number(match[1])).push({ id: nextCommentId++, body: fields.body });
+      const patch = path.match(/issues\/comments\/(\d+)$/);
+      if (patch && method === 'PATCH') [...comments.values()].flat().find(comment => comment.id === Number(patch[1])).body = fields.body;
       return null;
     },
   };
@@ -93,20 +96,77 @@ test('establishes a hold after any cleanup sweep that already took its hold snap
   assert.equal(held.active, true);
 });
 
-test('a merge racing a hold is reconciled only after release without starting another builder', async () => {
+test('a merge racing a hold is reconciled while retaining the hold without starting another builder', async () => {
   const job = { issue: 1, pr: 11, phase: 'paused', intent: 'pause', deliveryReconciliationRequired: true };
   const h = setup({ issues: [issue(1)], jobs: [job] });
   h.github.pull = async () => ({ state: 'MERGED' });
   h.coordinator.reconcilePull = async owned => { assert.equal(owned, job); owned.phase = 'complete'; owned.mergedCommit = 'verified-commit'; };
+  h.coordinator.disarm = async () => { throw Object.assign(new Error('PR already landed'), { code: 'ALREADY_MERGED' }); };
+  const evidence = { pr: 11, mergeCommit: 'verified-commit', acceptedBase: 'accepted-base', requestRevision: 'request', currentRequestRevision: 'request', acceptanceComplete: true, requestMatches: true, deliveredHead: 'verified-head' };
+  h.coordinator.mergedDeliveryEvidence = async owned => { assert.equal(owned, job); return evidence; };
   const held = await h.director.hold({ issue: 1 });
+  assert.equal(held.applied, false);
+  assert.equal(held.deliveryBarrierEstablished, false);
   let current = await h.director.snapshot(1);
   await assert.rejects(h.director.control({ op:'reconcile', issue:1, repository:REPO, threadId:THREAD, expectedRevision:current.revision }), /hold/);
+  await assert.rejects(h.director.release({ holdId: held.id }), /retain the hold/);
+  const reconciled = await h.director.control({ op:'reconcile-delivery', issue:1, repository:REPO, threadId:THREAD, expectedRevision:current.revision });
+  assert.deepEqual(reconciled.evidence, { ...evidence, eligibilityRevision: current.revision });
+  assert.equal(job.phase, 'paused');
+  assert.equal(job.intent, 'pause');
+  assert.equal(held.active, true);
+  assert.equal(held.applied, true);
+  assert.deepEqual(h.records.get(1).labels, ['on-hold']);
   await h.director.release({ holdId:held.id });
   current = await h.director.snapshot(1);
   const result = await h.director.control({ op:'reconcile', issue:1, repository:REPO, threadId:THREAD, expectedRevision:current.revision });
   assert.equal(result.phase, 'complete');
   assert.equal(job.deliveryReconciliationRequired, false);
   assert.equal(h.state.jobs.length, 1);
+});
+
+test('failed auto-merge disarm stops the worker but cannot establish a hold until pause verifies disarm', async () => {
+  const job = { issue: 1, pr: 11, phase: 'building', mergeArmed: true };
+  const h = setup({ issues: [issue(1)], jobs: [job] });
+  h.coordinator.clients.set(1, {});
+  h.coordinator.disarm = async () => { throw new Error('disable-auto failed'); };
+  const held = await h.director.hold({ issue: 1 });
+  assert.equal(job.phase, 'paused');
+  assert.equal(h.calls.some(call => call[0] === 'halt'), true);
+  assert.equal(job.mergeArmed, true);
+  assert.equal(job.deliveryReconciliationRequired, true);
+  assert.equal(held.active, true);
+  assert.equal(held.applied, false);
+  assert.deepEqual(held.deliveryReconciliationRequired, [1]);
+  await assert.rejects(h.director.release({ holdId: held.id }), /retain the hold/);
+  h.coordinator.disarm = async owned => { owned.mergeArmed = false; };
+  const paused = await h.director.pause(1);
+  assert.equal(paused.deliveryBarrierEstablished, true);
+  assert.equal(job.deliveryReconciliationRequired, false);
+  assert.equal(held.applied, true);
+  await h.director.release({ holdId: held.id });
+  assert.deepEqual(h.records.get(1).labels, ['ready']);
+});
+
+test('failed or stale merged-delivery evidence keeps the original job and hold unresolved', async () => {
+  for (const stale of [false, true]) {
+    const job = { issue: 1, pr: 11, phase: 'waiting', mergeArmed: true };
+    const h = setup({ issues: [issue(1)], jobs: [job] });
+    h.coordinator.disarm = async () => { throw new Error('delivery uncertain'); };
+    const held = await h.director.hold({ issue: 1 });
+    const current = await h.director.snapshot(1);
+    h.coordinator.mergedDeliveryEvidence = async () => {
+      if (!stale) throw new Error('merge commit is not on accepted base');
+      h.records.get(1).body += '\nChanged request';
+      return { mergeCommit: 'landed' };
+    };
+    await assert.rejects(h.director.control({ op: 'reconcile-delivery', issue: 1, repository: REPO, threadId: THREAD, expectedRevision: current.revision }), /accepted base|revision changed/);
+    assert.equal(job.phase, 'paused');
+    assert.equal(job.deliveryReconciliationRequired, true);
+    assert.equal(held.active, true);
+    assert.equal(held.applied, false);
+    assert.deepEqual(h.records.get(1).labels, ['on-hold']);
+  }
 });
 
 test('a failed status comment cannot downgrade verified delivery, including a lost closure response', async () => {
@@ -137,6 +197,38 @@ test('overlapping holds keep issues suspended until every covering hold is relea
   await h.director.release({ holdId: second.id });
   assert.equal(h.records.get(1).labels.includes('ready'), true);
   assert.equal(h.records.get(2).labels.includes('proposal'), true);
+});
+
+for (const order of [[0, 1], [1, 0]]) test(`remote hold receipts preserve overlap after local recovery, release order ${order.join(',')}`, async () => {
+  const h = setup({ issues: [issue(1, ['proposal'])] });
+  const holds = [await h.director.hold({ issue: 1 }), await h.director.hold({ issue: 1 })];
+  h.state.holds = [];
+  await h.director.release({ holdId: holds[order[0]].id, issue: 1 });
+  assert.deepEqual(h.records.get(1).labels, ['on-hold']);
+  h.state.holds = [];
+  await h.director.release({ holdId: holds[order[1]].id, issue: 1 });
+  assert.deepEqual(h.records.get(1).labels, ['proposal']);
+  assert.equal(h.comments.get(1).every(comment => JSON.parse(comment.body.split('\n').at(-1)).releasedAt), true);
+});
+
+test('overlap recovery restores this hold cycle and reconciles a lost release response before retry', async () => {
+  const h = setup({ issues: [issue(1)] });
+  const old = await h.director.hold({ issue: 1 });
+  await h.director.release({ holdId: old.id });
+  h.records.get(1).labels = ['proposal'];
+  const first = await h.director.hold({ issue: 1 });
+  const second = await h.director.hold({ issue: 1 });
+  h.state.holds = [first];
+  const api = h.github.api;
+  let writes = 0;
+  h.github.api = async (...args) => { writes++; await api(...args); throw new Error('lost PATCH response'); };
+  await h.director.release({ holdId: first.id });
+  assert.equal(writes, 1);
+  assert.deepEqual(h.records.get(1).labels, ['on-hold']);
+  h.state.holds = [];
+  await h.director.release({ holdId: second.id, issue: 1 });
+  assert.equal(writes, 2);
+  assert.deepEqual(h.records.get(1).labels, ['proposal']);
 });
 
 test('dispatch rejects stale revision and accepts a fresh ready revision', async () => {

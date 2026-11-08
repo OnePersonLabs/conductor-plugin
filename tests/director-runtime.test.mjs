@@ -72,6 +72,23 @@ function fixture({ issues = [makeIssue(1)], jobs = [], agents = 1 } = {}) {
   return { coordinator, github, records, comments, calls, saved };
 }
 
+for (const after of [{ state: 'OPEN', autoMergeRequest: {} }, { state: 'MERGED' }]) test(`hold requires verified auto-merge disarm readback (${after.state})`, async () => {
+  const job = { issue: 1, pr: 11, phase: 'waiting', mergeArmed: true };
+  const h = fixture({ jobs: [job] });
+  let reads = 0, disables = 0;
+  h.github.pull = async () => ++reads === 1 ? { state: 'OPEN', autoMergeRequest: {} } : after;
+  h.github.disableAutoMerge = async () => { disables++; };
+  h.coordinator.disarm = owned => Coordinator.prototype.disarm.call(h.coordinator, owned);
+  const held = await h.coordinator.director.hold({ issue: 1 });
+  assert.equal(reads, 2);
+  assert.equal(disables, 1);
+  assert.equal(job.phase, 'paused');
+  assert.equal(job.mergeArmed, true);
+  assert.equal(job.deliveryReconciliationRequired, true);
+  assert.equal(held.applied, false);
+  assert.equal(held.active, true);
+});
+
 test('v2 scan observes ready issues but never autoadmits; explicit revision-bound dispatch starts exactly one worker', async () => {
   const h = fixture({ issues: [makeIssue(1), makeIssue(2)] });
   await h.coordinator.scan();

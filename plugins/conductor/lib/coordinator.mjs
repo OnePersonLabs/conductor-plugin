@@ -18,7 +18,7 @@ import { validateDesignHandoff } from './design-handoff.mjs';
 import { runnerPause, RUNNER_PAUSED_MESSAGE } from './runner-state.mjs';
 import { cleanupWorktrees } from './cleanup.mjs';
 
-const skillPath = fileURLToPath(new URL('../skills/implement/SKILL.md', import.meta.url));
+const skillPath = fileURLToPath(new URL('../skills/apply-change/SKILL.md', import.meta.url));
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const activePhases = new Set(['building','reviewing','launching','starting','preparing']);
 
@@ -1031,20 +1031,32 @@ export class Coordinator extends EventEmitter {
     job.waitingFor = reason; job.lastError = null;
     await this.save();
   }
+  async mergedDeliveryEvidence(job, pull = null) {
+    // Establish what already landed without accepting a changed request,
+    // closing its issue, releasing a hold or resuming the original job.
+    pull ??= await this.github.pull(job.pr);
+    this.assertRunning();
+    if (pull.state !== 'MERGED') throw new Error('Delivery evidence requires an already merged owned PR.');
+    if (pull.baseRefName !== this.config.baseBranch) throw new Error('PR targets a different base branch; operator reconciliation required.');
+    const acceptedBase = await this.base();
+    if (!pull.mergeCommit?.oid) throw new Error('Merged PR has no verified merge commit yet.');
+    await git(this.repo.root, 'merge-base', '--is-ancestor', pull.mergeCommit.oid, acceptedBase);
+    const currentRequestRevision = createRequestRevision(await this.github.issue(job.issue));
+    return { pr: job.pr, mergeCommit: pull.mergeCommit.oid, acceptedBase,
+      requestRevision: job.requestRevision, currentRequestRevision,
+      acceptanceComplete: !!job.acceptanceComplete, requestMatches: currentRequestRevision === job.requestRevision,
+      deliveredHead: pull.headRefOid && pull.headRefOid === job.checkHead ? pull.headRefOid : null };
+  }
   async reconcilePull(job, base) {
     if (job.intent || this.executionBlocked()) return;
     const pull = await this.github.pull(job.pr);
     this.assertRunning();
     if (pull.baseRefName !== this.config.baseBranch) throw new Error('PR targets a different base branch; operator reconciliation required.');
     if (pull.state === 'MERGED') {
-      const acceptedBase = await this.base();
-      if (!pull.mergeCommit?.oid) throw new Error('Merged PR has no verified merge commit yet.');
-      await git(this.repo.root, 'merge-base', '--is-ancestor', pull.mergeCommit.oid, acceptedBase);
-      if (!job.acceptanceComplete) { job.phase = 'blocked'; job.summary = 'PR merged but complete issue acceptance remains unresolved.'; await this.save(); return; }
-      const deliveredIssue = await this.github.issue(job.issue);
-      const deliveredRevision = createRequestRevision(deliveredIssue);
-      if (deliveredRevision !== job.requestRevision) {
-        job.phase = 'blocked'; job.landedRequestRevision = job.requestRevision; job.currentRequestRevision = deliveredRevision;
+      const evidence = await this.mergedDeliveryEvidence(job, pull);
+      if (!evidence.acceptanceComplete) { job.phase = 'blocked'; job.summary = 'PR merged but complete issue acceptance remains unresolved.'; await this.save(); return; }
+      if (!evidence.requestMatches) {
+        job.phase = 'blocked'; job.landedRequestRevision = job.requestRevision; job.currentRequestRevision = evidence.currentRequestRevision;
         job.summary = `PR #${job.pr} landed for an older issue revision. The issue remains open for reconciliation; no follow-up implementation was started on the merged branch.`;
         await this.save(); await this.progress(job); return;
       }
@@ -1052,7 +1064,7 @@ export class Coordinator extends EventEmitter {
       this.assertRunning();
       await this.github.closeIssue(job.issue, `Delivered by PR #${job.pr}; accepted base contains ${pull.mergeCommit.oid}.\n\n${job.summary}`);
       job.phase = 'complete'; job.mergedCommit = pull.mergeCommit.oid; delete job.waitingFor;
-      job.deliveredHead = pull.headRefOid && pull.headRefOid === job.checkHead ? pull.headRefOid : null;
+      job.deliveredHead = evidence.deliveredHead;
       delete job.runnerInterrupted; delete job.deliveryReconciliationRequired; job.mergeArmed = false;
       delete job.designHandoff; delete job.designHandoffValidation;
       await this.save(); await this.cleanupCompletedWorktrees(); await this.progress(job); return;

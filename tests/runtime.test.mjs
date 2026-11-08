@@ -489,6 +489,16 @@ test('merged PR does not close a newer issue revision; uncertain close reconcile
   stalePull.state = 'MERGED'; stalePull.mergeCommit = { oid: stalePull.headRefOid };
   await git(stale.remote, 'update-ref', 'refs/heads/main', stalePull.headRefOid);
   stale.world.issues[0].body = 'New request after old revision merged.';
+  staleJob.intent = 'pause';
+  const evidence = await staleCoordinator.mergedDeliveryEvidence(staleJob);
+  assert.equal(evidence.mergeCommit, stalePull.headRefOid);
+  assert.equal(evidence.acceptanceComplete, true);
+  assert.equal(evidence.requestMatches, false);
+  assert.equal(evidence.requestRevision, staleJob.requestRevision);
+  assert.equal(evidence.currentRequestRevision, createRequestRevision(stale.world.issues[0]));
+  assert.equal(staleJob.phase, 'waiting');
+  assert.deepEqual(stale.world.closed, []);
+  staleJob.intent = null;
   await staleCoordinator.wake();
   assert.equal(staleJob.phase, 'blocked');
   assert.deepEqual(stale.world.closed, []);
