@@ -87,6 +87,13 @@ export class ManagedWork extends EventEmitter {
         this.state.requests = this.state.requests.filter(request => !(request.status === 'sent' && request.itemId === item.id && request.turnId === params.turnId));
         await this.save();
         if (item.type === 'agentMessage') this.emitEvent('message', { commandId: this.state.activeTurn?.commandId, turnId: params.turnId, text: item.text });
+        if (item.type === 'plan') {
+          // Codex's completed native plan is authoritative; streamed plan deltas
+          // can differ. Preserve its full text for the coordinator to save after
+          // the matching turn succeeds, even when no agentMessage accompanies it.
+          const owner = [this.state.activeTurn, this.state.lastTurn].find(turn => turn?.id === params.turnId);
+          this.emitEvent('plan', { commandId: owner?.commandId, turnId: params.turnId, itemId: item.id, text: item.text });
+        }
       }
     } else if (method === 'turn/completed') {
       const active = this.state.activeTurn;

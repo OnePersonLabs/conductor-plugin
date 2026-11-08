@@ -37,7 +37,12 @@ relaying questions. Do not restart the process to answer a question.
 
 Wait for each control reply before its dependent command. `turn` acknowledges the
 submission; wait for its `turn-completed` event with `success:true` before treating
-the work as completed. `message` contains the worker's answer. The worker inherits
+the work as completed. `message` contains an ordinary worker answer. Native Plan
+Mode output arrives as `plan`, with the complete authoritative `text`, `itemId`,
+`turnId` and `commandId`; it can arrive without a `message` event. Retain that text
+unchanged and save it only after the matching successful `turn-completed` event.
+Plan text is forwarded from the completed native item, not reconstructed from
+streamed deltas. The worker inherits
 the configured tools, sandbox and approvals; the bridge installs no special role
 permissions. A configured host restriction can still block a requested operation.
 

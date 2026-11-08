@@ -102,6 +102,22 @@ test('unsupported models and failed previous turns cannot buy compaction or chan
   assert.equal(f.client.calls.some(([name]) => name === 'compact'), false);
 });
 
+test('completed native Plan output reaches the coordinator intact without an agentMessage', async t => {
+  const f = await fixture(t); const events = []; f.managed.on('event', event => events.push(event));
+  await configured(f);
+  const turn = await f.command('native-plan', 'turn', { prompt: 'Return the complete bounded plan.' });
+  // Codex 0.167.0 projects <proposed_plan> output as this native item. Its final
+  // text, rather than agentMessage or concatenated deltas, is the saved plan.
+  const text = '# Issue #4: Implement the greeting formatter\n\n## Observable acceptance\n\n| Input | Expected result |\n| --- | --- |\n| " Ada " | "Hello, Ada!" |\n| "" | "Hello, friend!" |\n\nCurrent authority permits this plan only.\n';
+  f.client.notice('item/completed', { turnId: turn.turnId, item: { id: 'native-plan-item', type: 'plan', text } });
+  f.client.finish(turn.turnId); await f.managed.events;
+  assert.deepEqual(events.filter(event => event.event === 'plan'), [{ event: 'plan', sessionId: 'test', commandId: 'native-plan', turnId: turn.turnId, itemId: 'native-plan-item', text }]);
+  const terminal = events.find(event => event.event === 'turn-completed' && event.id === turn.turnId);
+  assert.equal(terminal.success, true);
+  assert.ok(events.findIndex(event => event.event === 'plan') < events.indexOf(terminal));
+  assert.equal(f.store.value.lastTurn.id, turn.turnId);
+});
+
 for (const scenario of ['missingCompactItem', 'failedCompact', 'wrongSettings']) test(`configuration fails closed for ${scenario}`, async t => {
   const f = await fixture(t); await configured(f); await complete(f);
   f.client[scenario] = true;
