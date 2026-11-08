@@ -44,6 +44,15 @@ shows `[ID]: [name]` choices in descending issue-number order and asks for an ID
 It does not guess the newest issue. A bounded delegated planning assignment uses
 `$conductor:plan-change`; its parent retains issue writes and decisions.
 
+`conductor resolve-issue --target "name, #ID or issue URL"` resolves an issue
+read-only against fresh GitHub data, including all pages and both open and closed
+issues. A unique normalized exact name resolves; duplicate exact names return
+choices from that tier. When there is no exact name, partial matches return
+choices. Without an explicit target, pass `--current ID` only for an
+already established current issue, or omit both options to list choices. The
+command stores no current issue and starts no automation. Direct local requests
+that need no issue do not require it.
+
 ## Work in phases
 
 `$conductor:pair-program` runs **plan → agree → implement → review and repair →

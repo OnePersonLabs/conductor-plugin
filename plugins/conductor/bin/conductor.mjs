@@ -13,6 +13,7 @@ import { managedSessionId } from '../lib/managed-state.mjs';
 import { Store } from '../lib/state.mjs';
 import { Coordinator } from '../lib/coordinator.mjs';
 import { GitHub } from '../lib/github.mjs';
+import { parseIssueTargetArgs } from '../lib/issue-context.mjs';
 import { applyMigration, previewMigration } from '../lib/migration.mjs';
 import { processExists } from '../lib/state.mjs';
 import { atomicJSON } from '../lib/state.mjs';
@@ -26,6 +27,7 @@ const HELP = `Conductor 0.1.0 -- conversational GitHub issue director
 Usage: conductor enable [--thread UUID]
        conductor check-setup              (read-only repository setup check)
        conductor check-scope [local|issues|automation] (read-only work scope check)
+       conductor resolve-issue [--target ID|#ID|URL|name] [--current ID] (read-only identity lookup)
        conductor managed --session ID     (foreground JSONL worker bridge)
        conductor hold --request-file PATH (manual issue hold barrier)
        conductor enable --host desktop --thread UUID
@@ -48,7 +50,10 @@ Migration preview makes no changes; migrated configuration remains admission-pau
 export function parseArgs(args) {
   const result = { command: 'run', overrides: {} };
   if (args[0] && !args[0].startsWith('-')) result.command = args.shift();
-  if (!['run','signal','status','check-setup','check-scope','managed','hold','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup','observe','attach'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
+  if (!['run','signal','status','check-setup','check-scope','resolve-issue','managed','hold','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup','observe','attach'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
+  if (result.command === 'resolve-issue') {
+    return { ...result, ...parseIssueTargetArgs(args) };
+  }
   if (result.command === 'check-scope') {
     result.scope = args.shift() ?? 'local';
     if (!['local', 'issues', 'automation'].includes(result.scope) || args.length) throw new Error('check-scope accepts only local, issues or automation.');
@@ -108,6 +113,10 @@ async function main() {
   }
   if (options.command === 'check-scope') {
     console.log(JSON.stringify(await repositorySetup.checkWorkScope(process.cwd(), options.scope), null, 2)); return;
+  }
+  if (options.command === 'resolve-issue') {
+    const { resolveIssue } = await import('../lib/issue-context.mjs');
+    console.log(JSON.stringify(await resolveIssue(process.cwd(), { target: options.target, current: options.current }), null, 2)); return;
   }
   if (options.command === 'hold') {
     const { runManualHold } = await import('../lib/manual-hold.mjs');

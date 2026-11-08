@@ -6,15 +6,18 @@ description: Reopen a closed GitHub change issue identified by number, URL or na
 # Reopen a closed change
 
 Follow [repository scope](../../references/repository-scope.md) for issue work and
-[issue context](../../references/issue-context.md). Resolve the explicit number,
-`#number`, URL or name, or the established current issue. Include closed issues
-in name matching and exhaust relevant pages. Ask for an ID when ambiguous.
+[issue context](../../references/issue-context.md). Call its canonical
+`resolve-issue` CLI for every request, passing the new literal number, `#number`,
+URL or name as `--target`. Only when the request has no explicit target may you
+pass an established `--current` ID. With neither, call without either option to
+obtain choices. Do not substitute your own GitHub search or reuse an old list.
 
-Resolve exactly one issue before checking whether reopening is needed. If several
-issues match, show their current `[ID]: [name]` rows in descending number order
-and ask for one ID, even when every candidate is already open. A shared state
-does not resolve identity: the selected issue must become the current issue.
-Do not replace this selection with the already-open warning.
+Only a `resolved` result establishes one issue for the reopening decision. For
+`selection-required`, show the returned `selection` string verbatim and ask for
+an ID, even when every candidate is already open. Preserve the previous current
+issue while selection is unresolved. Report `not-found` and errors as described
+in the shared contract. A shared state does not resolve identity. Do not replace
+the selection with the already-open warning.
 
 If the issue is already open, say exactly:
 

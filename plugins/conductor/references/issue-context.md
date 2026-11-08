@@ -7,29 +7,58 @@ session, this worktree, then this repository's work context. Never choose the ne
 global current issue. If no issue is established and the user gave a direct local
 request, work from that request without forcing issue creation.
 
-If the action requires an issue and none is established or explicitly identified,
-list the repository's relevant issues and ask the user which issue ID to use.
-Do not stop with only a request for an identifier. Format every selection list as
-`[ID]: [name]` and sort numerically from highest issue number to lowest. Include
-closed issues when the action can reopen them. Exhaust relevant result pages and
-exclude pull requests. If no relevant issues exist, say so instead of inventing
-a current issue.
+## Resolve identity with the read-only CLI
+
+When the action requires an existing issue, call the canonical resolver from the target
+checkout. Do not run it merely to investigate or implement a direct local request
+that needs no issue. Resolve the plugin root from this installed skill package:
+
+```text
+node <plugin-root>/bin/conductor.mjs resolve-issue --target "ID, #ID, URL or name"
+node <plugin-root>/bin/conductor.mjs resolve-issue --current ID
+node <plugin-root>/bin/conductor.mjs resolve-issue
+```
+
+For every new user request, call it again with that request's literal target.
+Do not reuse a prior candidate list, inferred filter or normalized query. Use
+`--current` only when no explicit target was supplied and this session, worktree
+or repository already established that issue. The helper does not save current
+context. An explicit target wins; errors and no match never fall back to current.
+
+The resolver applies the issue-scope check and fetches fresh GitHub data. Name
+matching includes every page, open and closed issues, and excludes pull requests.
+A unique exact title match wins after whitespace normalization and case folding.
+Duplicate exact matches produce choices from that exact tier only. If no exact
+match exists, all partial matches produce choices, even if there is only one.
+Every selection list is in descending issue-number order.
+An absent target and current produce a selection list, even if only one issue
+exists; the newest issue is never an implicit target.
+
+Handle the JSON result by `status`:
+
+- `resolved` contains the repository, literal `query` or `currentUsed`, and the
+  full fresh `issue` snapshot. Only now check state and choose the requested action.
+  This issue can become current in the conversation; resolution grants no write authority.
+- `selection-required` contains `candidates` with only `number` and `title`, plus
+  the preformatted `selection`. Show that complete string verbatim and ask for
+  an issue ID. Rows are `[42]: Issue name`, separated by newlines. Do not replace
+  them with counts, summaries, state groups or an earlier list. Preserve the
+  previous current issue until one identity resolves. If the list is empty,
+  say no issues are available instead of inventing a current issue.
+- `not-found` means a successful name query found no matches. Report the literal
+  target and ask for another target; preserve previous current context.
+
+Authentication, transport, malformed configuration, inaccessible numeric IDs,
+pull-request targets and foreign repository URLs are errors. Report the concrete
+error; do not relabel it as no matches or silently search a different target.
 
 For a URL, verify the repository against the checkout. A foreign repository URL
 does not authorize a checkout switch. Report the mismatch and establish the
 intended target before dependent work.
 
-For a name, search all relevant result pages and exclude pull requests. First try
-a unique normalized exact title match (trim/collapse whitespace and compare case
-insensitively). If there are duplicate exact matches or only ambiguous partial
-matches, each request for an ID must show every current candidate as
-`[ID]: [name]` in descending issue-number order. Repeat the complete list when a
-later query changes the candidates; an earlier list, match count or title summary
-does not identify the current choices. Add a short description when useful.
-Ask for an ID; do not pick the newest or
-highest-ranked result. Include closed issues for $conductor:open-change and every
-explicit target. Do not omit a matching candidate
-because it appears on a later page.
+Do not implement another title search in a caller. The shared resolver owns
+identity matching and selection formatting; the requested action owns what
+happens after identity resolves.
 
 Read the current issue body, history, labels, native blocked-by relationships,
 parent and sub-issues before changing work. Recover accepted decisions and any
