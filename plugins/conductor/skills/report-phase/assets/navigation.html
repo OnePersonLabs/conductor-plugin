@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Keep a draft after reloading the page</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b1420; --panel:#131f2e; --line:#344459; --text:#edf4fc; --muted:#b1c0d2; --accent:#80c5ff; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:16px/1.6 system-ui,sans-serif; }
+    main { max-width:1240px; margin:auto; padding:32px 24px 60px; }
+    h1,h2,h3,p { margin-top:0; }
+    h1 { font-size:clamp(2rem,4vw,3.2rem); line-height:1.15; }
+    h2 { font-size:1.4rem; line-height:1.3; }
+    h3 { font-size:1.1rem; line-height:1.4; }
+    p,li,dd,a { overflow-wrap:anywhere; }
+    a { color:var(--accent); text-underline-offset:3px; }
+    :focus-visible { outline:3px solid #f6cd71; outline-offset:4px; }
+    :target { outline:2px solid #f6cd71; outline-offset:5px; }
+    .eyebrow { color:var(--accent); font-size:.8rem; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
+    .intro { max-width:880px; color:var(--muted); font-size:1.1rem; }
+    .notice { border-left:3px solid #f6cd71; padding:12px 18px; background:#30291b; margin:22px 0; }
+    .bar { display:flex; flex-wrap:wrap; gap:8px 24px; margin:20px 0; }
+    .bar a,.back { display:inline-flex; align-items:center; min-height:44px; }
+    .roadmap { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:0; list-style:none; margin-bottom:32px; }
+    .roadmap li { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; }
+    .roadmap .current { border:2px solid var(--accent); }
+    .roadmap strong { display:block; margin-top:5px; }
+    .state { color:var(--muted); font-size:.82rem; }
+    .route-layout { display:grid; grid-template-columns:minmax(0,1fr); gap:24px; align-items:start; }
+    .route-layout > * { min-width:0; }
+    .map-panel,.summary-panel { margin:0; border:1px solid var(--line); border-radius:16px; background:var(--panel); padding:16px; }
+    .map-panel figcaption p { color:var(--muted); font-size:.9rem; }
+    /* Cards own their height. Each SVG spans the grid gaps between its source
+       and destination; all routes stay in the gutter, clear of other cards. */
+    .graph { display:grid; grid-template-columns:38px minmax(0,1fr); grid-template-rows:auto 32px auto 32px auto 32px auto 32px auto 32px auto 32px auto 32px auto; }
+    .graph-node { grid-column:2; display:block; min-width:0; padding:12px; border:2px solid var(--actor); border-radius:10px; background:var(--bg); color:var(--text); text-decoration:none; }
+    .graph-node strong { display:block; font-size:1rem; line-height:1.35; }
+    .graph-node .description { display:block; margin:7px 0; color:var(--muted); font-size:.88rem; line-height:1.45; }
+    .graph-node .state { display:block; line-height:1.4; }
+    .graph-node.abandoned,.graph-node.interrupted { border-style:dashed; }
+    .graph-node:hover { background:#24364b; }
+    .edge { position:relative; grid-column:1; align-self:stretch; width:100%; height:100%; min-height:0; overflow:visible; pointer-events:none; }
+    .edge path { fill:none; stroke:var(--actor); stroke-width:2; vector-effect:non-scaling-stroke; }
+    .edge.repair path { stroke-width:3; }
+    .edge.abandoned path { stroke-dasharray:5 4; }
+    .edge svg { display:block; width:100%; height:100%; overflow:visible; }
+    .edge::after { content:""; position:absolute; right:0; bottom:-4px; border-left:7px solid var(--actor); border-top:4px solid transparent; border-bottom:4px solid transparent; }
+    .summary-panel { margin-bottom:20px; }
+    .summary-panel:last-child { margin-bottom:0; }
+    .summary-panel p:last-child { margin-bottom:0; }
+    .next { border-color:#887348; }
+    .accounting div { border-bottom:1px solid var(--line); padding-bottom:12px; margin-bottom:12px; }
+    .accounting dt { font-weight:700; }
+    .accounting dd { margin:4px 0 0; color:var(--muted); }
+    .story { list-style:none; padding:0; margin:32px 0 0; }
+    .story > li { border-left:3px solid var(--actor); padding:18px 20px; margin-bottom:22px; background:var(--panel); scroll-margin-top:20px; }
+    .story p { color:var(--muted); }
+    .story .lead { color:var(--text); }
+    .connections { border-top:1px solid var(--line); padding-top:14px; }
+    footer { color:var(--muted); font-size:.85rem; margin-top:32px; }
+    @media (min-width:768px) { .route-layout { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
+    @media (max-width:767px) { main { padding:24px 16px 44px; } .roadmap { grid-template-columns:minmax(0,1fr); } .map-panel { padding:12px; } }
+    @media print {
+      :root { color-scheme:light; --bg:white; --panel:white; --text:#101820; --muted:#334155; --line:#aaa; --accent:#164f80; }
+      main { padding:0; }
+      .notice { background:white; }
+      .route-layout { grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:24px; }
+      .map-panel { border:0; padding:0; }
+      .graph-node,.summary-panel,.story > li { break-inside:avoid; }
+      a { color:var(--text); }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <!-- Replace illustrative copy, cards, edges, story and links together.
+       Keep this document static: no scripts, event handlers or runtime data. -->
+  <header>
+    <p class="eyebrow">Illustrative template -- not project history</p>
+    <h1>Keep a draft after reloading the page</h1>
+    <p class="intro">Example goal: restore a writer's unsent text after a reload without replacing a newer draft. The route below shows a rejected shortcut, a repair, a worker's check and an unfinished review.</p>
+    <p class="notice">Example checkpoint: draft recovery passes the demonstrated checks. Independent review remains unfinished. The report records this limit.</p>
+    <nav class="bar" aria-label="Presentation"><a href="#route">Explore the route</a><a href="#story">Read the full story</a><a href="#next">Next action</a></nav>
+  </header>
+  <section aria-labelledby="course-title">
+    <h2 id="course-title">The broad course</h2>
+    <ol class="roadmap">
+      <li><span class="state">Completed</span><strong>Find how drafts are lost</strong></li>
+      <li class="current" aria-current="step"><span class="state">● At this checkpoint</span><strong>Restore drafts safely</strong></li>
+      <li><span class="state">Proposed</span><strong>Choose the next recovery case</strong></li>
+    </ol>
+  </section>
+  <section id="route" aria-labelledby="route-title">
+    <h2 id="route-title">How draft recovery reached this checkpoint</h2>
+    <p>Follow the arrows. Thick lines show the repair; the dashed branch ends at a rejected approach. Select a card for its full story.</p>
+    <div class="route-layout">
+      <figure class="map-panel" aria-labelledby="graph-title">
+        <figcaption id="graph-title"><h3>The work and its branches</h3><p>Cards follow story order, not elapsed time. Path colors identify the root, worker and reviewer; each card also names its owner and status.</p></figcaption>
+        <div class="graph" role="group" aria-label="1 leads to 2. From 2, abandoned shortcut 3 ends; repair 4 and worker check 5 rejoin at 6. From 6, review 7 remains interrupted and the root reaches checkpoint 8.">
+          <div class="edge" style="grid-row:2;--actor:#80c5ff" aria-hidden="true"><svg viewBox="0 0 38 100" preserveAspectRatio="none"><path d="M38 0 H4 V100 H38"/></svg></div>
+          <div class="edge abandoned" style="grid-row:4;--actor:#c5a0ff" aria-hidden="true"><svg viewBox="0 0 38 100" preserveAspectRatio="none"><path d="M38 0 H28 V100 H38"/></svg></div>
+          <div class="edge repair" style="grid-row:4 / 7;--actor:#80c5ff" aria-hidden="true"><svg viewBox="0 0 38 100" preserveAspectRatio="none"><path d="M38 0 H4 V100 H38"/></svg></div>
+          <div class="edge" style="grid-row:4 / 9;--actor:#c5a0ff" aria-hidden="true"><svg viewBox="0 0 38 100" preserveAspectRatio="none"><path d="M38 0 H16 V100 H38"/></svg></div>
+          <div class="edge repair" style="grid-row:8 / 11;--actor:#80c5ff" aria-hidden="true"><svg viewBox="0 0 38 100" preserveAspectRatio="none"><path d="M38 0 H4 V100 H38"/></svg></div>
+          <div class="edge" style="grid-row:10;--actor:#c5a0ff" aria-hidden="true"><svg viewBox="0 0 38 100" preserveAspectRatio="none"><path d="M38 0 H16 V100 H38"/></svg></div>
+          <div class="edge" style="grid-row:12;--actor:#70dbc1" aria-hidden="true"><svg viewBox="0 0 38 100" preserveAspectRatio="none"><path d="M38 0 H28 V100 H38"/></svg></div>
+          <div class="edge" style="grid-row:12 / 15;--actor:#80c5ff" aria-hidden="true"><svg viewBox="0 0 38 100" preserveAspectRatio="none"><path d="M38 0 H4 V100 H38"/></svg></div>
+          <a href="#beat-intent" class="graph-node" style="grid-row:1;--actor:#80c5ff"><strong>1. Define safe draft recovery</strong><span class="description">Restore unsent text after reload; keep newer edits.</span><span class="state">Root · ✓ Completed</span></a>
+          <a href="#beat-try" class="graph-node" style="grid-row:3;--actor:#80c5ff"><strong>2. Try saving on page exit</strong><span class="description">The first attempt misses a forced browser close.</span><span class="state">Root · ✓ Completed</span></a>
+          <a href="#beat-dead" class="graph-node abandoned" style="grid-row:5;--actor:#c5a0ff"><strong>3. Always load the saved copy</strong><span class="description">Rejected: an old copy overwrites newer text. Branch ends.</span><span class="state">Worker · × Abandoned</span></a>
+          <a href="#beat-repair" class="graph-node" style="grid-row:7;--actor:#80c5ff"><strong>4. Save edits as they happen</strong><span class="description">Persist changes and restore only when the editor is empty.</span><span class="state">Root · ↺ Repaired</span></a>
+          <a href="#beat-side" class="graph-node" style="grid-row:9;--actor:#c5a0ff"><strong>5. Check reload and newer edits</strong><span class="description">The worker checks both recovery and overwrite protection.</span><span class="state">Worker · ✓ Completed</span></a>
+          <a href="#beat-join" class="graph-node" style="grid-row:11;--actor:#80c5ff"><strong>6. Integrate draft recovery</strong><span class="description">The repair and worker's checks rejoin here.</span><span class="state">Root · ✓ Completed</span></a>
+          <a href="#beat-review" class="graph-node interrupted" style="grid-row:13;--actor:#70dbc1"><strong>7. Review the recovery flow</strong><span class="description">Review stops before a verdict. No approval; branch ends.</span><span class="state">Reviewer · ! Interrupted</span></a>
+          <a href="#beat-stop" class="graph-node" style="grid-row:15;--actor:#80c5ff"><strong>8. Report the result and limits</strong><span class="description">Record the result with review still unfinished.</span><span class="state">Root · ✓ Checkpoint reached</span></a>
+        </div>
+      </figure>
+      <aside aria-label="Checkpoint result and next action">
+        <section class="summary-panel" aria-labelledby="result-title"><h3 id="result-title">What works in this example</h3><p>Unsent text returns after a reload. Recovery leaves text already in the editor alone. The repair and worker's checks are integrated at <a href="#beat-join">step 6</a>.</p></section>
+        <section class="summary-panel" aria-labelledby="unfinished-title"><h3 id="unfinished-title">What remains unfinished</h3><p>The independent reviewer stopped before reaching a verdict. Passing the demonstrated checks does not complete that review. <a href="#beat-review">See the review limit.</a></p></section>
+        <section class="summary-panel next" id="next" aria-labelledby="next-title"><p class="eyebrow">Remaining work</p><h3 id="next-title">The recovery review is unfinished</h3><p>The independent review retains its current owner. The evidence below supports draft recovery while that review remains incomplete.</p></section>
+        <section class="summary-panel" aria-labelledby="details-title"><h3 id="details-title">Supporting detail</h3><p><a href="#story">Read all eight steps</a>, including the rejected approach and the checks that supported integration. Replace this illustrative account with evidence links from the actual work.</p><dl class="accounting"><div><dt>Preparation</dt><dd>Duration unknown in this example.</dd></div><div><dt>Implementation and rework</dt><dd>Saving only on exit failed; saving each edit addressed the missed close event.</dd></div><div><dt>Verification and coordination</dt><dd>Worker checks and root work may overlap. Time and AI usage are unknown.</dd></div></dl></section>
+      </aside>
+    </div>
+  </section>
+  <section aria-labelledby="story">
+    <h2 id="story" style="margin-top:36px">Draft recovery, step by step</h2>
+    <ol class="story">
+      <li id="beat-intent" style="--actor:#80c5ff"><p class="state">Root · ✓ Completed</p><h3>1. Define safe draft recovery</h3><p class="lead">A writer can reload without losing unsent text.</p><p>The example phase also requires that recovery preserve newer text already in the editor. Both cases belong to the same acceptance decision.</p><p class="connections"><a href="#beat-try">Leads to → 2. Try saving on page exit</a></p><a class="back" href="#route">↑ Back to graph</a></li>
+      <li id="beat-try" style="--actor:#80c5ff"><p class="state">Root · ✓ Completed</p><h3>2. Try saving on page exit</h3><p class="lead">The first attempt saves when the page closes.</p><p>Closing the browser forcibly skips that event. The saved copy can therefore be older than the writer's last edits. The root repairs the save path while the worker checks recovery behavior.</p><p class="connections"><a href="#beat-dead">Abandoned branch → 3. Always load the saved copy</a> · <a href="#beat-repair">Repair → 4. Save edits as they happen</a> · <a href="#beat-side">Worker branch → 5. Check reload and newer edits</a></p><a class="back" href="#route">↑ Back to graph</a></li>
+      <li id="beat-dead" style="--actor:#c5a0ff"><p class="state">Worker · × Abandoned</p><h3>3. Always load the saved copy</h3><p class="lead">Unconditional restoration can destroy newer text.</p><p>The worker rejects this shortcut after it replaces text already in the editor with an older saved copy. This branch ends here and does not count as a successful result.</p><p class="connections">This branch ends here.</p><a class="back" href="#route">↑ Back to graph</a></li>
+      <li id="beat-repair" style="--actor:#80c5ff"><p class="state">Root · ↺ Repaired</p><h3>4. Save edits as they happen</h3><p class="lead">Save each edit and restore only into an empty editor.</p><p>The root moves saving into the edit flow so it does not depend on a close event. Restoration checks for existing text before loading the saved draft.</p><p class="connections"><a href="#beat-join">Repair rejoins → 6. Integrate draft recovery</a></p><a class="back" href="#route">↑ Back to graph</a></li>
+      <li id="beat-side" style="--actor:#c5a0ff"><p class="state">Worker · ✓ Completed</p><h3>5. Check reload and newer edits</h3><p class="lead">The worker checks both required outcomes.</p><p>In this illustrative result, unsent text survives reload and recovery preserves text already in the editor. The worker returns those results for integration.</p><p class="connections"><a href="#beat-join">Worker rejoins → 6. Integrate draft recovery</a></p><a class="back" href="#route">↑ Back to graph</a></li>
+      <li id="beat-join" style="--actor:#80c5ff"><p class="state">Root · ✓ Completed</p><h3>6. Integrate draft recovery</h3><p class="lead">The root combines the repair with the worker's checks.</p><p>The demonstrated recovery behavior is ready for review. The root starts an independent review and prepares a checkpoint that preserves any review limit.</p><p class="connections"><a href="#beat-review">Review branch → 7. Review the recovery flow</a> · <a href="#beat-stop">Root continues → 8. Report the result and limits</a></p><a class="back" href="#route">↑ Back to graph</a></li>
+      <li id="beat-review" style="--actor:#70dbc1"><p class="state">Reviewer · ! Interrupted</p><h3>7. Review the recovery flow</h3><p class="lead">The reviewer does not reach a verdict.</p><p>The interruption leaves required review unfinished. The reviewer supplies no final approval and this branch does not rejoin as an approved result.</p><p class="connections">This branch ends here.</p><a class="back" href="#route">↑ Back to graph</a></li>
+      <li id="beat-stop" style="--actor:#80c5ff"><p class="state">Root · ✓ Checkpoint reached</p><h3>8. Report the result and limits</h3><p class="lead">The human receives the recovery result and the unfinished review.</p><p>The report distinguishes the passing example checks from complete delivery. Required review retains its owner. The evidence does not establish complete delivery.</p><p class="connections">This report records the result and its limits. <a href="#next">See the next action.</a></p><a class="back" href="#route">↑ Back to graph</a></li>
+    </ol>
+  </section>
+  <footer>This chart presents the work. Linked project records retain their authority.</footer>
+</main>
+</body>
+</html>

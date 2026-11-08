@@ -1,6 +1,0 @@
-interface:
-  display_name: "Implement a change"
-  short_description: "Build and verify authorized work in this chat"
-  default_prompt: "First pass this skill's repository setup gate; if it fails, do no Conductor task work. Use $conductor:implement to complete the authorized change or plan in this chat, preserve other work, verify connected behavior and stop at the authorized delivery boundary. Do not start a director."
-policy:
-  allow_implicit_invocation: true

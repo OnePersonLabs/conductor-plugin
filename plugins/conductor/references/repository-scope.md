@@ -1,44 +1,50 @@
-# Repository setup gate
+# Check the capability's prerequisites
 
-Every Conductor skill except `$conductor:setup-repo-workflow` requires valid setup
-for its target repository. Apply this gate before investigation, questions,
-planning, review, edits, delegation, GitHub operations or director lifecycle work,
-including when the user invokes a skill explicitly. Reading this prerequisite
-and running its local check are the only Conductor actions allowed before it passes.
+Choose prerequisites for the operation being performed. Local work does not need
+GitHub automation configuration. Setup and authority are separate questions.
 
-1. Identify the target checkout from the request or current working directory.
-   Do not borrow setup from a different repository to handle a remote issue.
-   If no target checkout can be identified, stop this skill.
-2. From that checkout or one of its subdirectories, run the packaged CLI:
+| Operation | Prerequisite |
+| --- | --- |
+| Read-only local exploration | Identify the requested directory; no Git or setup check |
+| Local planning, tracked artifacts, implementation, review or synchronous coordination | Git checkout; validate any existing Conductor configuration |
+| GitHub issue inspection or writes | Local requirements plus verified GitHub repository identity; authenticate for the requested operation |
+| Background automation | Full repository setup and explicit automated execution authority |
 
-   `node <plugin-root>/bin/conductor.mjs check-setup`
+Resolve the package root from the current skill's installed location. From the
+target checkout, run the applicable read-only check:
 
-   Resolve `<plugin-root>` from this skill's installed package location, not a
-   guessed global CLI or another plugin version. The check is local and read-only.
-3. Continue only when the command exits successfully and returns
-   `configured: true` for the intended GitHub repository. Recheck when the target
-   repository or its configuration changes. Do not infer setup from skill
-   installation, an AGENTS.md mention, labels, a chat title or saved runtime state.
+```text
+node <plugin-root>/bin/conductor.mjs check-scope local
+node <plugin-root>/bin/conductor.mjs check-scope issues
+node <plugin-root>/bin/conductor.mjs check-scope automation
+```
 
-The check validates version 2 `conductor.json` and its match to the target
-repository's origin. It prefers the current checkout's file. When that file is
-missing in a linked worktree, it reads the main checkout of the same Git repository.
-An invalid local file cannot fall back to another file. Missing, invalid,
-unsupported or mismatched setup, and an unavailable check, all stop this skill.
+`local` is the default. It requires Git but permits an absent `conductor.json`.
+`issues` additionally verifies the GitHub origin identity without requiring full
+automation setup. `automation` requires the existing full setup contract and
+`authorized: true`. These checks do not grant permission to write, publish,
+dispatch, close an issue or take over existing workers.
 
-On failure, perform no Conductor task work and do not create or repair setup,
-start a director, ask Conductor workflow questions or alter issues. For an
-explicit invocation, report the concrete setup failure to the user or assigning
-agent and point to `$conductor:setup-repo-workflow`. For implicit selection, leave
-the skill inactive and continue the ordinary request under the host and repository
-instructions, without imposing Conductor policy or requiring setup.
+The result identifies `scope`, `root`, `configured` and, when applicable,
+`repository`, `configPath` and `authorized`. Check that they describe the intended
+checkout. A linked worktree can inherit configuration from its own main checkout.
+An invalid local file cannot fall back to another file. Missing configuration is
+allowed for local and issue work; malformed, unsupported or mismatched existing
+configuration is a failure and must not be silently bypassed.
 
-Setup does not grant execution authority. A valid file with `authorized: false`
-passes this gate for manual skills and synchronous coordination. A stopped
-runner, paused admission or missing director binding does not invalidate setup.
-Automation still requires its separate authority and lifecycle checks.
+If a required check fails or is unavailable, stop dependent Conductor operations
+and report the concrete failure. Use `$conductor:setup-repo-workflow` only for an
+authorized setup or migration request. Do not repair configuration merely to make
+an ordinary action proceed. Recheck when the target repository or configuration
+changes. An explicit foreign issue URL does not authorize switching checkouts.
 
-After this gate passes, use [the companion phase workflow](phase-workflow.md)
-when the assignment involves a multi-phase roadmap and human review or replanning
-checkpoints. It composes with available process skills; no companion is required
-for ordinary Conductor work.
+Before local edits, inspect current automation ownership and recovery state. A
+stopped service or paused admission does not prove that workers or delivery have
+stopped. Continue only when no owned worker or unresolved delivery operation can
+conflict. Preserve bindings, holds, jobs, branches and worktrees. Ask the existing
+owner to reconcile a conflict; do not silently stop automation or take ownership.
+
+Ordinary actions never start a director, create a user chat or enable background
+automation. Direct local requests remain valid without a mandatory issue. Read
+[issue context](issue-context.md) only when an issue is requested or already owns
+the work. Read [phase workflow](phase-workflow.md) for coordinated phases.

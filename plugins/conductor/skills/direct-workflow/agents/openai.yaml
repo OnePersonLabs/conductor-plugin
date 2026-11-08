@@ -1,0 +1,6 @@
+interface:
+  display_name: "Conductor Direct Workflow"
+  short_description: "Explicit autonomous workflow coordination"
+  default_prompt: "Use $conductor:direct-workflow for the requested scope while preserving ownership, evidence and delivery authority."
+policy:
+  allow_implicit_invocation: false

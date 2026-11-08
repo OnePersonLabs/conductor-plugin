@@ -1,48 +1,67 @@
-# Compose phase-based work
+# Coordinate phases through one current owner
 
-Read this reference after the repository setup gate when an assignment involves
-multi-phase work with human review or replanning checkpoints. Conductor supplies
-work steps; an available process skill can coordinate their order and phase
-boundaries. Ordinary issue edits and full automation alone do not select this
-human-checkpoint process.
+`$conductor:pair-program` owns the human phase dialogue. `$conductor:direct-workflow`
+owns explicitly requested autonomous coordination. Both compose the same action
+skills and preserve the issue, local ownership and delivery contracts. An ordinary
+action never starts either coordinator or background automation.
 
-## Select the process and the step
-
-For a coordinating root, load `$onepersonlabs:rolling-wave-workflow` when it is
-exposed as available and the requested work matches its description. Reuse it if
-already loaded. Its instructions own phase cadence, the Plan Mode requirement
-for plotting, the checkpoint story, and the return to the human. Follow the
-current host mode; a skill cannot change it by declaration.
-
-Use the applicable Conductor step without creating a second plan or coordinator:
-
-| Activity | Step |
+| Activity | Capability |
 | --- | --- |
-| Plan the next connected phase | `$conductor:plan` |
-| Implement the authorized phase | `$conductor:implement` |
-| Independently review a supplied scope | `$conductor:review` |
-| Update GitHub work records | `$conductor:manage-issues` |
+| Read and understand the current system | `$conductor:explore` |
+| Establish a named issue | `$conductor:new-change` |
+| Establish an issue and its next-phase plan | `$conductor:propose-change` |
+| Plan complete next-phase work, keep later phases broad | `$conductor:plan-change` |
+| Reconcile a plan with accepted decisions and current facts | `$conductor:update-change` |
+| Implement, check and repair authorized work | `$conductor:apply-change` |
+| Review the complete stable change independently | `$conductor:review-change` |
+| Assess acceptance from scenario evidence | `$conductor:verify-change` |
+| Present the completed phase and its limits | `$conductor:report-phase` |
+| Select one next action | `$conductor:continue-change` |
+| Close completed work or reopen a closed issue | `$conductor:close-change`, `$conductor:open-change` |
 
-Conductor retains repository setup, GitHub acceptance and delivery, original
-builder/reviewer ownership, holds, and runtime controls. Product meaning remains
-with its existing owner. A phase can report useful results while required issue
-delivery remains unfinished; checkpoint reporting does not satisfy or bypass
-those delivery requirements.
+Use [phase artifacts](phase-artifacts.md) for the tracked plan/report lifecycle
+and [managed work](managed-work.md) for the exact foreground bridge command API.
+Do not invent an AppServer command or use native v2 subagent RPC. The coordinator
+remains visible in the current chat and owns ordinary managed workers. It does
+not take over Codex Desktop's private server or create a replacement user chat.
 
-Delegated builders, planners, and reviewers complete their assigned scope and
-return to the coordinating root. They do not initiate another process, ask the
-human for a mode switch, or impose a phase ceremony on a bounded assignment.
-The root incorporates their evidence and remains responsible for the checkpoint.
+For pair programming, the visible coordinator normally stays in Default mode.
+Configure its managed worker in actual Plan Mode, relay live questions to the
+human and complete the phase dialogue. After the planning turn has completed,
+the coordinator saves the accepted tracked plan. Compact at the completed-turn
+boundary and switch the worker to Default mode for implementation. Independently
+review and repair, then report and return to the human for the next phase decision.
+Finish authorized delivery and closure, then stop.
 
-## Keep either workflow independent
+If the coordinator's host is itself in Plan Mode, obey that host's write
+restriction. Do not bypass it through a worker or save artifacts until a writable
+coordinator turn is authorized. A worker mode does not change the host mode.
 
-If Rolling Wave Workflow is unavailable, disabled, or irrelevant, continue the
-selected Conductor skill normally. Do not search disabled caches, require
-installation, or impose companion-only rules. Reciprocal skill pointers mean
-load once and reuse, not repeatedly invoke each other.
+Synchronous autonomous coordination can plan and continue within accepted scope
+without routine human phase gates. It asks for genuine product or authority
+decisions. Explicit background mode retains the existing lifecycle, original
+worker identity, holds, admission pauses, issue revisions and delivery controls.
 
-Ordinary phase work does not start or adopt a director. If automation already
-owns affected work, its existing owner must apply its supported controls for an
-agreed phase boundary and reconcile workers and delivery. Preserve current
-authority, holds, admission state, and outstanding operations. A companion skill
-does not grant runtime control or authorize a mode change.
+Production complex planning uses Astra high; bounded planning uses Sol 6.1 xhigh;
+implementation uses Sol 6.1 high; independent review uses Astra medium. Verify
+the actual catalogue identifiers and availability. Do not silently substitute.
+Use one live JSONL client through worker questions. At a completed-turn boundary,
+compact before changing model or effort; await correlated success, apply settings
+atomically, then start the next turn. Follow the managed-work owner for exact
+protocol details. An unavailable required model blocks that dependent step.
+
+For each significant batch, state an evidence-based agent elapsed-time range
+when comparable completed work supports one. Otherwise say the estimate is
+unknown and identify the missing comparison. Account for preparation,
+implementation, verification, coordination, repair and waiting when they affect
+the next decision. Do not add parallel durations as elapsed time. Compare at
+natural work boundaries when a range is exceeded, scope expands or failures
+repeat. Do not run a sleeping timer agent or a separate timing service.
+
+After two failed repair cycles without progress on the same observable problem,
+stop dependent implementation. Compare bounded repair, replacement of the affected
+responsibility and revision of the failed assumption. Require new evidence before
+changing the causal hypothesis or next decision. Use $onepersonlabs:optimize-workflow
+when available and useful. Otherwise inspect the cost and delay of the next batch.
+Remove repeated preparation and retain required checks. Choose a smaller coherent
+batch or a different supported mechanism. This fallback needs no companion skill.

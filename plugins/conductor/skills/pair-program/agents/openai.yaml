@@ -1,0 +1,6 @@
+interface:
+  display_name: "Conductor Pair Program"
+  short_description: "Pair program through human phase decisions"
+  default_prompt: "Use $conductor:pair-program for a rolling wave workflow on this issue or local request, with managed-worker Plan Mode and human phase decisions."
+policy:
+  allow_implicit_invocation: true

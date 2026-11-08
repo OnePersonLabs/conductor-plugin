@@ -1,0 +1,6 @@
+interface:
+  display_name: "Conductor Close Change"
+  short_description: "Close a change with clear delivery evidence"
+  default_prompt: "Use $conductor:close-change for the requested change within its authority and current repository context."
+policy:
+  allow_implicit_invocation: true

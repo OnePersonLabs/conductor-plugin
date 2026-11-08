@@ -1,6 +1,6 @@
 interface:
-  display_name: "Ask the user"
+  display_name: "Conductor Ask User"
   short_description: "Resolve user decisions and integrate answers"
-  default_prompt: "First pass this skill's repository setup gate; if it fails, do no Conductor task work. Use $conductor:ask-user to recover existing decisions, investigate facts, ask only unanswered consequential questions in chat and verify integration of answers. Use an optional inbox only on explicit request."
+  default_prompt: "Use $conductor:ask-user. Recover existing decisions, investigate facts, ask unanswered consequential questions in chat and verify integration of answers."
 policy:
   allow_implicit_invocation: true

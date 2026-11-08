@@ -1,0 +1,6 @@
+interface:
+  display_name: "Conductor Apply Change"
+  short_description: "Implement and check an authorized change"
+  default_prompt: "Use $conductor:apply-change for the requested scope while preserving ownership, evidence and delivery authority."
+policy:
+  allow_implicit_invocation: true

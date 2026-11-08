@@ -1,0 +1,6 @@
+interface:
+  display_name: "Conductor Review Change"
+  short_description: "Review a complete stable change independently"
+  default_prompt: "Use $conductor:review-change for the requested scope while preserving ownership, evidence and delivery authority."
+policy:
+  allow_implicit_invocation: true

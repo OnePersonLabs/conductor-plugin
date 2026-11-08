@@ -1,0 +1,6 @@
+interface:
+  display_name: "Conductor Propose Change"
+  short_description: "Prepare an issue and next-phase proposal"
+  default_prompt: "Use $conductor:propose-change for the requested change within its authority and current repository context."
+policy:
+  allow_implicit_invocation: true

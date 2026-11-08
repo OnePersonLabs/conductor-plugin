@@ -1,12 +1,13 @@
 ---
 name: manage-issues
-description: Only for repositories with valid Conductor setup. Create, inspect, edit or close GitHub issues; manage issue status, dependencies, sub-issues and backlog readiness within authorized scope.
+description: Manage GitHub issue text, labels, dependencies, sub-issues and backlog readiness within the requested authority.
 ---
 
 # Manage issues
 
-Before using this skill, follow the [repository setup gate](../../references/repository-scope.md).
-If the gate fails, stop this skill before any task work.
+Follow [repository scope](../../references/repository-scope.md) for issue work and
+[issue context](../../references/issue-context.md) for the target. Full automation
+configuration is not required for ordinary issue work.
 
 Manage the requested issues in the current chat. Read [shared issue policy](../../references/workflow.md)
 before changing acceptance, state or relationships. This skill needs no director,
@@ -18,7 +19,7 @@ or adopt a director, and does not require an invitation to start one.
 1. Confirm the checkout, GitHub repository, effective instructions and requested
    outcome. Inspect current issue text, comments, labels, dependencies, parents,
    children and related active work before proposing or making changes.
-2. Investigate discoverable facts. Use `$conductor:plan` when the request needs
+2. Investigate discoverable facts. Use `$conductor:plan-change` when the request needs
    bounded planning, and `$conductor:ask-user` only for an unanswered human
    decision. Keep product meaning with its existing owner.
 3. State the intended GitHub writes before making them. Apply authorized CRUD,
@@ -37,7 +38,9 @@ to unaffected issues can proceed within their existing authority. Signal an
 enabled service after a verified eligible-work change when the issue-change hook
 cannot identify it. A signal does not start disabled automation or grant dispatch.
 
-Close or delete an issue only with the applicable authority and current evidence.
+Use $conductor:close-change for completion or unverified closure and
+$conductor:open-change for reopening, including their warnings, confirmation and
+dependency barriers. Delete an issue only with the applicable authority and current evidence.
 Distinguish completed delivery from rejection, cancellation and duplicate cleanup;
 explain that disposition and reconcile dependents. Do not infer acceptance from
 a closed prerequisite or a completed agent turn.

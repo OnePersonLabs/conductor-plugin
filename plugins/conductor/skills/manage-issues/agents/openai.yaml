@@ -1,6 +1,6 @@
 interface:
-  display_name: "Manage issues"
-  short_description: "Manage GitHub issues, status and dependencies"
-  default_prompt: "First pass this skill's repository setup gate; if it fails, do no Conductor task work. Use $conductor:manage-issues for the requested GitHub issue changes. Inspect current state, explain intended writes, preserve authority and holds, and verify the result. Do not start a director."
+  display_name: "Conductor Manage Issues"
+  short_description: "Manage issue scope, state and relationships"
+  default_prompt: "Use $conductor:manage-issues. Inspect current issue state, explain intended writes, preserve authority and holds, and verify authorized changes."
 policy:
   allow_implicit_invocation: true

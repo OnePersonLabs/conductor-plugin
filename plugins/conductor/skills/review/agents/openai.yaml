@@ -1,6 +1,0 @@
-interface:
-  display_name: "Review a change"
-  short_description: "Review changes and reconcile PR feedback"
-  default_prompt: "First pass this skill's repository setup gate; if it fails, do no Conductor task work. Use $conductor:review to independently inspect the supplied scope and return findings tied to the reviewed revision. Preserve original-builder repair ownership and verify any separately authorized feedback writes."
-policy:
-  allow_implicit_invocation: true

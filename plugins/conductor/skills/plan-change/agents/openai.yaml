@@ -1,0 +1,6 @@
+interface:
+  display_name: "Conductor Plan Change"
+  short_description: "Plan complete next-phase work and acceptance"
+  default_prompt: "Use $conductor:plan-change for the requested scope while preserving ownership, evidence and delivery authority."
+policy:
+  allow_implicit_invocation: true

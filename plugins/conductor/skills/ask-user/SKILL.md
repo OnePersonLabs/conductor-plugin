@@ -1,12 +1,13 @@
 ---
 name: ask-user
-description: Only for repositories with valid Conductor setup. Investigate unanswered user decisions, ask self-contained questions in chat, integrate answers and recover pending Conductor decisions without repeating resolved questions.
+description: Investigate unresolved user decisions, ask self-contained questions in chat and integrate answers without repeating resolved questions.
 ---
 
 # Ask the user
 
-Before using this skill, follow the [repository setup gate](../../references/repository-scope.md).
-If the gate fails, stop this skill before any task work.
+Follow [repository scope](../../references/repository-scope.md) for the capability
+being used. Local decisions do not require GitHub automation setup. Use
+[issue context](../../references/issue-context.md) for issue-owned decisions.
 
 Use the current chat for decisions. Investigate discoverable facts first and ask
 only questions whose answers can change the authorized work. Recover accepted
