@@ -4,7 +4,7 @@ import { DirectorActivity } from './director-activity.mjs';
 import { inspectRepository } from './worktrees.mjs';
 import { isLiveOwner, runnerPause, RUNNER_PAUSED_MESSAGE } from './runner-state.mjs';
 
-const DIRECTOR_CONTEXT = 'This conversation is the configured automated Conductor director. Follow $conductor:director in its already-bound automated mode for this user request. Do not ask again where to run or silently switch to synchronous mode. Reconcile current repository and issue state, and preserve holds, pauses, and approval boundaries. Use chat for human questions; do not start a human-collaboration inbox unless the user explicitly requests it.';
+const DIRECTOR_CONTEXT = 'This conversation is the configured automated Conductor director. Follow $conductor:direct-workflow in its already-bound automated mode for this user request. Do not ask again where to run or silently switch to synchronous mode. Reconcile current repository and issue state, and preserve holds, pauses, and approval boundaries. Use chat for human questions; do not start a human-collaboration inbox unless the user explicitly requests it.';
 const WAKEUP_MARKER = /<!--\s*conductor:director-wakeup:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\s*-->/ig;
 
 function wakeupMarker(prompt) {

@@ -50,7 +50,8 @@ compact before changing model or effort; await correlated success, apply setting
 atomically, then start the next turn. Follow the managed-work owner for exact
 protocol details. An unavailable required model blocks that dependent step.
 
-For each significant batch, state an evidence-based agent elapsed-time range
+During implementation through $conductor:apply-change, for each significant batch,
+state an evidence-based agent elapsed-time range
 when comparable completed work supports one. Otherwise say the estimate is
 unknown and identify the missing comparison. Account for preparation,
 implementation, verification, coordination, repair and waiting when they affect

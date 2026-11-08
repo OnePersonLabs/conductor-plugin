@@ -3,8 +3,13 @@
 Conductor reads `conductor.json` from the target Git repository root. Use
 `$conductor:setup-repo-workflow` to prepare or migrate this configuration.
 Setup inspects repository policy and prepares the file without starting work.
-Every other skill requires valid setup whose `repository` matches the checkout's
-GitHub origin. A missing local file in a linked worktree can use setup from the
+Local phase work does not require this file or a GitHub remote. Read-only
+exploration also works outside Git. `conductor check-scope local` validates a Git
+checkout and any existing configuration; `conductor check-scope issues` also
+requires a GitHub origin. Background automation requires complete setup and
+`authorized: true`, checked by `conductor check-scope automation`.
+Existing configuration must match the checkout's GitHub origin.
+A missing local file in a linked worktree can use setup from the
 same Git repository's main checkout; an invalid local file cannot. No parent or
 unrelated repository supplies setup. `conductor check-setup` validates this
 relationship locally without creating runtime state or contacting GitHub.
@@ -57,6 +62,16 @@ It is the preference for deliberately delegated hard architecture or substantial
 planning decisions. Routine triage and backlog repair can stay with the director.
 The director verifies host model availability and reports unsupported required
 models. An Astra invoking chat alone does not select Astra helpers.
+
+For managed pair programming and synchronous phase work, complex unsettled
+architecture planning uses Astra high; bounded planning against an established
+design uses Sol 6.1 xhigh. Implementation uses Sol 6.1 high. Initial independent
+review uses Astra medium with fresh context. Honor explicit bounded assignments.
+The worker enters actual Plan or Default mode through the
+[managed work connection](../references/managed-work.md), compacts at completed
+turn boundaries before changing model or effort, and awaits the applied settings.
+The visible coordinator keeps its host-selected model and permissions. A
+coordinator in Plan Mode cannot use a worker to bypass its own mutation restriction.
 
 Initial setup keeps `admissionPaused: true` through onboarding and the first user
 decision phase. This field initializes new runtime state; editing it is not a

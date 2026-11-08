@@ -23,7 +23,7 @@ export function directorTitle(product, date = new Date()) {
 }
 
 export class DirectorHost extends EventEmitter {
-  constructor({ client, cwd, repository, model = 'gpt-6.1-sol', reasoningEffort = 'low', skillPath = fileURLToPath(new URL('../skills/director/SKILL.md', import.meta.url)), threadId, state, save, execute = run, activity, host } = {}) {
+  constructor({ client, cwd, repository, model = 'gpt-6.1-sol', reasoningEffort = 'low', skillPath = fileURLToPath(new URL('../skills/direct-workflow/SKILL.md', import.meta.url)), threadId, state, save, execute = run, activity, host } = {}) {
     super();
     if (typeof cwd !== 'string' || !cwd) throw new TypeError('cwd is required.');
     if (typeof repository !== 'string' || !/^[^/]+\/[^/]+$/.test(repository)) throw new TypeError('repository must be owner/name.');
@@ -226,7 +226,7 @@ export class DirectorHost extends EventEmitter {
         if (typeof revision !== 'string' || !revision) throw Object.assign(new Error('Desktop wakeup requires the persisted batch ID as its revision so uncertain queue submissions can be reconciled.'), { code: 'DIRECTOR_UNAVAILABLE' });
         const marker = `<!-- conductor:director-wakeup:${revision} -->`;
         const clientMessageId = `conductor-director-${revision}`;
-        const message = `$conductor:director\n\n${marker}\n${prompt}`;
+        const message = `$conductor:direct-workflow\n\n${marker}\n${prompt}`;
         const queuedSubmission = await this.client.addQueuedMessage({ threadId, text: message, clientUserMessageId: clientMessageId });
         if (typeof queuedSubmission.id !== 'string' || !queuedSubmission.id) throw new Error('Codex accepted the Desktop wake request without returning its queue item ID; inspect the saved marker before retrying.');
         this.currentStatus = { type: 'active', activeFlags: [], nativeTurnId: null, wakeupMarker: marker };

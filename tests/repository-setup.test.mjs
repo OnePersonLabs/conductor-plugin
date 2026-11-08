@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { git, run } from '../plugins/conductor/lib/process.mjs';
-import { checkRepositorySetup } from '../plugins/conductor/lib/repository-setup.mjs';
+import { checkRepositorySetup, checkWorkScope } from '../plugins/conductor/lib/repository-setup.mjs';
 import { loadConfig } from '../plugins/conductor/lib/config.mjs';
 
 const cli = fileURLToPath(new URL('../plugins/conductor/bin/conductor.mjs', import.meta.url));
@@ -83,4 +83,24 @@ test('linked worktrees inherit only missing setup from their own main checkout',
   await git(nested, 'init', '-b', 'main');
   await git(nested, 'remote', 'add', 'origin', 'https://github.com/example/project.git');
   await assert.rejects(checkRepositorySetup(nested), /ENOENT/);
+});
+
+test('local phase work needs no GitHub setup while issue and automation scopes retain their prerequisites', async t => {
+  const { root, path, temp } = await fixture(t);
+  await git(root, 'remote', 'remove', 'origin');
+  assert.deepEqual(await checkWorkScope(root), { scope: 'local', root, configured: false });
+  await assert.rejects(checkWorkScope(root, 'issues'));
+  await assert.rejects(checkWorkScope(root, 'automation'));
+  await git(root, 'remote', 'add', 'origin', 'https://github.com/example/project.git');
+  assert.equal((await checkWorkScope(root, 'issues')).repository, config.repository);
+  const linked = join(temp, 'local-linked');
+  await git(root, 'worktree', 'add', '-b', 'local-linked', linked);
+  assert.equal((await checkWorkScope(linked)).configured, false);
+  await writeFile(path, '{');
+  await assert.rejects(checkWorkScope(linked), SyntaxError);
+  await writeFile(path, JSON.stringify(config));
+  assert.equal((await checkWorkScope(linked)).configPath, path);
+  await assert.rejects(checkWorkScope(root, 'automation'), /authorized: true/);
+  await writeFile(path, JSON.stringify({ ...config, authorized: true }));
+  assert.equal((await checkWorkScope(root, 'automation')).authorized, true);
 });

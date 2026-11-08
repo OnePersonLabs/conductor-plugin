@@ -2,7 +2,7 @@
 
 ## Compound Engineering
 
-`skills/review/scripts/pending-feedback.py` is adapted from
+`skills/review-change/scripts/pending-feedback.py` is adapted from
 EveryInc/compound-engineering-plugin's `ce-resolve-pr-feedback` at revision
 `8673dfb96ad62c5e0cb6bc50fce312e7a66487a0`.
 

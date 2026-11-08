@@ -177,7 +177,7 @@ test('hook writes activity and adds director skill context only for bound deskto
   const result = await handleDirectorLifecycle(payload, { activityFactory: () => activity });
   assert.equal(result.handled, true);
   assert.equal(result.hookOutput.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
-  assert.match(result.hookOutput.hookSpecificOutput.additionalContext, /\$conductor:director/);
+  assert.match(result.hookOutput.hookSpecificOutput.additionalContext, /\$conductor:direct-workflow/);
   assert.deepEqual(calls, [{ threadId, turnId: 'turn-1', event: 'UserPromptSubmit', wakeupMarker: marker }]);
   assert.equal((await handleDirectorLifecycle({ ...payload, session_id: 'worker-thread' }, { activityFactory: () => { throw Error('must not access another thread'); } })).handled, false);
   const enrollment = await handleDirectorLifecycle({ ...payload, hook_event_name: 'PostToolUse' }, { activityFactory: () => activity });

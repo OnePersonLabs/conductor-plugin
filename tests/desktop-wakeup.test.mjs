@@ -60,7 +60,7 @@ test('Desktop hooks suppress busy wakes and its native queue receives one wake o
   const batch = f.state.batches[0];
   assert.equal(batch.queueItemId, 'queue-1');
   assert.equal(batch.turnId, undefined);
-  assert.match(f.queue[0].input[0].text, /\$conductor:director/);
+  assert.match(f.queue[0].input[0].text, /\$conductor:direct-workflow/);
   await f.events.emit({ kind: 'after-enqueue' });
   await f.events.flush();
   assert.equal(f.calls(), 1);

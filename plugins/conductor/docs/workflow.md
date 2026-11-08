@@ -1,27 +1,40 @@
 # Direct work and recover Conductor
 
-First set up the target repository with `$conductor:setup-repo-workflow`.
-All other skills check its configuration before doing Conductor task work.
-If setup is missing or invalid, an explicit invocation reports the setup failure;
-implicit selection leaves ordinary work to the host and repository instructions.
-Manual skills and synchronous direction work with `authorized: false` and do not
-need a running service. See [configuration](configuration.md) for the setup check.
+Local work needs a Git checkout; read-only exploration needs no setup. Issue
+operations verify the GitHub repository and authority. Background automation
+requires `$conductor:setup-repo-workflow` and explicit execution authority.
+An existing malformed configuration cannot be bypassed. See
+[configuration](configuration.md) for the operation-specific checks.
 
-Use `$conductor:manage-issues`, `$conductor:ask-user`, `$conductor:plan`,
-`$conductor:implement`, and `$conductor:review` during ordinary agent work.
+Use `$conductor:manage-issues`, `$conductor:ask-user`, `$conductor:plan-change`,
+`$conductor:apply-change`, and `$conductor:review-change` during ordinary agent work.
 They complete the requested scope in the current chat and report issue changes.
 They never adopt the chat, start a director, or ask whether to start one merely
 because a change was requested.
 
 ## Ordinary work and synchronous direction
 
+For one issue or local request, `$conductor:pair-program` provides rolling-wave
+planning, implementation, independent review and repair, and a phase report before
+the human decides what follows. `$conductor:report-phase` can also report the
+previous phase without executing more work. Plans and reports are tracked under
+`.conductor/plans/` and `.conductor/reports/`; the issue keeps high-level scope,
+acceptance and native relationships. See [phase work](../references/phase-workflow.md).
+
+`$conductor:continue-change` chooses one coherent next action from the current
+issue's evidence. It does not start a director, reopen a closed issue or infer
+permission to publish or close. `$conductor:verify-change` assesses acceptance;
+`$conductor:review-change` supplies independent findings on the cumulative change.
+
 An explicit director request defaults to synchronous operation. The current
-agent coordinates the selected issues and native subagents in the current
+agent coordinates the selected issues and managed phase work in the current
 checkout, without creating worktrees, starting a background service, or binding
 the automated runtime. End when the selected scope is complete or a human answer
-is needed. There are no timer-driven turns in this mode.
+is needed. Routine planning and phase continuation proceed within existing
+authority without human checkpoints. There are no timer-driven turns in this mode.
 
-When the request does not specify a chat, ask whether to use the current chat or
+Synchronous direction stays in the current chat. For background automation,
+when the request does not specify a chat, ask whether to use the current chat or
 a fresh director chat. Create a chat only after the user selects that option.
 Use native project chat creation, model `gpt-6.1-sol`, and reasoning `low` for a
 new chat. Rename an explicitly adopted current chat but keep its model. Use the
@@ -119,7 +132,7 @@ start another builder. Use `resume` for work whose PR has not landed.
 Set up the repository and review `conductor.json` first. Explicitly request
 automated operation; an unspecified mode means synchronous. Resolve the requested
 chat and inspect the saved owner and any pending handoff before creating another.
-For a fresh native local project chat, supply `$conductor:director`, automated
+For a fresh native local project chat, supply `$conductor:direct-workflow`, automated
 mode, repository, authorized operation, and expected prior binding. Use the
 director title and model settings above.
 
@@ -386,7 +399,7 @@ it does not establish the cause of a missing receipt or require routine toggles.
 
 Ask the current director “Move Conductor to a fresh chat”, or open a chat in
 the same project and say “Make this the Conductor runner”. Both requests use
-`$conductor:director`. A fresh chat uses Sol 6.1 Low and the title
+`$conductor:direct-workflow`. A fresh chat uses Sol 6.1 Low and the title
 `🎬 <project> <MM/DD/YYYY hh:mm AM/PM>`. It reads current instructions and receives
 the automated mode, repository, authorized operation, expected prior binding,
 brief context, and relevant links rather than inheriting the old conversation.
@@ -580,7 +593,7 @@ repositories are cleaned on the next invocation, so no off-process timer is
 promised.
 After verified delivery, startup and maintenance automatically clean eligible
 completed worktrees. Cleanup candidates and the full deletion boundary are in the
-[PR delivery guide](../skills/implement/references/delivery.md#completed-worktree-cleanup).
+[PR delivery guide](../skills/apply-change/references/delivery.md#completed-worktree-cleanup).
 
 See [configuration](configuration.md) for repository labels, checks and
 migration. The [shared workflow](../references/workflow.md) supplies issue rules

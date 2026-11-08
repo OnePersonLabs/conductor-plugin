@@ -75,8 +75,9 @@ Unrelated linked issues do not inherit those states.
 Conductor admits only current `ready` issues with no open blockers, active hold
 or proposal ancestors, human-input requirement, stale revision or duplicate job.
 Closing a blocker makes an issue eligible for re-evaluation. It does not prove
-the blocker succeeded: rejected or abandoned prerequisites require acceptance
-and dependency reconciliation.
+the blocker succeeded: rejected, abandoned, held or uncertain prerequisites
+require acceptance and dependency reconciliation. A closed blocker with an active
+hold or conflicting workflow labels does not release dependent implementation.
 
 Do not introduce holds merely for routine reconciliation of idle issues. When a
 revision affects active automated work, its existing bound director must establish
@@ -90,6 +91,16 @@ director after verified completion and reconciliation, using its exact hold ID.
 Release restores prior states and rechecks eligibility; it does not accept a
 proposal, release another hold or activate admission. If applying holds partially
 fails, retain the local barrier and reconcile before permitting execution.
+
+Check the pause or hold result's delivery barrier, not just labels or a paused
+worker. An armed PR can still merge after its worker stops. A failed auto-merge
+disarm or merge race retains the hold and blocks dependent closure or scope edits.
+The existing bound owner retries disarm for an unmerged PR. For a merged PR, its
+`reconcile-delivery` control verifies the original paused job's landed revision
+and acceptance while preserving holds. Only established delivery evidence clears
+that uncertainty; the control does not close the issue or authorize plan changes.
+Releasing one hold must preserve other active receipts on the issue, including
+receipts absent from the current local runtime snapshot.
 
 Recovery artifacts have a named consumer and bounded lifetime. Delete completed
 handoffs after their remote effects are reconciled. The PR feedback helper
@@ -127,6 +138,12 @@ verified landing in the configured base. A completed model turn, successful
 push, open PR, merged child issue or closed unmerged PR does not prove complete
 acceptance. Rejection, cancellation and duplicate cleanup require their own
 authorized disposition and reconciliation of dependent acceptance.
+
+For a manual close request without complete evidence, `$conductor:close-change`
+warns `⚠️ Implementation may not be verified` and waits for confirmation. A
+confirmed uncertain closure retains a durable hold until acceptance and
+dependencies are reconciled; it is not completed-delivery evidence. Local requests
+use their authorized delivery boundary rather than inventing a mandatory push.
 
 At handoff, state what was checked, delivered, left uncertain and what remains.
 Never report installed, running, published or qualified state without its own

@@ -201,7 +201,7 @@ test('Desktop queue sends a stable marker and skill invocation only when activit
   const request = f.client.calls.find(x => x[0] === 'addQueuedMessage')[1];
   assert.equal(request.threadId, 'desktop-thread');
   assert.equal(request.clientUserMessageId, 'conductor-director-batch-a');
-  assert.match(request.text, /^\$conductor:director\n\n/);
+  assert.match(request.text, /^\$conductor:direct-workflow\n\n/);
   assert.match(request.text, /<!-- conductor:director-wakeup:batch-a -->/);
   assert.equal(f.client.calls.some(x => x[0] === 'startTurn'), false);
   assert.equal((await f.host.findQueuedWakeup(queued.marker)).id, 'queue-1');

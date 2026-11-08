@@ -92,7 +92,7 @@ acceptance-based issue closure. Automated builders make no GitHub or publication
 writes. Reviewers use the same configured permissions and tools as builders;
 their role is findings, with original-builder implementation and repairs. Require
 current checks, current review, complete acceptance and verified landing in the
-configured base before reporting delivery. See [delivery](../skills/implement/references/delivery.md).
+configured base before reporting delivery. See [delivery](../skills/apply-change/references/delivery.md).
 
 ## Hand off an automated director
 

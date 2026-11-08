@@ -77,13 +77,22 @@ function validatePackage() {
   if (entry.name !== marketplaceName || entry.source?.source !== 'local' || entry.source.path !== './plugins/conductor') fail('marketplace plugin identity/source path is incorrect');
 
   const expected = new Map([
-    ['director', false],
-    ['planner', false],
+    ['direct-workflow', false],
+    ['pair-program', true],
+    ['report-phase', true],
     ['manage-issues', true],
     ['ask-user', true],
-    ['plan', true],
-    ['implement', true],
-    ['review', true],
+    ['explore', true],
+    ['new-change', true],
+    ['propose-change', true],
+    ['plan-change', true],
+    ['apply-change', true],
+    ['update-change', true],
+    ['continue-change', true],
+    ['verify-change', true],
+    ['review-change', true],
+    ['close-change', true],
+    ['open-change', true],
     ['setup-repo-workflow', false],
   ]);
   for (const [name, implicit] of expected) {
