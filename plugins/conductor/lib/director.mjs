@@ -4,19 +4,9 @@ import { DirectorEvents } from './director-events.mjs';
 import { occupied } from './scheduler.mjs';
 import { readDecisions, recordDecision } from './decisions.mjs';
 import { runnerPause, RUNNER_PAUSED_MESSAGE } from './runner-state.mjs';
+import { remoteHolds, createRemoteHoldReceipt, applyRemoteHold, releaseRemoteHold } from './remote-holds.mjs';
 
-const pauseSafeOperations = new Set(['status', 'settle', 'wakeup', 'decision-read', 'enable', 'events', 'ack', 'retry-wakeup', 'bind', 'attach', 'resume-runner', 'stop']);
-
-function remoteHolds(comments, issue) {
-  return comments.filter(comment => comment.body?.startsWith('<!-- conductor:hold:')).map(comment => {
-    let record;
-    try { record = JSON.parse(comment.body.trim().split('\n').at(-1)); } catch {}
-    if (!record?.holdId || record.issue !== issue || !comment.body.startsWith(`<!-- conductor:hold:${record.holdId} -->`)) {
-      throw new Error(`Malformed hold receipt on issue #${issue}; reconcile it before release.`);
-    }
-    return { comment, record };
-  });
-}
+const pauseSafeOperations = new Set(['status', 'settle', 'wakeup', 'decision-read', 'enable', 'events', 'ack', 'retry-wakeup', 'bind', 'attach', 'resume-runner', 'stop', 'reconcile-delivery']);
 
 // Policy is judged by the director. This owner enforces a fresh, bounded command
 // and retains barriers before attempting any non-atomic GitHub mutation.
@@ -202,14 +192,10 @@ export class Director {
       const issue = await c.github.issue(number);
       record.previous[number] = workflowState(issue, c.config.labels).state;
       await c.save();
-      const marker = `<!-- conductor:hold:${record.id} -->`;
-      const body = `${marker}\n${record.reason}\n\nPrevious workflow state: ${record.previous[number]}.\n\n${JSON.stringify({ holdId: record.id, issue: number, previous: record.previous[number] })}`;
-      const comments = await c.github.comments(number);
-      c.assertRunning?.();
-      if (!comments.some(comment => comment.body === body)) await c.github.api(`repos/${c.config.repository}/issues/${number}/comments`, { method: 'POST', fields: { body } });
+      const receipt = await createRemoteHoldReceipt(c.github, { number, holdId: record.id, reason: record.reason, previous: record.previous[number], labels: c.config.labels }, () => c.assertRunning?.());
+      record.previous[number] = receipt.record.previous;
       record.attempted.push(number); await c.save();
-      c.assertRunning?.();
-      await c.github.setWorkflowState(number, 'hold', c.config.labels);
+      await applyRemoteHold(c.github, { number, labels: c.config.labels }, () => c.assertRunning?.());
     }
     record.labelsApplied = true;
     record.applied = record.deliveryBarrierEstablished; await c.save();
@@ -235,37 +221,8 @@ export class Director {
       throw new Error(`Issue #${job.issue} delivery needs reconciliation before release; retain the hold and use reconcile-delivery for a merged PR or retry pause to disarm it.`);
     }
     for (const number of record.attempted ?? Object.keys(record.previous).map(Number)) {
-      // Release the existing receipt even when another local hold overlaps. Its
-      // remote ownership must survive recovery on a different local snapshot.
-      let receipts = remoteHolds(await c.github.comments(number), number);
-      const owned = receipts.filter(item => item.record.holdId === record.id);
-      if (owned.length !== 1) throw new Error(`Hold ${record.id} has no unique receipt on issue #${number}; reconcile before release.`);
-      if (!owned[0].record.releasedAt) {
-        const { comment, record: remote } = owned[0];
-        const body = comment.body.trim().split('\n').slice(0, -1).concat(JSON.stringify({ ...remote, releasedAt: new Date().toISOString() })).join('\n');
-        c.assertRunning?.();
-        try { await c.github.api(`repos/${c.config.repository}/issues/comments/${comment.id}`, { method: 'PATCH', fields: { body } }); }
-        catch (error) {
-          if (!(await c.github.comments(number)).some(item => item.id === comment.id && item.body === body)) throw error;
-        }
-        receipts = remoteHolds(await c.github.comments(number), number);
-        if (!receipts.some(item => item.record.holdId === record.id && item.record.releasedAt)) throw new Error(`Hold release receipt could not be verified on issue #${number}.`);
-      }
       const other = c.state.holds.some(h => h !== record && h.active && (h.all || h.issues.includes(number)));
-      if (other || receipts.some(item => item.record.holdId !== record.id && !item.record.releasedAt)) continue;
-      const current = await c.github.issue(number);
-      const hasHold = (current.labels ?? []).some(label => (typeof label === 'string' ? label : label.name).toLowerCase() === c.config.labels.hold.toLowerCase());
-      if (!hasHold) continue; // A failed write or a later explicit edit is not ours to reset.
-      let previous = record.previous[number];
-      if (previous === 'hold') {
-        const ownIndex = receipts.findIndex(item => item.record.holdId === record.id);
-        const original = receipts.slice(0, ownIndex).reverse().find(item => item.record.previous && item.record.previous !== 'hold');
-        previous = original?.record.previous;
-        if (!previous) throw new Error(`The prior hold on issue #${number} has no recoverable owner; preserve its restriction and reconcile it.`);
-      }
-      if (!['triage','proposal','ready'].includes(previous)) previous = 'triage';
-      c.assertRunning?.();
-      await c.github.setWorkflowState(number, previous, c.config.labels);
+      await releaseRemoteHold(c.github, { number, holdId: record.id, labels: c.config.labels, otherHold: other }, () => c.assertRunning?.());
     }
     record.active = false; record.releasedAt = new Date().toISOString(); await c.save();
     await this.events.emit({ kind: 'released', holdId: record.id });
@@ -344,7 +301,6 @@ export class Director {
         if (!request.expectedRevision || request.expectedRevision !== current.revision) throw new Error('Delivery evidence reconciliation requires the current expectedRevision.');
         const evidence = await c.deliveryAction(() => c.mergedDeliveryEvidence(job));
         if ((await this.snapshot(request.issue)).revision !== current.revision) throw new Error('Issue revision changed during delivery reconciliation; inspect the current evidence again.');
-        c.assertRunning?.();
         job.deliveryEvidence = { ...evidence, eligibilityRevision: current.revision };
         job.mergeArmed = false; job.deliveryReconciliationRequired = false; job.lastError = null;
         this.recordDeliveryBarrier(job.issue);

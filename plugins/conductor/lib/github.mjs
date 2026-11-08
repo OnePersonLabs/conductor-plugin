@@ -81,7 +81,7 @@ export class GitHub {
     }
     return verified;
   }
-  async ensureWorkflowLabels(labels) {
+  async ensureWorkflowLabels(labels, states = ['triage', 'proposal', 'ready', 'hold', 'needsInput']) {
     const entries = [
       ['triage', 'Issue needs classification and next-action triage.', 'd4c5f9'],
       ['proposal', 'Candidate direction awaiting a decision; implementation is not authorized.', 'fbca04'],
@@ -90,13 +90,15 @@ export class GitHub {
       ['needsInput', 'A specific human response is required before this issue can advance.', 'bfd4f2'],
     ];
     const names = entries.map(([key]) => labels[key]);
-    if (new Set(names.map(name => name.toLowerCase())).size !== names.length || names.some(name => typeof name !== 'string' || !name.trim())) {
+    if (names.some(name => typeof name !== 'string' || !name.trim()) || new Set(names.map(name => name.toLowerCase())).size !== names.length) {
       throw new Error('Workflow labels must be five distinct nonempty names.');
     }
+    if (!Array.isArray(states) || !states.length || states.some(state => !entries.some(([key]) => key === state))) throw new Error('Select known workflow label states.');
     const list = async () => new Set((await this.gh(['label', 'list', '--repo', this.repository, '--limit', '1000', '--json', 'name']).then(JSON.parse)).map(item => item.name.toLowerCase()));
     const existing = await list();
     const created = [];
     for (const [key, description, color] of entries) {
+      if (!states.includes(key)) continue;
       const name = labels[key];
       if (existing.has(name.toLowerCase())) continue;
       try { await this.gh(['label', 'create', name, '--repo', this.repository, '--description', description, '--color', color], { write: true }); }
@@ -104,9 +106,9 @@ export class GitHub {
       created.push(name);
     }
     const verified = await list();
-    const missing = names.filter(name => !verified.has(name.toLowerCase()));
+    const missing = states.map(state => labels[state]).filter(name => !verified.has(name.toLowerCase()));
     if (missing.length) throw new Error(`Workflow label creation could not be verified: ${missing.join(', ')}.`);
-    return { created, labels: names };
+    return { created, labels: states.map(state => labels[state]) };
   }
   async pullForBranch(branch) {
     const head = `${this.repository.split('/')[0]}:${branch}`;

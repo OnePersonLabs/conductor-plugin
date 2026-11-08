@@ -1035,7 +1035,6 @@ export class Coordinator extends EventEmitter {
     // Establish what already landed without accepting a changed request,
     // closing its issue, releasing a hold or resuming the original job.
     pull ??= await this.github.pull(job.pr);
-    this.assertRunning();
     if (pull.state !== 'MERGED') throw new Error('Delivery evidence requires an already merged owned PR.');
     if (pull.baseRefName !== this.config.baseBranch) throw new Error('PR targets a different base branch; operator reconciliation required.');
     const acceptedBase = await this.base();

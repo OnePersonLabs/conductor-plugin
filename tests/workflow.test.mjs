@@ -141,3 +141,16 @@ test('GitHub adapter rejects native parent cycles instead of hiding malformed re
   const github = new GitHub('example/project', { execute });
   await assert.rejects(github.parents(1), /parent cycle detected/);
 });
+
+test('GitHub label owner creates only the selected hold label for manual work without setup', async () => {
+  const names = new Set();
+  const execute = async (_command, args) => {
+    if (args[0] === 'label' && args[1] === 'list') return { stdout: JSON.stringify([...names].map(name => ({ name }))), stderr: '', code: 0 };
+    if (args[0] === 'label' && args[1] === 'create') { names.add(args[2]); return { stdout: '', stderr: '', code: 0 }; }
+    throw new Error(`Unexpected command ${args.join(' ')}`);
+  };
+  const github = new GitHub('example/project', { execute });
+  const result = await github.ensureWorkflowLabels(DEFAULT_LABELS, ['hold']);
+  assert.deepEqual(result.created, ['on-hold']);
+  assert.deepEqual([...names], ['on-hold']);
+});

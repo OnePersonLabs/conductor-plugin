@@ -15,6 +15,8 @@ function fixture({ issues = [makeIssue(1)], jobs = [], agents = 1 } = {}) {
   const comments = new Map([...records.keys()].map(number => [number, []]));
   const calls = { launch: [], prepare: [], disarm: [], merge: [], push: [] };
   const github = {
+    repository: REPO,
+    ensureWorkflowLabels: async () => {},
     openIssues: async () => [...records.values()].map(issue => structuredClone(issue)),
     issue: async number => structuredClone(records.get(number)),
     dependencies: async () => [],

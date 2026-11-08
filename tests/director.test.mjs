@@ -14,6 +14,8 @@ function setup({ issues = [], jobs = [], execute = async () => ({ code: 0, stdou
   const tasks = new Map();
   let nextCommentId = 1;
   const github = {
+    repository: REPO,
+    ensureWorkflowLabels: async () => {},
     openIssues: async () => [...records.values()].filter(issue => issue.state === 'open').map(issue => structuredClone(issue)),
     issue: async number => { const issue = records.get(number); if (!issue) throw new Error(`missing #${number}`); return structuredClone(issue); },
     dependencies: async () => [],
@@ -169,6 +171,24 @@ test('failed or stale merged-delivery evidence keeps the original job and hold u
   }
 });
 
+test('read-only delivery reconciliation works through a paused runner without releasing its gates', async () => {
+  const job = { issue: 1, pr: 11, phase: 'paused', intent: 'pause', deliveryReconciliationRequired: true };
+  const h = setup({ issues: [issue(1, ['on-hold'])], jobs: [job] });
+  h.state.runnerPause = { reason: 'Stopped by user' };
+  h.state.admissionPaused = true;
+  h.coordinator.assertRunning = () => { throw Object.assign(new Error('runner paused'), { code: 'RUNNER_PAUSED' }); };
+  h.coordinator.mergedDeliveryEvidence = async () => ({ pr: 11, mergeCommit: 'verified', acceptedBase: 'base', acceptanceComplete: false, requestMatches: false });
+  const current = await h.director.snapshot(1);
+  const result = await h.director.control({ op: 'reconcile-delivery', issue: 1, expectedRevision: current.revision, repository: REPO, threadId: THREAD });
+  assert.equal(result.deliveryBarrierEstablished, true);
+  assert.equal(result.evidence.acceptanceComplete, false);
+  assert.equal(job.phase, 'paused');
+  assert.equal(job.intent, 'pause');
+  assert.equal(h.state.runnerPause.reason, 'Stopped by user');
+  assert.equal(h.state.admissionPaused, true);
+  assert.deepEqual(h.records.get(1).labels, ['on-hold']);
+});
+
 test('a failed status comment cannot downgrade verified delivery, including a lost closure response', async () => {
   const job = { issue:1, pr:11, phase:'paused', intent:'pause', deliveryReconciliationRequired:true };
   const h = setup({ issues:[{...issue(1), state:'closed', state_reason:'completed'}], jobs:[job] });
@@ -223,11 +243,11 @@ test('overlap recovery restores this hold cycle and reconciles a lost release re
   let writes = 0;
   h.github.api = async (...args) => { writes++; await api(...args); throw new Error('lost PATCH response'); };
   await h.director.release({ holdId: first.id });
-  assert.equal(writes, 1);
+  assert.equal(writes, 2);
   assert.deepEqual(h.records.get(1).labels, ['on-hold']);
   h.state.holds = [];
   await h.director.release({ holdId: second.id, issue: 1 });
-  assert.equal(writes, 2);
+  assert.equal(writes, 4);
   assert.deepEqual(h.records.get(1).labels, ['proposal']);
 });
 
