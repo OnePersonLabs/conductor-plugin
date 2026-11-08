@@ -10,6 +10,12 @@ Follow [repository scope](../../references/repository-scope.md) for issue work a
 `#number`, URL or name, or the established current issue. Include closed issues
 in name matching and exhaust relevant pages. Ask for an ID when ambiguous.
 
+Resolve exactly one issue before checking whether reopening is needed. If several
+issues match, show their current `[ID]: [name]` rows in descending number order
+and ask for one ID, even when every candidate is already open. A shared state
+does not resolve identity: the selected issue must become the current issue.
+Do not replace this selection with the already-open warning.
+
 If the issue is already open, say exactly:
 
 > ⚠️ Issue is already open
