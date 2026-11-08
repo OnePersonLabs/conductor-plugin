@@ -55,18 +55,22 @@ test('eligibility revision changes when relevant issue, dependency, parent, or c
   assert.equal(base.revision, progressOnly.revision);
 });
 
-test('completed prerequisites remain blockers while held or carrying conflicting workflow labels', async () => {
+test('completed prerequisites retain explicit holds, proposals, human-input blocks and primary conflicts', async () => {
   const dependency = { number: 2, state: 'closed', state_reason: 'completed', labels: [] };
   const complete = await eligibility(adapter({ dependencies: [dependency] }), 1);
   assert.equal(complete.eligible, true);
-  for (const labels of [['on-hold'], ['ready', 'proposal'], ['ready', 'on-hold']]) {
+  for (const labels of [['on-hold'], ['proposal'], ['needs-input'], ['ready', 'needs-input'], ['ready', 'proposal'], ['ready', 'on-hold']]) {
     const blocked = await eligibility(adapter({ dependencies: [{ ...dependency, labels }] }), 1);
     assert.equal(blocked.eligible, false);
-    assert.match(blocked.reasons.join(' '), /blocker issue #2 (is hold|has conflicting)/);
+    assert.match(blocked.reasons.join(' '), /blocker issue #2 (is hold|is proposal|needs human input|has conflicting)/);
     assert.notEqual(blocked.revision, complete.revision);
   }
   const unrelated = await eligibility(adapter({ dependencies: [{ ...dependency, labels: ['area/music'] }] }), 1);
   assert.equal(unrelated.revision, complete.revision);
+  const explicitlyReady = await eligibility(adapter({ dependencies: [{ ...dependency, labels: ['ready'] }] }), 1);
+  assert.equal(explicitlyReady.eligible, true);
+  const waitingForInput = await eligibility(adapter({ dependencies: [{ ...dependency, labels: ['ready', 'needs-input'] }] }), 1);
+  assert.notEqual(waitingForInput.revision, explicitlyReady.revision);
 });
 
 test('GitHub adapter reads all open issues, dependencies, descendants and paginated comments', async () => {
