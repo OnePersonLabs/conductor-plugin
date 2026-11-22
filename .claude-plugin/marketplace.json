@@ -1,0 +1,17 @@
+{
+  "name": "conductor",
+  "owner": {
+    "name": "OnePersonLabs"
+  },
+  "metadata": {
+    "description": "Conductor GitHub issue workflow for Claude Code and Codex."
+  },
+  "plugins": [
+    {
+      "name": "conductor",
+      "source": "./plugins/conductor",
+      "description": "Plan, implement, review, and manage GitHub issues in your chosen mode.",
+      "category": "development"
+    }
+  ]
+}

@@ -106,7 +106,11 @@ function validatePackage() {
 
 function runUnit() {
   const nodeTests = readdirSync(join(root, 'tests')).filter((name) => name.endsWith('.test.mjs')).map((name) => join('tests', name));
-  if (nodeTests.length) run(process.execPath, ['--test', ...nodeTests], { label: 'Node unit tests' });
+  // Runtime selection falls back to the launching host (CLAUDECODE=1 in Claude Code).
+  // Pin it so results do not depend on which agent runs the suite; Claude tests select it explicitly.
+  const env = { ...process.env, CONDUCTOR_RUNTIME: 'codex' };
+  delete env.CLAUDECODE;
+  if (nodeTests.length) run(process.execPath, ['--test', ...nodeTests], { env, label: 'Node unit tests' });
   run(pythonCommand(), ['-B', 'tests/test_pr_feedback.py'], { label: 'PR feedback receipt tests' });
 }
 

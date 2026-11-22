@@ -6,7 +6,7 @@
   "repository": "https://github.com/OnePersonLabs/conductor-plugin",
   "keywords": ["github", "codex", "workflow", "issue-tracking", "pull-requests"],
   "skills": "./skills/",
-  "hooks": "./hooks/hooks.json",
+  "hooks": "./hooks/codex-hooks.json",
   "interface": {
     "displayName": "Conductor",
     "shortDescription": "Plan, implement, review, and manage issues in your chosen mode",

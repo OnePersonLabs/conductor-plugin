@@ -10,7 +10,7 @@
   "bin": { "conductor": "plugins/conductor/bin/conductor.mjs" },
   "files": ["plugins/conductor", "README.md", "LICENSE"],
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
+    "test": "node tools/verify.mjs unit",
     "test:contract": "node tools/verify.mjs contract",
     "test:unit": "node tools/verify.mjs unit",
     "test:installed": "node tools/verify.mjs installed",

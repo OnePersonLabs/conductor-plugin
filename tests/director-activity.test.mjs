@@ -261,7 +261,7 @@ test('pending destination lifecycle is recorded without director context before 
 });
 
 test('PostToolUse hook registration has room for the handoff instruction', async () => {
-  const hooks = JSON.parse(await readFile(new URL('../plugins/conductor/hooks/hooks.json', import.meta.url), 'utf8'));
+  const hooks = JSON.parse(await readFile(new URL('../plugins/conductor/hooks/codex-hooks.json', import.meta.url), 'utf8'));
   const lifecycle = hooks.hooks.PostToolUse.flatMap(group => group.hooks).find(hook => hook.command.includes('director-lifecycle'));
   assert.equal(lifecycle.additionalContextLimit, 2048);
 });

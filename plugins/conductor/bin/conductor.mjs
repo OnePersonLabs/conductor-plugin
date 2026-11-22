@@ -19,6 +19,7 @@ import { processExists } from '../lib/state.mjs';
 import { atomicJSON } from '../lib/state.mjs';
 import { ensureService, signalIfEnabled } from '../lib/bootstrap.mjs';
 import { git } from '../lib/process.mjs';
+import { resolveThreadArgument, selectRuntime } from '../lib/runtime.mjs';
 import { launchService, createReporter, activityLines } from '../lib/console.mjs';
 import { runnerPause, RUNNER_PAUSED_MESSAGE } from '../lib/runner-state.mjs';
 import { cleanupWorktrees } from '../lib/cleanup.mjs';
@@ -30,9 +31,10 @@ Usage: conductor enable [--thread UUID]
        conductor resolve-issue [--target ID|#ID|URL|name] [--current ID] (read-only identity lookup)
        conductor managed --session ID     (foreground JSONL worker bridge)
        conductor hold --request-file PATH (manual issue hold barrier)
-       conductor enable --host desktop --thread UUID
+       conductor enable --host desktop --thread UUID|current
        conductor attach --host desktop --thread UUID
        conductor wakeup
+       conductor director-wait [--timeout SECONDS] (Claude Code chat director: wait for the next wake)
        conductor resume                   (wake and resume runner-interrupted work)
        conductor resume ISSUE             (recover an individual issue)
        conductor observe                   (ensure observation without ending interaction)
@@ -44,13 +46,16 @@ Usage: conductor enable [--thread UUID]
 
 Use enable to persistently enable the repository runner. Wakeup resumes
 observation and requests a check. Passive signals never re-enable a stopped runner.
+--host desktop selects the runtime's chat host (Codex Desktop or Claude Code);
+--host daemon selects its service host. --thread current uses the calling
+Claude Code session (CLAUDE_CODE_SESSION_ID).
 Migration preview makes no changes; migrated configuration remains admission-paused.
 `;
 
 export function parseArgs(args) {
   const result = { command: 'run', overrides: {} };
   if (args[0] && !args[0].startsWith('-')) result.command = args.shift();
-  if (!['run','signal','status','check-setup','check-scope','resolve-issue','managed','hold','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup','observe','attach'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
+  if (!['run','signal','status','check-setup','check-scope','resolve-issue','managed','hold','cleanup','stop','cancel','resume','start','serve','rpc','migrate','enable','wakeup','observe','attach','director-wait'].includes(result.command)) throw new Error(`Unknown command: ${result.command}`);
   if (result.command === 'resolve-issue') {
     return { ...result, ...parseIssueTargetArgs(args) };
   }
@@ -63,6 +68,14 @@ export function parseArgs(args) {
     if (args.shift() !== '--session') throw new Error('managed requires --session ID.');
     result.sessionId = managedSessionId(args.shift());
     if (args.length) throw new Error('managed accepts only --session ID.');
+    return result;
+  }
+  if (result.command === 'director-wait') {
+    while (args.length) {
+      const flag = args.shift();
+      if (flag === '--timeout') { result.timeoutSeconds = Number(args.shift()); if (!Number.isFinite(result.timeoutSeconds) || result.timeoutSeconds <= 0) throw new Error('--timeout requires a positive number of seconds.'); }
+      else throw new Error(`Unknown option: ${flag}`);
+    }
     return result;
   }
   if (result.command === 'cleanup') {
@@ -81,7 +94,7 @@ export function parseArgs(args) {
     else if (flag === '--poll-interval') { result.overrides.pollInterval = args.shift(); if (!result.overrides.pollInterval) throw new Error('--poll-interval requires a duration.'); }
     else if (flag === '--thread' && result.command === 'resume') { result.threadId = args.shift(); if (!result.threadId) throw new Error('--thread requires the existing thread ID.'); }
     else if (flag === '--role' && result.command === 'resume') { result.role = args.shift(); if (!['builder', 'reviewer'].includes(result.role)) throw new Error('--role must be builder or reviewer.'); }
-    else if (flag === '--thread' && ['start','serve','enable','attach'].includes(result.command)) { result.threadId = args.shift(); if (!result.threadId) throw new Error('--thread requires a thread ID.'); }
+    else if (flag === '--thread' && ['start','serve','enable','attach'].includes(result.command)) { result.threadId = resolveThreadArgument(args.shift()); if (!result.threadId) throw new Error('--thread requires a thread ID.'); }
     else if (flag === '--host' && ['start','serve','enable','attach'].includes(result.command)) { result.host = args.shift(); if (!['desktop', 'daemon'].includes(result.host)) throw new Error('--host must be desktop or daemon.'); }
     else if (flag === '--attach-only' && result.command === 'serve') result.attachOnly = true;
     else if (flag === '--handoff-thread' && result.command === 'serve') { result.handoffThreadId = args.shift(); if (!result.handoffThreadId) throw new Error('--handoff-thread requires a thread ID.'); }
@@ -95,8 +108,8 @@ export function parseArgs(args) {
   }
   if (['start','serve','enable','attach'].includes(result.command) && result.threadId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.threadId)) throw new Error('--thread must be the existing director thread UUID.');
   if (result.command === 'attach' && (result.host !== 'desktop' || !result.threadId)) throw new Error('attach requires --host desktop --thread UUID.');
-  if (result.command === 'serve' && result.handoffThreadId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.handoffThreadId)) throw new Error('--handoff-thread must be an existing Desktop chat UUID.');
-  if (result.command === 'enable' && result.host === 'desktop' && !result.threadId) throw new Error('Desktop mode requires --thread with the current Codex Desktop chat UUID; Conductor cannot create a private replacement chat.');
+  if (result.command === 'serve' && result.handoffThreadId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.handoffThreadId)) throw new Error('--handoff-thread must be an existing chat UUID.');
+  if (result.command === 'enable' && result.host === 'desktop' && !result.threadId) throw new Error('Chat mode requires --thread with the current chat UUID (in Claude Code, --thread current); Conductor cannot create a private replacement chat.');
   if (result.command !== 'run' && Object.keys(result.overrides).length) throw new Error('Runtime options apply only to run.');
   if (result.command === 'hold' && !result.requestFile) throw new Error('hold requires --request-file PATH.');
   return result;
@@ -123,10 +136,20 @@ async function main() {
     console.log(JSON.stringify(await runManualHold(process.cwd(), JSON.parse(readFileSync(resolve(options.requestFile), 'utf8'))), null, 2)); return;
   }
   const repo = await inspectRepository(process.cwd());
+  if (options.command === 'director-wait') {
+    const { waitForDirectorWake } = await import('../lib/claude-director.mjs');
+    const outcome = await waitForDirectorWake({ cwd: process.cwd(), timeoutMs: (options.timeoutSeconds ?? 0) * 1000 });
+    if (outcome.text) process.stdout.write(`${outcome.text}
+`);
+    else console.log(JSON.stringify(outcome));
+    return;
+  }
   if (options.command === 'managed') {
     // Foreground work has its own recovery owner; never instantiate the automated Store.
     await repositorySetup.checkWorkScope(process.cwd(), 'local');
-    await runManagedBridge({ commonDir: repo.commonDir, cwd: repo.root, sessionId: options.sessionId }); return;
+    // Local phase work needs no conductor.json; when present it may pin the runtime.
+    let raw = null; try { raw = JSON.parse(readFileSync(resolve(repo.root, 'conductor.json'), 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    await runManagedBridge({ commonDir: repo.commonDir, cwd: repo.root, sessionId: options.sessionId, runtime: selectRuntime({ config: raw }), claudeSettings: raw?.claude }); return;
   }
   const store = new Store(repo.commonDir);
   const cliPath = fileURLToPath(import.meta.url);
@@ -157,7 +180,9 @@ async function main() {
         const configPath = resolve(repo.root, 'conductor.json');
         const backupPath = `${configPath}.legacy-${new Date().toISOString().replaceAll(':', '-')}.bak`;
         copyFileSync(configPath, backupPath);
-        const migrated = { ...raw, version: 2, labels, pollInterval: raw.pollInterval ?? '30m', directorModel: raw.directorModel ?? 'gpt-6.1-sol', plannerModel: raw.plannerModel ?? 'gpt-6-astra', admissionPaused: true };
+        const migrated = { ...raw, version: 2, labels, pollInterval: raw.pollInterval ?? '30m', admissionPaused: true };
+        // Models stay unset unless chosen, so the selected runtime supplies its own defaults.
+        for (const key of ['directorModel', 'plannerModel']) if (raw[key] !== undefined) migrated[key] = raw[key];
         delete migrated.readyLabel;
         await atomicJSON(configPath, migrated);
         console.log(JSON.stringify({ applied: result.length, repository: raw.repository, configPath, backupPath, admissionPaused: true }));

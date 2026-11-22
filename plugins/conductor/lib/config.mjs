@@ -1,6 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DEFAULT_LABELS } from './workflow.mjs';
+import { DEFAULTS, RUNTIMES, selectRuntime } from './runtime.mjs';
+
+const CLAUDE_PERMISSION_MODES = ['acceptEdits', 'auto', 'bypassPermissions', 'dontAsk', 'manual', 'plan'];
 
 export function duration(value) {
   const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/.exec(String(value));
@@ -34,8 +37,13 @@ function validateRepositorySettings(raw) {
     if (raw[key] !== undefined && typeof raw[key] !== 'string') throw new Error(`${key} must be a string.`);
   }
   if (raw.reviewEnabled !== undefined && typeof raw.reviewEnabled !== 'boolean') throw new Error('reviewEnabled must be a boolean.');
+  if (raw.runtime !== undefined && !RUNTIMES.includes(raw.runtime)) throw new Error(`runtime must be one of ${RUNTIMES.join(', ')}.`);
+  const claude = raw.claude ?? {};
+  if (!claude || typeof claude !== 'object' || Array.isArray(claude)) throw new Error('claude must be an object.');
+  if (claude.permissionMode !== undefined && !CLAUDE_PERMISSION_MODES.includes(claude.permissionMode)) throw new Error(`claude.permissionMode must be one of ${CLAUDE_PERMISSION_MODES.join(', ')}.`);
+  if (claude.allowedTools !== undefined && (!Array.isArray(claude.allowedTools) || claude.allowedTools.some(rule => typeof rule !== 'string' || !rule.trim()))) throw new Error('claude.allowedTools must be an array of permission rules.');
   if (raw.designHandoff !== undefined && (!raw.designHandoff || typeof raw.designHandoff !== 'object' || Array.isArray(raw.designHandoff) || typeof raw.designHandoff.command !== 'string' || !raw.designHandoff.command.trim() || !Array.isArray(raw.designHandoff.args) || raw.designHandoff.args.some(arg => typeof arg !== 'string'))) throw new Error('designHandoff needs a command and an array of string args.');
-  return { ...raw, agents, implementationInstructions: raw.implementationInstructions ?? '', reviewEnabled: raw.reviewEnabled ?? true, reviewInstructions: raw.reviewInstructions ?? '', readyLabel: raw.readyLabel ?? 'conductor:ready', priorityLabels: raw.priorityLabels ?? [], pollMs: duration(raw.pollInterval ?? '5m'), requiredApprovals, mergeMethod, prepare: raw.prepare ?? [] };
+  return { ...raw, runtime: selectRuntime({ config: raw }), claude: { permissionMode: claude.permissionMode, allowedTools: claude.allowedTools ?? [] }, agents, implementationInstructions: raw.implementationInstructions ?? '', reviewEnabled: raw.reviewEnabled ?? true, reviewInstructions: raw.reviewInstructions ?? '', readyLabel: raw.readyLabel ?? 'conductor:ready', priorityLabels: raw.priorityLabels ?? [], pollMs: duration(raw.pollInterval ?? '5m'), requiredApprovals, mergeMethod, prepare: raw.prepare ?? [] };
 }
 
 function requireExecutionAuthority(config) {
@@ -67,9 +75,10 @@ export function validateSetupConfig(raw) {
   const labels = { ...DEFAULT_LABELS, ...(raw.labels ?? {}) };
   if (Object.values(labels).some(value => typeof value !== 'string' || !value.trim())) throw new Error('labels must map each workflow state to a nonempty string.');
   if (new Set([labels.triage, labels.proposal, labels.ready, labels.hold, labels.needsInput].map(value => value.trim().toLowerCase())).size !== 5) throw new Error('triage, proposal, ready, hold and needsInput labels must be distinct.');
-  for (const [key, fallback] of [['directorModel', 'gpt-6.1-sol'], ['plannerModel', 'gpt-6-astra']]) {
+  // Model names belong to one runtime; an unset model takes that runtime's default.
+  for (const key of ['directorModel', 'plannerModel']) {
     if (raw[key] !== undefined && (typeof raw[key] !== 'string' || !raw[key].trim())) throw new Error(`${key} must be a nonempty model name.`);
-    base[key] = raw[key] ?? fallback;
+    base[key] = raw[key] ?? DEFAULTS[base.runtime][key];
   }
   return { ...base, version: 2, labels, pollMs: duration(raw.pollInterval ?? '30m'), admissionPaused: raw.admissionPaused === true };
 }

@@ -3,8 +3,8 @@ import { mkdir, access, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { hostname, homedir } from 'node:os';
-import { CodexClient } from './codex.mjs';
+import { hostname } from 'node:os';
+import { clientClass, homeStamp, hostModeFor, isChatHost, runtimeOfHost, selectRuntime } from './runtime.mjs';
 import { GitHub, checkState, deliveryWaitReason } from './github.mjs';
 import { git, run } from './process.mjs';
 import { createWorktree, copyWorktreeIncludes, refreshBranch, inspectRepository } from './worktrees.mjs';
@@ -23,8 +23,11 @@ const digest = value => createHash('sha256').update(JSON.stringify(value)).diges
 const activePhases = new Set(['building','reviewing','launching','starting','preparing']);
 
 export class Coordinator extends EventEmitter {
-  constructor({ repo, config, store, github, Client = CodexClient, Host = DirectorHost, execute = run, workspace = { createWorktree, copyWorktreeIncludes, refreshBranch } }) {
-    super(); Object.assign(this, { repo, config, store, Client, Host, execute, workspace });
+  constructor({ repo, config, store, github, Client, Host = DirectorHost, execute = run, workspace = { createWorktree, copyWorktreeIncludes, refreshBranch } }) {
+    super();
+    // The runtime is fixed per service: a repository's workers and director share one host.
+    const runtime = config.runtime ?? selectRuntime({ config });
+    Object.assign(this, { repo, config, store, runtime, Client: Client ?? clientClass(runtime), Host, execute, workspace });
     this.github = github ?? new GitHub(config.repository, { cwd: repo.root, beforeWrite: () => this.assertRunning() });
     this.clients = new Map(); this.tasks = new Map(); this.requests = new Map(); this.preparations = new Map();
     this.controls = new Set();
@@ -55,8 +58,8 @@ export class Coordinator extends EventEmitter {
       await this.store.cleanupOwned();
       await this.store.cleanupMigrationBackups(this.repo.root, Date.now(), this.config.version === 2);
       if (this.state.repository && this.state.repository !== this.config.repository) throw new Error('Recovery state belongs to another GitHub repository. Resolve configuration before proceeding.');
-      const environment = { platform: process.platform, host: hostname(), codexHome: resolve(process.env.CODEX_HOME ?? join(homedir(), '.codex')) };
-      if (this.state.environment && JSON.stringify(this.state.environment) !== JSON.stringify(environment) && this.state.jobs.some(job => !['complete','cancelled'].includes(job.phase))) throw new Error('Unfinished builders belong to a different OS or Codex home. Resume in that environment; no replacement builder was started.');
+      const environment = { platform: process.platform, host: hostname(), ...homeStamp(this.runtime) };
+      if (this.state.environment && JSON.stringify(this.state.environment) !== JSON.stringify(environment) && this.state.jobs.some(job => !['complete','cancelled'].includes(job.phase))) throw new Error('Unfinished builders belong to a different OS, runtime or agent home. Resume in that environment; no replacement builder was started.');
       this.state.environment = environment;
       this.state.repository = this.config.repository; this.state.root = this.repo.root;
       await this.cleanupCompletedWorktrees();
@@ -69,15 +72,16 @@ export class Coordinator extends EventEmitter {
         this.state.director ??= {};
         this.state.director.attachProtocol = 1;
         if (threadId && this.state.director.threadId && threadId !== this.state.director.threadId && !handoffThreadId) throw new Error('Repository already has a different designated director.');
-        const hostMode = host === 'desktop' ? 'codex-desktop' : host === 'daemon' ? 'codex-app-server-daemon' : this.state.director.threadHostOwnership?.host;
+        const hostMode = hostModeFor(this.runtime, host) ?? this.state.director.threadHostOwnership?.host;
+        if (hostMode && runtimeOfHost(hostMode) !== this.runtime) throw new Error(`The bound director uses the ${runtimeOfHost(hostMode)} runtime; this service is configured for ${this.runtime}. Preserve the existing runtime or rebind deliberately.`);
         if (hostMode && this.state.director.threadHostOwnership?.host && hostMode !== this.state.director.threadHostOwnership.host) throw new Error('A bound director cannot be moved between app-server hosts. Preserve the existing host.');
         this.state.runtimeEnabled ??= Boolean(this.state.director.threadId);
         if (enable) this.state.runtimeEnabled = true;
         if (!this.state.runtimeEnabled) throw new Error('Repository runtime is not enabled. Use conductor enable.');
         if (threadId && (!this.state.director.threadId || threadId === this.state.director.threadId)) this.state.director.threadId = threadId;
-        if (hostMode === 'codex-desktop') {
-          if (!this.state.director.threadId) throw new Error('Create the director with the native Desktop task tool, then enable with its thread UUID.');
-          this.state.director.threadHostOwnership = { threadId: this.state.director.threadId, host: hostMode, codexHome: environment.codexHome };
+        if (isChatHost(hostMode)) {
+          if (!this.state.director.threadId) throw new Error('Create the director chat in the host (a Codex Desktop task or a Claude Code session), then enable with its thread UUID.');
+          this.state.director.threadHostOwnership = { threadId: this.state.director.threadId, host: hostMode, ...homeStamp(this.runtime) };
           const { DirectorActivity } = await import('./director-activity.mjs');
           if (this.stopping) return;
           this.directorActivity = new DirectorActivity({ dir: this.store.dir });
@@ -86,7 +90,7 @@ export class Coordinator extends EventEmitter {
         await this.save();
         if (this.stopping) return;
         this.directorHost = new this.Host({ cwd: this.repo.root, repository: this.config.repository,
-          model: this.config.directorModel, state: this.state.director, save: () => this.save(), execute: this.execute, activity: this.directorActivity });
+          model: this.config.directorModel, runtime: this.runtime, claudeSettings: this.config.claude, state: this.state.director, save: () => this.save(), execute: this.execute, activity: this.directorActivity });
         this.hostStartup = (async () => {
           await this.directorHost.connect();
           if (this.stopping) return null;
@@ -316,13 +320,13 @@ export class Coordinator extends EventEmitter {
   }
   async attachThread(targetThreadId) {
     const director = this.state.director;
-    if (!this.directorHost || this.directorHost.hostMode !== 'codex-desktop') throw new Error('Chat handoff requires the repository director to use the Desktop native queue.');
-    if (typeof targetThreadId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(targetThreadId)) throw new TypeError('Destination must be an existing Desktop chat UUID.');
+    if (!this.directorHost || !isChatHost(this.directorHost.hostMode)) throw new Error('Chat handoff requires the repository director to use a chat host queue (Codex Desktop or Claude Code).');
+    if (typeof targetThreadId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(targetThreadId)) throw new TypeError('Destination must be an existing chat UUID.');
     if (director.handoff && director.handoff.toThreadId !== targetThreadId) throw new Error(`A handoff to ${director.handoff.toThreadId} is already pending; resolve it before choosing another chat.`);
     await this.directorHost.validateDesktopThread(targetThreadId);
     if (!director.threadId) {
       const target = await this.directorHost.validateDesktopThread(targetThreadId);
-      director.threadId = targetThreadId; director.threadHostOwnership = { threadId: targetThreadId, host: 'codex-desktop', kind: 'attached', codexHome: resolve(process.env.CODEX_HOME ?? join(homedir(), '.codex')), lifecycleBaseline: await this.directorActivity.read(targetThreadId) };
+      director.threadId = targetThreadId; director.threadHostOwnership = { threadId: targetThreadId, host: this.directorHost.hostMode, kind: 'attached', ...homeStamp(this.runtime), lifecycleBaseline: await this.directorActivity.read(targetThreadId) };
       this.state.threadId = targetThreadId; this.state.runtimeEnabled = true; this.directorHost.threadId = targetThreadId; this.directorHost.threadEnsured = true;
       director.nativeActivity = await this.directorActivity.read(targetThreadId);
       this.activityRevision = null;
@@ -428,7 +432,7 @@ export class Coordinator extends EventEmitter {
       if (director.recoveryRequired?.turnId && director.recoveryRequired.turnId === handoff.turnId && !director.recoveryRequired.resolvedAt) {
         director.recoveryRequired.resolvedAt = new Date().toISOString(); director.recoveryRequired.outcome = 'Director chat handed off after its native turn reached a terminal state.';
       }
-      director.threadId = target.id; director.threadHostOwnership = { threadId: target.id, host: 'codex-desktop', kind: 'attached', codexHome: resolve(process.env.CODEX_HOME ?? join(homedir(), '.codex')), lifecycleBaseline: baseline };
+      director.threadId = target.id; director.threadHostOwnership = { threadId: target.id, host: this.directorHost.hostMode, kind: 'attached', ...homeStamp(this.runtime), lifecycleBaseline: baseline };
       this.state.runtimeEnabled = true;
       delete director.handoff; delete director.nativeActivity;
       this.state.threadId = target.id; this.directorHost.threadId = target.id; this.directorHost.threadEnsured = true; this.directorHost.currentStatus = { type: 'unknown', activeFlags: [] }; this.activityRevision = null;
@@ -789,7 +793,7 @@ export class Coordinator extends EventEmitter {
       await this.publishReviewResult(job);
       return;
     }
-    const client = new this.Client({ cwd: job.worktree });
+    const client = new this.Client({ cwd: job.worktree, settings: this.config.claude });
     this.clients.set(job.issue, client);
     let finalText = '';
     let threadId;
@@ -811,7 +815,7 @@ export class Coordinator extends EventEmitter {
       this.emit('request', { key, issue: job.issue, role, ...request });
       if (this.director) this.director.events.emit({ kind: 'worker-question', key, issue: job.issue, method: request.method }).then(() => this.director.events.flush()).catch(error => this.emit('notice', error.message));
     });
-    client.on('exit', ({ code }) => terminalReject(new Error(`Codex process exited (${code}) before a terminal turn result.`)));
+    client.on('exit', ({ code }) => terminalReject(new Error(`${this.runtime === 'claude' ? 'Claude' : 'Codex'} process exited (${code}) before a terminal turn result.`)));
     client.on('error', terminalReject);
     try {
       if (job.intent || this.executionBlocked()) return;
@@ -841,7 +845,7 @@ export class Coordinator extends EventEmitter {
       this.assertRunning();
       await client.setThreadName({ threadId, name: `${this.config.repository} #${issue.number} - ${role}` });
       if (this.executionBlocked() || job.intent) return;
-      if (this.config.maxTurns && this.state.jobs.reduce((n, j) => n + (j.turnCount ?? 0), 0) >= this.config.maxTurns) throw new Error('Configured total Codex turn budget exhausted; work is retained.');
+      if (this.config.maxTurns && this.state.jobs.reduce((n, j) => n + (j.turnCount ?? 0), 0) >= this.config.maxTurns) throw new Error('Configured total agent turn budget exhausted; work is retained.');
       const base = role === 'reviewer' ? await this.base() : null;
       const head = role === 'reviewer' ? await git(job.worktree, 'rev-parse', 'HEAD') : null;
       if (role === 'reviewer') {
@@ -1242,7 +1246,7 @@ export class Coordinator extends EventEmitter {
     job.builderThreadId ??= job.threadId ?? null;
     let savedThread = job[field] ?? (targetRole === 'builder' ? job.threadId : null);
     if (!savedThread && job.prepared) {
-      const client = new this.Client({ cwd: job.worktree });
+      const client = new this.Client({ cwd: job.worktree, settings: this.config.claude });
       try {
         await client.connect();
         const candidates = await client.listThreads({ cwd: job.worktree });
@@ -1251,7 +1255,7 @@ export class Coordinator extends EventEmitter {
         const named = candidates.filter(thread => thread.name === expectedName);
         const eligible = named.length ? named : targetRole === 'builder' ? candidates.filter(thread => !thread.name || thread.name === `${this.config.repository} #${issue} - builder`) : [];
         const selected = threadId ? candidates.find(thread => thread.id === threadId) : eligible.length === 1 ? eligible[0] : null;
-        if (!selected) throw new Error(`Thread ownership for the ${targetRole} is uncertain. Inspect Codex threads for this worktree, then use resume ISSUE --role ${targetRole} --thread ID; no replacement session was started.`);
+        if (!selected) throw new Error(`Thread ownership for the ${targetRole} is uncertain. Inspect the host's threads (Codex threads or Claude sessions) for this worktree, then use resume ISSUE --role ${targetRole} --thread ID; no replacement session was started.`);
         const recovered = await client.readThread({ threadId: selected.id });
         if (recovered.turns?.some(turn => turn.status === 'inProgress')) throw new Error('The selected thread is still active; reconcile its owner first.');
         this.assertRunning();

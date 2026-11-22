@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { hostname } from 'node:os';
 import { processExists } from './state.mjs';
 import { runnerPause } from './runner-state.mjs';
+import { hostModeFor, isChatHost, selectRuntime } from './runtime.mjs';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -65,14 +66,15 @@ export async function ensureService({ store, root, threadId, enable = false, man
     if (threadId && state.director?.threadId && state.director.threadId !== threadId && !attachThreadId) {
       throw new Error(`Repository is bound to director thread ${state.director.threadId}; rebind explicitly before changing it.`);
     }
-    const requestedHost = host === 'desktop' ? 'codex-desktop' : host === 'daemon' ? 'codex-app-server-daemon' : host;
+    const config = await readJSON(join(root, 'conductor.json')).catch(() => null);
+    const requestedHost = hostModeFor(selectRuntime({ config }), host);
     const savedOwnership = state.director?.threadHostOwnership ?? state.threadHostOwnership;
-    if (attachThreadId && savedOwnership?.host && savedOwnership.host !== 'codex-desktop') throw new Error(`Chat handoff requires the Desktop native queue; this director is bound to ${savedOwnership.host}.`);
+    if (attachThreadId && savedOwnership?.host && !isChatHost(savedOwnership.host)) throw new Error(`Chat handoff requires a chat host queue (Codex Desktop or Claude Code); this director is bound to ${savedOwnership.host}.`);
     if (requestedHost && savedOwnership?.host && requestedHost !== savedOwnership.host && !attachThreadId) {
       throw new Error(`Director thread ${state.director?.threadId ?? savedOwnership.threadId} is owned by ${savedOwnership.host}; refusing to start it through ${requestedHost}. Reconcile its ownership explicitly first.`);
     }
-    if (requestedHost === 'codex-desktop' && !threadId && !state.director?.threadId && !attachThreadId) {
-      throw new Error('Desktop mode requires --thread with the current Codex Desktop chat UUID; Conductor cannot create a private replacement chat.');
+    if (isChatHost(requestedHost) && !threadId && !state.director?.threadId && !attachThreadId) {
+      throw new Error('Chat mode requires --thread with the current chat UUID (in Claude Code, --thread current); Conductor cannot create a private replacement chat.');
     }
     const owner = await store.owner();
     const isLive = owner?.hostname === hostname() && owner.platform === process.platform && processExists(owner.pid);

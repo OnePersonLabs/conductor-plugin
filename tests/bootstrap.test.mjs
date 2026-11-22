@@ -226,7 +226,7 @@ test('explicit host changes are rejected for an already bound director', async t
 
 test('Desktop attach refuses to move a daemon-owned director between hosts', async t => {
   const { base, store } = await fixture(t, { runtimeEnabled: true, director: { threadId: THREAD, enabled: true, threadHostOwnership: { threadId: THREAD, host: 'codex-app-server-daemon' } } });
-  await assert.rejects(ensureService({ store, root: base, attachThreadId: '019c6e27-e55b-73d1-87d8-4e01f1f75044', host: 'desktop', cliPath: 'conductor.mjs', execute: async () => { throw new Error('must reject before launch'); } }), /requires the Desktop native queue/);
+  await assert.rejects(ensureService({ store, root: base, attachThreadId: '019c6e27-e55b-73d1-87d8-4e01f1f75044', host: 'desktop', cliPath: 'conductor.mjs', execute: async () => { throw new Error('must reject before launch'); } }), /requires a chat host queue/);
 });
 
 test('simultaneous enable requests converge on one ready service', async t => {

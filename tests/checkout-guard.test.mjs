@@ -87,6 +87,25 @@ test('read-only inspection works; patches, GitHub writes, queues and ambiguous t
   ]) assert.equal((await handleCheckoutGuard(f.payload(tool, input))).denied, true, tool);
 });
 
+test('Claude Code tools follow the same read and write boundary, and a claude-code director owns its checkout', async t => {
+  const f = await fixture(t);
+  for (const [tool, input] of [
+    ['Read', { file_path: join(f.root, 'README.md') }],
+    ['Grep', { pattern: 'fixture', path: f.root }],
+    ['PowerShell', { command: 'Get-Content -LiteralPath README.md -Raw' }],
+  ]) assert.equal((await handleCheckoutGuard(f.payload(tool, input))).denied, undefined, tool);
+  for (const [tool, input] of [
+    ['Edit', { file_path: join(f.root, 'README.md'), old_string: 'fixture', new_string: 'changed' }],
+    ['Write', { file_path: join(f.root, 'new.md'), content: 'x' }],
+    ['NotebookEdit', { notebook_path: join(f.root, 'n.ipynb'), new_source: 'x' }],
+    ['PowerShell', { command: 'Set-Content -LiteralPath README.md changed' }],
+    ['mcp__github__update_issue', { owner: 'OnePersonLabs', repo: 'example', issue_number: 1 }],
+  ]) assert.equal((await handleCheckoutGuard(f.payload(tool, input))).denied, true, tool);
+  f.state.director.threadHostOwnership.host = 'claude-code'; await f.save();
+  const edit = { ...f.payload('Edit', { file_path: join(f.root, 'README.md') }), session_id: DIRECTOR };
+  assert.equal((await handleCheckoutGuard(edit)).denied, undefined);
+});
+
 test('shell allowlist rejects execution features and read-command escape hatches', () => {
   for (const command of [
     'Get-Content -LiteralPath file -Raw', 'Get-ChildItem -LiteralPath . -Force',
@@ -202,7 +221,7 @@ test('configured corrupt ownership fails closed and native hook emits a tool-onl
   const notice = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ ...f.payload(), hook_event_name: 'UserPromptSubmit' }), encoding: 'utf8', windowsHide: true });
   assert.equal(notice.status, 0);
   assert.match(JSON.parse(notice.stdout).hookSpecificOutput.additionalContext, /🚨/);
-  const hooks = JSON.parse(await readFile(new URL('../plugins/conductor/hooks/hooks.json', import.meta.url), 'utf8')).hooks;
+  const hooks = JSON.parse(await readFile(new URL('../plugins/conductor/hooks/codex-hooks.json', import.meta.url), 'utf8')).hooks;
   for (const event of ['PreToolUse', 'UserPromptSubmit']) assert.ok(hooks[event].some(group => group.hooks.some(hook => hook.command.includes('/hooks/checkout-guard.mjs'))));
 });
 

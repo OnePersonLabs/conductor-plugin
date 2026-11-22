@@ -13,10 +13,13 @@ const TOOL_MUTATIONS = new Set([
   'github_add_comment_to_issue', 'github_update_issue_comment', 'github_lock_issue_conversation', 'github_unlock_issue_conversation',
 ]);
 
+// The GitHub MCP server used from Claude Code (`mcp__<server>__<tool>`).
+const MCP_GITHUB = /^mcp__[^_]*github[^_]*__(create_issue|update_issue|add_issue_comment|issue_write|sub_issue_write|lock_issue|unlock_issue)$/i;
+
 export function recognizedIssueMutation(payload) {
   const name = payload?.tool_name;
-  if (typeof name === 'string' && [...TOOL_MUTATIONS].some(tool => name.endsWith(tool))) return true;
-  if (typeof name !== 'string' || !/^(?:Bash|shell|exec_command)$/.test(name)) return false;
+  if (typeof name === 'string' && ([...TOOL_MUTATIONS].some(tool => name.endsWith(tool)) || MCP_GITHUB.test(name))) return true;
+  if (typeof name !== 'string' || !/^(?:Bash|PowerShell|shell|exec_command)$/.test(name)) return false;
   const command = payload?.tool_input?.command ?? payload?.tool_input?.cmd;
   if (typeof command !== 'string') return false;
   if (/[;&|\r\n`]/.test(command) || command.includes('$(')) return false;
@@ -24,17 +27,22 @@ export function recognizedIssueMutation(payload) {
   return Boolean(match && GH_MUTATIONS.has(match[1].toLowerCase()));
 }
 
+function isRepositoryScopedTool(name) {
+  return typeof name === 'string' && (name.startsWith('mcp__codex_apps__github_') || MCP_GITHUB.test(name));
+}
+
 function toolRepository(payload) {
-  if (!payload.tool_name?.startsWith('mcp__codex_apps__github_')) return null;
+  if (!isRepositoryScopedTool(payload.tool_name)) return null;
   const input = payload.tool_input;
+  if (typeof input?.owner === 'string' && typeof input?.repo === 'string') return `${input.owner}/${input.repo}`;
   return typeof input?.repository_full_name === 'string' ? input.repository_full_name
     : typeof input?.repo_full_name === 'string' ? input.repo_full_name : null;
 }
 
 function isConductorComment(payload) {
   const name = payload?.tool_name ?? '';
-  if (!name.endsWith('github_add_comment_to_issue') && !name.endsWith('github_update_issue_comment')) return false;
-  return /^\s*<!--\s*conductor:/i.test(payload.tool_input?.comment ?? '');
+  if (!name.endsWith('github_add_comment_to_issue') && !name.endsWith('github_update_issue_comment') && !/__add_issue_comment$/.test(name)) return false;
+  return /^\s*<!--\s*conductor:/i.test(payload.tool_input?.comment ?? payload.tool_input?.body ?? '');
 }
 
 function commandRepository(command) {
@@ -47,7 +55,7 @@ export async function eligibleRepository(payload, { cwd = payload?.cwd } = {}) {
   if (typeof cwd !== 'string' || !cwd.trim() || !recognizedIssueMutation(payload) || isConductorComment(payload)) return null;
   const command = payload.tool_input?.command ?? payload.tool_input?.cmd ?? '';
   const inputRepo = toolRepository(payload) ?? commandRepository(command);
-  if (payload.tool_name?.startsWith('mcp__codex_apps__github_') && !inputRepo) return null;
+  if (isRepositoryScopedTool(payload.tool_name) && !inputRepo) return null;
   try {
     const repo = await inspectRepository(cwd);
     const config = JSON.parse(await readFile(join(repo.root, 'conductor.json'), 'utf8'));

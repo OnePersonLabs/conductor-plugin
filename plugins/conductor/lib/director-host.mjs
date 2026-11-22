@@ -2,8 +2,9 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
-import { homedir } from 'node:os';
 import { CodexClient } from './codex.mjs';
+import { ClaudeClient } from './claude.mjs';
+import { DEFAULTS, homeStamp, isChatHost, isServiceHost, runtimeOfHost } from './runtime.mjs';
 import { run } from './process.mjs';
 
 function mappedStatus(status) {
@@ -23,23 +24,30 @@ export function directorTitle(product, date = new Date()) {
 }
 
 export class DirectorHost extends EventEmitter {
-  constructor({ client, cwd, repository, model = 'gpt-6.1-sol', reasoningEffort = 'low', skillPath = fileURLToPath(new URL('../skills/direct-workflow/SKILL.md', import.meta.url)), threadId, state, save, execute = run, activity, host } = {}) {
+  constructor({ client, cwd, repository, runtime, claudeSettings, model, reasoningEffort, skillPath = fileURLToPath(new URL('../skills/direct-workflow/SKILL.md', import.meta.url)), threadId, state, save, execute = run, activity, host } = {}) {
     super();
     if (typeof cwd !== 'string' || !cwd) throw new TypeError('cwd is required.');
     if (typeof repository !== 'string' || !/^[^/]+\/[^/]+$/.test(repository)) throw new TypeError('repository must be owner/name.');
     if (!state || typeof state !== 'object' || Array.isArray(state)) throw new TypeError('director state is required.');
     if (typeof save !== 'function') throw new TypeError('save callback is required.');
     if (client && typeof client.connect !== 'function') throw new TypeError('client must support connect().');
-    const hostMode = host ?? state.threadHostOwnership?.host ?? 'codex-app-server-daemon';
-    if (!['codex-app-server-daemon', 'codex-desktop'].includes(hostMode)) throw new TypeError('host must be codex-app-server-daemon or codex-desktop.');
-    if (hostMode === 'codex-desktop' && (state.threadHostOwnership?.host !== 'codex-desktop' || !state.threadHostOwnership?.threadId)) {
-      throw new Error('Desktop host mode requires an explicit codex-desktop thread ownership receipt.');
+    const selected = runtime ?? runtimeOfHost(host ?? state.threadHostOwnership?.host) ?? 'codex';
+    const hostMode = host ?? state.threadHostOwnership?.host ?? (selected === 'claude' ? 'claude-headless' : 'codex-app-server-daemon');
+    if (!isChatHost(hostMode) && !isServiceHost(hostMode)) throw new TypeError('host must be codex-app-server-daemon, codex-desktop, claude-headless or claude-code.');
+    if (runtimeOfHost(hostMode) !== selected) throw new TypeError(`Host ${hostMode} does not belong to the ${selected} runtime.`);
+    if (isChatHost(hostMode) && (state.threadHostOwnership?.host !== hostMode || !state.threadHostOwnership?.threadId)) {
+      throw new Error(`Chat host mode requires an explicit ${hostMode} thread ownership receipt.`);
     }
-    Object.assign(this, { client: client ?? new CodexClient({ cwd, transport: 'proxy', experimentalApi: hostMode === 'codex-desktop' }), cwd: resolve(cwd), repository, model, reasoningEffort, skillPath, state, save, execute, activity, hostMode });
+    const defaultClient = () => selected === 'claude'
+      ? new ClaudeClient({ cwd, settings: claudeSettings })
+      : new CodexClient({ cwd, transport: 'proxy', experimentalApi: hostMode === 'codex-desktop' });
+    Object.assign(this, { client: client ?? defaultClient(), cwd: resolve(cwd), repository, runtime: selected, model: model ?? DEFAULTS[selected].directorModel, reasoningEffort: reasoningEffort ?? DEFAULTS[selected].directorEffort, skillPath, state, save, execute, activity, hostMode });
     this.threadId = threadId ?? state.threadId ?? null;
     // Keep a creation attempt's name stable across retries and minute boundaries.
     this.creationTitle = state.threadCreationIntent?.name ?? directorTitle(repository.split('/').at(-1));
-    this.codexHome = resolve(process.env.CODEX_HOME ?? `${homedir()}/.codex`);
+    this.homeStamp = homeStamp(selected);
+    // Expose the stamped home (codexHome or claudeHome) for ownership receipts.
+    for (const [key, value] of Object.entries(this.homeStamp)) if (key.endsWith('Home')) this[key] = value;
     this.threadEnsured = false;
     this.currentStatus = { type: 'unknown', activeFlags: [] };
     this.inflightRevision = null;
@@ -75,7 +83,7 @@ export class DirectorHost extends EventEmitter {
   get directorName() { return this.creationTitle; }
 
   async ensureThread() {
-    if (this.hostMode === 'codex-desktop') return this._ensureDesktopThread();
+    if (isChatHost(this.hostMode)) return this._ensureDesktopThread();
     if (this.threadId) {
       const savedId = this.threadId;
       try {
@@ -147,16 +155,17 @@ export class DirectorHost extends EventEmitter {
 
   _hasOwnership(threadId) {
     const marker = this.state.threadHostOwnership;
-    return marker?.threadId === threadId && marker.host === 'codex-app-server-daemon' && resolve(marker.codexHome ?? '') === this.codexHome;
+    const [key, home] = Object.entries(this.homeStamp).find(([name]) => name.endsWith('Home'));
+    return marker?.threadId === threadId && marker.host === this.hostMode && resolve(marker[key] ?? '') === home;
   }
 
   _recordOwnership(threadId, kind) {
-    this.state.threadHostOwnership = { threadId, host: 'codex-app-server-daemon', codexHome: this.codexHome, kind, establishedAt: this.state.threadHostOwnership?.threadId === threadId ? this.state.threadHostOwnership.establishedAt : new Date().toISOString() };
+    this.state.threadHostOwnership = { threadId, host: this.hostMode, ...this.homeStamp, kind, establishedAt: this.state.threadHostOwnership?.threadId === threadId ? this.state.threadHostOwnership.establishedAt : new Date().toISOString() };
   }
 
   async status() {
     if (!this.threadId) return { type: 'notLoaded', activeFlags: [] };
-    if (this.hostMode === 'codex-desktop') {
+    if (isChatHost(this.hostMode)) {
       if (!this.activity || typeof this.activity.read !== 'function') {
         const unknown = { type: 'unknown', activeFlags: [], error: 'Desktop activity adapter is unavailable.' };
         this._publishStatus(unknown);
@@ -222,11 +231,14 @@ export class DirectorHost extends EventEmitter {
     if (this.inflightRevision !== null && this.inflightRevision === revision) throw Object.assign(new Error('This director wakeup revision is already in flight.'), { code: 'DIRECTOR_BUSY' });
     this.inflightRevision = revision ?? randomUUID();
     try {
-      if (this.hostMode === 'codex-desktop') {
+      if (isChatHost(this.hostMode)) {
         if (typeof revision !== 'string' || !revision) throw Object.assign(new Error('Desktop wakeup requires the persisted batch ID as its revision so uncertain queue submissions can be reconciled.'), { code: 'DIRECTOR_UNAVAILABLE' });
         const marker = `<!-- conductor:director-wakeup:${revision} -->`;
         const clientMessageId = `conductor-director-${revision}`;
-        const message = `$conductor:direct-workflow\n\n${marker}\n${prompt}`;
+        // Codex Desktop expands `$skill` in a queued user turn. A Claude Code wake
+        // arrives as background-task output or a Stop-hook reason, so name the skill.
+        const invoke = this.runtime === 'claude' ? 'Continue under the conductor:direct-workflow skill.' : '$conductor:direct-workflow';
+        const message = `${invoke}\n\n${marker}\n${prompt}`;
         const queuedSubmission = await this.client.addQueuedMessage({ threadId, text: message, clientUserMessageId: clientMessageId });
         if (typeof queuedSubmission.id !== 'string' || !queuedSubmission.id) throw new Error('Codex accepted the Desktop wake request without returning its queue item ID; inspect the saved marker before retrying.');
         this.currentStatus = { type: 'active', activeFlags: [], nativeTurnId: null, wakeupMarker: marker };
@@ -254,7 +266,7 @@ export class DirectorHost extends EventEmitter {
   }
 
   _notification(method, params) {
-    if (this.hostMode === 'codex-desktop') return;
+    if (isChatHost(this.hostMode)) return;
     if (!params || params.threadId !== this.threadId) return;
     if (method === 'thread/status/changed') this._setStatus(params.status);
     if (method === 'turn/completed') {
@@ -289,8 +301,8 @@ export class DirectorHost extends EventEmitter {
   async _ensureDesktopThread() {
     const ownership = this.state.threadHostOwnership;
     const threadId = this.threadId ?? ownership?.threadId;
-    if (!threadId || ownership?.threadId !== threadId || ownership?.host !== 'codex-desktop') {
-      throw new Error('No explicitly bound Codex Desktop director thread is saved. Create/open the director thread in Codex Desktop and bind its thread UUID before enabling Desktop wakeups.');
+    if (!threadId || ownership?.threadId !== threadId || ownership?.host !== this.hostMode) {
+      throw new Error('No explicitly bound director chat is saved. Create/open the director chat (a Codex Desktop task or a Claude Code session) and bind its thread UUID before enabling chat wakeups.');
     }
     let existing;
     try {
@@ -312,7 +324,7 @@ export class DirectorHost extends EventEmitter {
   }
 
   async findQueuedWakeup(marker) {
-    if (this.hostMode !== 'codex-desktop') throw new Error('Queued wakeup inspection is available only for a Codex Desktop director.');
+    if (!isChatHost(this.hostMode)) throw new Error('Queued wakeup inspection is available only for a chat-hosted director.');
     if (!this.threadId) throw new Error('No Desktop director thread is bound.');
     if (typeof marker !== 'string' || !marker) throw new TypeError('marker is required.');
     const queued = await this.client.listQueuedMessages({ threadId: this.threadId });
@@ -320,7 +332,7 @@ export class DirectorHost extends EventEmitter {
   }
 
   async validateDesktopThread(threadId) {
-    if (this.hostMode !== 'codex-desktop') throw new Error('Desktop chat validation is available only for a Desktop director.');
+    if (!isChatHost(this.hostMode)) throw new Error('Chat validation is available only for a chat-hosted director.');
     if (typeof threadId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(threadId)) throw new TypeError('threadId must be an existing chat UUID.');
     const thread = await this.client.readThread({ threadId, includeTurns: false });
     if (typeof thread.cwd !== 'string' || resolve(thread.cwd) !== this.cwd) throw new Error(`Desktop chat ${threadId} belongs to ${thread.cwd ?? 'an unknown working directory'}, not ${this.cwd}.`);
@@ -330,7 +342,7 @@ export class DirectorHost extends EventEmitter {
   }
 
   async cancelQueuedWakeup(queueItemId) {
-    if (this.hostMode !== 'codex-desktop') throw new Error('Queued wakeup cancellation is available only for a Codex Desktop director.');
+    if (!isChatHost(this.hostMode)) throw new Error('Queued wakeup cancellation is available only for a chat-hosted director.');
     if (!this.threadId) throw new Error('No Desktop director thread is bound.');
     if (typeof queueItemId !== 'string' || !queueItemId) throw new TypeError('queueItemId is required.');
     return this.client.deleteQueuedMessage({ threadId: this.threadId, queuedSubmissionId: queueItemId });

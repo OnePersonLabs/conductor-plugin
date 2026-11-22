@@ -1,3 +1,4 @@
+import { isChatHost } from './runtime.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -223,7 +224,7 @@ export class DirectorEvents {
       return this.flush();
     }
     if (!batch || batch.status !== 'uncertain') throw new Error('Only an uncertain queue submission can be retried.');
-    if (this.host?.hostMode === 'codex-desktop') {
+    if (isChatHost(this.host?.hostMode)) {
       const queued = await this.host.findQueuedWakeup(batch.id);
       if (queued) {
         batch.status = 'queued'; batch.queueItemId = queued.id; batch.clientMessageId = queued.clientUserMessageId;

@@ -4,16 +4,19 @@ import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { inspectRepository } from './worktrees.mjs';
 import { processExists } from './process.mjs';
+import { ALL_HOSTS, isChatHost } from './runtime.mjs';
 import { parseIssueTargetArgs } from './issue-context.mjs';
 
 const READ_ONLY_CLI = fileURLToPath(new URL('../bin/conductor.mjs', import.meta.url));
 
 const ACTIVE_PHASES = new Set(['preparing', 'starting', 'launching', 'building', 'reviewing', 'checking', 'cancelling', 'uncertain']);
-const SHELL_TOOLS = new Set(['exec_command', 'shell', 'shell_command', 'Bash']);
+const SHELL_TOOLS = new Set(['exec_command', 'shell', 'shell_command', 'Bash', 'PowerShell']);
 // These names identify reviewed capabilities, not naming conventions. A new
 // read_* MCP tool can still mutate state and must not inherit permission.
 const READ_TOOLS = new Set([
   'view_image', 'read_file', 'list_dir', 'grep_files', 'file_search',
+  // Claude Code's built-in read-only tools.
+  'Read', 'Glob', 'Grep', 'LS', 'WebSearch', 'WebFetch', 'ToolSearch',
   'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource',
   'mcp__codex_app__list_threads', 'mcp__codex_app__read_thread',
   'mcp__codex_app__list_archived_threads', 'mcp__codex_app__wait_threads',
@@ -66,8 +69,8 @@ function authorizedDirector(state, sessionId) {
   if (typeof sessionId !== 'string' || !sessionId) return false;
   const director = state.director;
   const ownership = director?.threadHostOwnership;
-  if (!['codex-desktop', 'codex-app-server-daemon'].includes(ownership?.host) || (ownership.threadId && ownership.threadId !== director.threadId)) return false;
-  return director.threadId === sessionId || (ownership.host === 'codex-desktop' && director.handoff?.fromThreadId === director.threadId && director.handoff.toThreadId === sessionId);
+  if (!ALL_HOSTS.has(ownership?.host) || (ownership.threadId && ownership.threadId !== director.threadId)) return false;
+  return director.threadId === sessionId || (isChatHost(ownership.host) && director.handoff?.fromThreadId === director.threadId && director.handoff.toThreadId === sessionId);
 }
 
 // This intentionally accepts a small shell language: a single literal command.
@@ -154,7 +157,7 @@ function candidatePaths(payload, input) {
   const paths = [process.cwd()];
   if (typeof payload.cwd === 'string') paths.push(payload.cwd);
   const base = typeof payload.cwd === 'string' ? payload.cwd : process.cwd();
-  for (const key of ['cwd', 'workdir', 'path', 'file_path', 'filename', 'directory']) {
+  for (const key of ['cwd', 'workdir', 'path', 'file_path', 'notebook_path', 'filename', 'directory']) {
     if (typeof input[key] === 'string' && input[key]) paths.push(resolve(base, input[key]));
   }
   const name = toolName(payload.tool_name);

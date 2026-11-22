@@ -1,0 +1,19 @@
+{
+  "name": "conductor",
+  "version": "0.1.0",
+  "description": "GitHub issue skills for ordinary work, synchronous direction, and explicitly requested automation in Claude Code or Codex.",
+  "author": {
+    "name": "OnePersonLabs"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/OnePersonLabs/conductor-plugin",
+  "keywords": [
+    "github",
+    "claude-code",
+    "codex",
+    "workflow",
+    "issue-tracking",
+    "pull-requests"
+  ],
+  "hooks": "./hooks/claude-hooks.json"
+}

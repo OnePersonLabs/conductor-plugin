@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { createInterface } from 'node:readline';
-import { CodexClient } from './codex.mjs';
+import { clientClass, selectRuntime } from './runtime.mjs';
 import { ManagedState } from './managed-state.mjs';
 
 const clone = value => structuredClone(value);
@@ -15,10 +15,11 @@ function publicRequest(request) {
 }
 
 export class ManagedWork extends EventEmitter {
-  constructor({ commonDir, cwd, sessionId, store, client } = {}) {
+  constructor({ commonDir, cwd, sessionId, store, client, runtime = selectRuntime(), claudeSettings } = {}) {
     super();
     this.store = store ?? new ManagedState({ commonDir, cwd, sessionId });
-    this.client = client ?? new CodexClient({ cwd, experimentalApi: true });
+    // Codex needs the experimental API for plan mode and queues; ClaudeClient ignores it.
+    this.client = client ?? new (clientClass(runtime))({ cwd, experimentalApi: true, settings: claudeSettings });
     this.loaded = false; this.closing = false; this.waiters = new Set(); this.ids = new Set();
     this.events = Promise.resolve(); this.busy = null;
     this.client.on('notification', event => this.enqueue(() => this.notification(event)));
