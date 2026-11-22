@@ -21,7 +21,7 @@ the user must be able to answer without reading an issue, proposal or tool log.
 Do not manufacture a questionnaire when the relevant decisions are already made.
 Continue independent authorized preparation while a dependent decision is open.
 
-Use native question cards when available and appropriate; otherwise leave the
+Use native question cards (`AskUserQuestion` on Claude Code) when available and appropriate; otherwise leave the
 question visible in ordinary chat and end the turn. Do not require a mode change,
 terminal prompt cycle, running listener or browser. Host approval controls retain
 their required interface. Silence, dismissal, internal notifications and drafts

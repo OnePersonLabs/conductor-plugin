@@ -16,18 +16,20 @@ Read [managed work](../../references/managed-work.md) before starting a worker.
 Use its exact foreground bridge API for a persistent ordinary AppServer worker.
 The coordinator owns that worker, its questions and write boundaries. Do not use
 native v2 subagent RPC, take over Desktop's private server or create another user
-chat. Keep one live JSONL client through questions. Preserve the original worker
+chat. Keep one live JSONL client through questions (Codex; on Claude each turn is
+a `claude -p` process resumed by session id, and the worker ends its turn with
+any question). Preserve the original worker
 for related implementation and repairs and the independent reviewer for rechecks.
 
 ## Plan through actual human dialogue
 
 Keep the visible coordinator in Default mode during the ordinary workflow.
-Configure the owned managed worker in actual Plan Mode for initial phase planning
+Configure the owned managed worker in actual Plan Mode (`--permission-mode plan` on Claude, returning the full plan as its final message) for initial phase planning
 and substantive replanning. Relay its live questions to the human and return the
 answers through the same live bridge client. A heading or approval does not
 establish the worker's mode; verify the actual configured turn mode.
 
-If the coordinator's host is itself in Plan Mode, obey its write restrictions.
+If the coordinator's host is itself in Plan Mode (Claude Code plan mode), obey its write restrictions.
 Do not bypass that restriction through a worker or another path. Saving the plan
 requires an authorized writable coordinator turn; this exceptional host gate does
 not make a user mode switch part of the ordinary workflow.

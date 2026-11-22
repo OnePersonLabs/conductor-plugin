@@ -22,7 +22,7 @@ use the production planning/implementation/review settings in managed work
 without silent substitution. Preserve one writer per mutable scope and retain
 original builder/reviewer context through repair.
 
-Configure the managed worker in actual Plan Mode for planning and in Default mode
+Configure the managed worker in actual Plan Mode (`--permission-mode plan` on Claude) for planning and in Default mode
 for implementation. The coordinator normally stays Default, receives the completed
 plan and owns saving tracked artifacts. Use the completed-turn compaction and
 atomic settings transition from the managed-work protocol when switching roles.
@@ -57,7 +57,8 @@ ask whether to use the current chat or a fresh chat before adopting or creating
 one. A new user chat requires that explicit choice. Name an adopted or created
 director `🎬 <project> <MM/DD/YYYY hh:mm AM/PM>` using established project name and
 local creation/adoption time. Use native project chat creation for an authorized
-fresh chat, with `gpt-6.1-sol` and low thinking when supported. Check actual tool
+fresh chat, with `gpt-6.1-sol` and low thinking when supported (on Claude Code, a
+new session with `sonnet` at `low` effort). Check actual tool
 fields and report unsupported settings. Keep the current chat's model when
 adopting it unless separately authorized. Never archive the previous chat
 automatically.
@@ -65,13 +66,20 @@ automatically.
 Supply mode, repository, authorized operation and expected prior binding to a
 fresh chat. It verifies its actual native UUID and saved ownership before
 enablement or attach. Reuse a saved owner or pending handoff; do not create
-duplicates or Desktop replacement workers. Complete initial user decisions
+duplicates or Desktop replacement workers (Codex). Complete initial user decisions
 through $conductor:ask-user before enabling observation. Preserve and verify
 paused admission before any dispatch; separately authorized execution activates
 admission only after decisions are integrated.
 
+A Claude Code chat director binds itself with `conductor enable --host desktop
+--thread current`. Claude Code has no queue into a live chat, so keep
+`conductor director-wait` running as a background command (Bash with
+`run_in_background`) whenever the director is idle. Claude Code re-invokes you
+when it prints a wake; handle that wake, then re-arm `conductor director-wait`
+before ending the turn. Never run it in the foreground.
+
 For a plugin rollout, finish bundle edits, checks and publication before refresh,
-hook trust and required configuration/instruction checks. Create replacement
+hook trust (Codex only) and required configuration/instruction checks. Create replacement
 director chats only afterward. Keep that installed bundle unchanged through
 handoff and lifecycle verification. Never refresh beneath active turns or into
 another environment without authority.

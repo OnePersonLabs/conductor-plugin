@@ -5,6 +5,11 @@ review, and delivery. Work on a GitHub issue or an established local request.
 Choose pair programming for human phase decisions, or explicitly direct a larger
 scope synchronously or through background automation.
 
+Conductor runs in Codex and in Claude Code. Skills are written in the Codex form,
+`$conductor:name`. In Claude Code, invoke the same skill as `/conductor:name` or
+through the Skill tool with `conductor:name`. The same applies to
+`$onepersonlabs:` references. Where behavior differs, the text names both hosts.
+
 Local phase work needs a Git checkout, not GitHub or runner configuration.
 Read-only exploration needs neither. Issue operations verify the target GitHub
 repository and your authority. Background automation requires repository setup
@@ -57,8 +62,9 @@ that need no issue do not require it.
 
 `$conductor:pair-program` runs **plan → agree → implement → review and repair →
 report → decide the next phase** for one issue or local request. The visible
-coordinator keeps a managed work thread connected while it enters actual Plan
-Mode, receives answers, compacts and changes to implementation mode.
+coordinator keeps a managed work thread (a Claude session on Claude Code)
+connected while it enters actual Plan Mode (`--permission-mode plan` on Claude
+Code), receives answers, compacts and changes to implementation mode.
 
 Plans live in `.conductor/plans/`; standalone HTML reports live in
 `.conductor/reports/`. Both are authored, Git-tracked records. A report explains
@@ -72,14 +78,15 @@ and [managed work](plugins/conductor/references/managed-work.md).
 | Mode | Who does the work | Workspace and lifetime |
 | --- | --- | --- |
 | Ordinary work | The current agent and any authorized helpers | Current checkout; ends with the requested task. No director. |
-| Pair programming | A visible coordinator and managed work thread, with independent review | Current checkout; human phase decisions; stops after the selected task. |
+| Pair programming | A visible coordinator and managed work thread or session, with independent review | Current checkout; human phase decisions; stops after the selected task. |
 | Synchronous director (default when requested) | A visible coordinator directs the same phase capabilities across the selected scope | Current checkout; no background runner or routine human phase approvals. |
-| Automated director (explicit opt-in) | A director chat and background coordinator manage original builder/reviewer threads | Isolated issue worktrees; event-driven recovery and delivery. |
+| Automated director (explicit opt-in) | A director chat or session and background coordinator manage original builder/reviewer threads | Isolated issue worktrees; event-driven recovery and delivery. |
 
 When you explicitly request background automation and do not specify its chat, Conductor
 asks whether to use this chat or a fresh one. Synchronous work stays in this chat.
 Fresh director chats use `gpt-6.1-sol` at
-`low` reasoning effort. An existing chat keeps its current model. A director
+`low` reasoning effort on Codex and `sonnet` at `low` effort on Claude Code. An
+existing chat keeps its current model. A director
 names itself `🎬 <project> <MM/DD/YYYY hh:mm AM/PM>` using local time, for example
 `🎬 Psychord 11/06/2026 06:30 PM`. Former director chats remain visible unless
 you ask to archive them.
@@ -87,7 +94,7 @@ you ask to archive them.
 Startup begins with `$conductor:ask-user`: inspect existing issues and recorded
 answers, then surface useful unresolved decisions before implementation. It does
 not repeat answered questions or invent a questionnaire when scope is clear.
-Questions use native question cards or chat. The human-collaboration web inbox
+Questions use native question cards (`AskUserQuestion` on Claude Code) or chat. The human-collaboration web inbox
 starts only when explicitly requested; existing drafts and submissions remain
 recoverable.
 
@@ -99,14 +106,31 @@ or pause barrier before changing its scope, acceptance, or dependencies.
 
 ## Install and configure
 
-Install the Codex plugin and CLI separately. The automated service requires
-Node.js 24+, Git, authenticated GitHub CLI, and Codex App Server.
+Install the plugin and CLI separately. The automated service requires
+Node.js 24+, Git, authenticated GitHub CLI, and the selected runtime: Codex App
+Server or the authenticated Claude Code CLI.
 
 ```powershell
 codex plugin marketplace add 'C:\path\to\conductor-plugin'
 codex plugin add conductor@conductor
 npm install -g 'C:\path\to\conductor-plugin'
 ```
+
+### Claude Code
+
+```powershell
+claude plugin marketplace add 'C:\path\to\conductor-plugin'
+claude plugin install conductor@conductor
+npm install -g 'C:\path\to\conductor-plugin'
+```
+
+Hooks register automatically from `hooks/claude-hooks.json`; Claude Code has no
+hook trust step. The Claude Code CLI must be on PATH (`CLAUDE_BIN` overrides it)
+and authenticated. Conductor selects the runtime from `"runtime": "codex" | "claude"`
+in `conductor.json`, then from the `CONDUCTOR_RUNTIME` environment variable, and
+otherwise uses `claude` inside Claude Code (`CLAUDECODE=1`) and `codex` elsewhere.
+Workers run as `claude -p` sessions, one process per turn, resumed by session id;
+`claude --resume` lists them. See [configuration](plugins/conductor/docs/configuration.md#claude-code).
 
 For background automation, use `$conductor:setup-repo-workflow`. Review its
 `conductor.json`, label mapping, real verification commands, concurrency, and
@@ -176,7 +200,7 @@ before applying cleanup.
 
 While automation owns a repository, the checkout hook warns unrelated chats in
 the main checkout and rejects edits and commands with unknown effects. Recognized
-inspection calls remain available. This is a guard over supported Codex hook
+inspection calls remain available. This is a guard over supported Codex or Claude Code hook
 calls, not filesystem isolation; disabled hooks, existing interactive processes,
 and external programs are outside its protection. See [checkout protection](plugins/conductor/docs/workflow.md#main-checkout-protection).
 
@@ -190,6 +214,6 @@ execution, and delivered work are distinct claims.
 See [configuration](plugins/conductor/docs/configuration.md) for checks, labels,
 models, reviewed design handoffs, and migration. For an authorized live rollout,
 finish bundle changes, checks, and publication before refreshing and verifying
-hook trust. Create replacement director chats only after the final bundle is
+hook trust (Codex only; Claude Code has no trust step). Create replacement director chats only after the final bundle is
 installed; keep it unchanged during handoff. A request to leave Conductor disabled
 or skip global refresh takes precedence over that rollout procedure.

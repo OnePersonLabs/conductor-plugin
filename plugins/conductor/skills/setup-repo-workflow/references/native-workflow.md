@@ -9,7 +9,7 @@ the project's owners of product meaning and acceptance evidence.
 ## Supported delivery lane
 
 Conductor supports a GitHub issue-to-PR path. Each admitted issue receives a
-branch and separate worktree. Its original Codex builder handles implementation
+branch and separate worktree. Its original builder (Codex thread or Claude session) handles implementation
 and PR repairs; the coordinator verifies configured checks, publishes the branch,
 opens and monitors the PR, and reconciles landing. It does not deliver direct
 commits to the base branch or combine locally parallel issue branches.
@@ -30,8 +30,8 @@ does not bypass dependency blockers, holds or missing approval for new scope.
 
 `agents` is Conductor's maximum number of concurrent primary issues. Each
 issue keeps its slot while building, waiting for checks or review, repairing, and
-awaiting merge. It is not a Codex helper-subagent limit. Do not infer a
-project-wide helper cap from it; follow the repository's existing Codex policy
+awaiting merge. It is not a helper-subagent limit (Codex or Claude Agent tool). Do not infer a
+project-wide helper cap from it; follow the repository's existing host policy
 for any helper activity.
 
 Choose the smallest cap supported by authorized work and the project's shared
@@ -97,7 +97,7 @@ not copy them into an indefinite archive.
 ## Environment and unsupported assumptions
 
 Use one intended environment consistently for Git, `gh`, configured checks, and
-Codex App Server. Verify its PATH, credentials, filesystem permissions, and
+the selected runtime (Codex App Server or the Claude Code CLI). Verify its PATH, credentials, filesystem permissions, and
 toolchain. Windows and WSL have separate installations and environment settings.
 Do not claim compatibility merely because the package or a check command runs.
 

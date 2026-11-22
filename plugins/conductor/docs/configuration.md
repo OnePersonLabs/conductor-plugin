@@ -54,10 +54,11 @@ It is an execution gate, not a setup prerequisite or blanket permission for new
 product scope. Stopped runners, paused admission and missing director bindings
 do not invalidate repository setup.
 
-`directorModel` defaults to `gpt-6.1-sol`. Newly created director chats use Sol 6.1
-with `low` reasoning effort unless the user specifies otherwise. Adopting the
+`directorModel` defaults to `gpt-6.1-sol` on Codex and `sonnet` on Claude. Newly
+created director chats or sessions use Sol 6.1 (Codex) or `sonnet` (Claude) with
+`low` reasoning effort unless the user specifies otherwise. Adopting the
 current chat does not silently change its model. `plannerModel` instructs the director's
-native subagent delegation; the service does not create a second planner runner.
+native subagent delegation (Claude Agent tool subagents on Claude Code); the service does not create a second planner runner.
 It is the preference for deliberately delegated hard architecture or substantial
 planning decisions. Routine triage and backlog repair can stay with the director.
 The director verifies host model availability and reports unsupported required
@@ -69,18 +70,18 @@ owns the production model/effort choices, catalogue checks and completed-turn
 settings transitions. The worker enters actual Plan or Default mode through that
 connection and waits for verified applied settings before its next turn.
 The visible coordinator keeps its host-selected model and permissions. A
-coordinator in Plan Mode cannot use a worker to bypass its own mutation restriction.
+coordinator in Plan Mode (Claude Code plan mode on Claude) cannot use a worker to bypass its own mutation restriction.
 
 Initial setup keeps `admissionPaused: true` through onboarding and the first user
 decision phase. This field initializes new runtime state; editing it is not a
 control for an already-running coordinator. Existing pauses require their own
 explicit release through the bound director.
 
-Builder and reviewer threads use the host's configured model, effort, permissions
+Builder and reviewer threads (sessions on Claude) use the host's configured model, effort, permissions
 and tools on start and resume; Conductor supplies no role-specific override.
 Each role starts in a separate fresh thread and retains its own thread for repair.
 A native planner or independent helper explicitly starts with `fork_turns: "none"`
-and a complete assignment. Related follow-ups reuse that helper's own context.
+(Codex; a Claude Agent tool subagent starts with fresh context) and a complete assignment. Related follow-ups reuse that helper's own context.
 They do not inherit a project-coordination role or the director's conversation.
 OnePersonLabs supplies general judgment when available; Conductor remains usable
 without it and owns durable issue/dependency coordination, dispatch and delivery.
@@ -98,6 +99,45 @@ discussed but does not dispatch implementation. An `on-hold` issue remains
 suspended until explicitly released. A `ready` issue can dispatch after current
 scope and dependency checks pass. Closing a prerequisite triggers re-evaluation;
 it does not bypass proposal, hold or human-input requirements.
+
+## Claude Code
+
+`conductor.json` accepts an optional `"runtime": "codex" | "claude"`. If absent,
+the `CONDUCTOR_RUNTIME` environment variable decides; otherwise Conductor uses
+`claude` inside Claude Code (`CLAUDECODE=1`) and `codex` elsewhere.
+
+On Claude, builder, reviewer and managed workers run as Claude Code sessions
+through the `claude` CLI in print mode (`claude -p --output-format stream-json`),
+one process per turn, resumed by session id. `claude --resume` shows them, named
+like Codex threads. The CLI must be on PATH (`CLAUDE_BIN` overrides it) and
+authenticated. Workers use the user's configured Claude permissions, so
+unattended workers need allow rules or a permission mode. An optional block sets
+them for Default-mode worker turns only:
+
+```json
+{
+  "runtime": "claude",
+  "claude": {
+    "permissionMode": "acceptEdits",
+    "allowedTools": ["Bash(npm test:*)"]
+  }
+}
+```
+
+`permissionMode` is one of `acceptEdits`, `auto`, `bypassPermissions`,
+`dontAsk`, `manual` or `plan`.
+
+Claude model defaults: director `sonnet` at `low` effort; bounded planning
+`opus` at `xhigh`; complex unsettled architecture planning `opus` at `max`;
+implementation `opus` at `high`; independent review `opus` at `medium`.
+`directorModel` and `plannerModel` still override. Effort levels are `low`,
+`medium`, `high`, `xhigh` and `max`. Model names accept the aliases `fable`,
+`opus`, `sonnet` and `haiku`, or full ids.
+
+Headless Claude workers cannot show interactive approval or question prompts.
+Plan Mode for a managed worker maps to `--permission-mode plan`; the worker
+returns the full plan as its final message and asks consequential questions by
+ending its turn with them. The coordinator answers in the next turn.
 
 ## Verification and delivery settings
 
@@ -171,14 +211,14 @@ coordinated refresh described in the repository's rollout instructions.
 
 Confirm `origin` matches `repository`, the configured base branch exists, and
 `gh auth status` succeeds in the intended environment. Check configured
-commands from a clean worktree. Ensure Git, GitHub CLI, Node.js 24+ and Codex
-App Server are available.
+commands from a clean worktree. Ensure Git, GitHub CLI, Node.js 24+ and the
+selected runtime (Codex App Server, or the authenticated Claude Code CLI) are available.
 
 The source exposes explicit repository enablement and recovery controls; a
 configuration file alone does not start a watcher or authorize production
 dispatch. `conductor enable` explicitly starts the automated repository runner after
 setup; it is not the synchronous director entrypoint. Follow [workflow and recovery](workflow.md) for wakeup, stop and migration
-behavior. Windows and WSL maintain separate GitHub, Node and Codex environments;
+behavior. Windows and WSL maintain separate GitHub, Node and Codex or Claude environments;
 recover work in the environment that owns it.
 
 Legacy configurations using `readyLabel` require explicit migration while

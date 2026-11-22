@@ -21,7 +21,7 @@ uncertain. A substantive replan creates a linked successor plan; identify the
 superseded plan in both directions. Do not silently rewrite accepted history.
 
 The visible coordinator normally stays in Default mode while its managed worker
-plans in actual Plan Mode. After the planning turn completes, the coordinator saves
+plans in actual Plan Mode (`--permission-mode plan` on Claude, where the worker returns the full plan as its final message). After the planning turn completes, the coordinator saves
 the plan within its existing authority. Pair programming also requires the human's
 phase decision before saving the agreed plan. Synchronous autonomous work saves
 and continues an authorized plan without a routine human phase gate. The worker returns

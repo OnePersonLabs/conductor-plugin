@@ -25,7 +25,7 @@ also marked acceptance complete. If the PR closes without merge, the issue
 remains blocked. If merge cannot be proven in the base or acceptance is
 incomplete, the issue remains open for operator reconciliation.
 
-A local push, a PR marked closed, an auto-merge request, or a finished Codex turn
+A local push, a PR marked closed, an auto-merge request, or a finished Codex or Claude turn
 alone does not establish completed delivery. Inspect the PR, base, issue
 acceptance, and saved runtime status before reporting success.
 

@@ -6,6 +6,15 @@ mode, model or reasoning effort. The coordinator stays visible and owns the huma
 conversation, scope, integration and delivery. The bridge owns one worker thread
 and one live App Server client. It does not start a director, scheduler or service.
 
+On the Claude runtime the worker is a Claude Code session driven through the
+`claude` CLI in print mode (`claude -p --output-format stream-json`), one process
+per turn, resumed by session id; `claude --resume` lists it. Headless Claude
+workers cannot show interactive approval or question prompts. Plan Mode maps to
+`--permission-mode plan`: the worker returns the full plan as its final message
+(it does not call `ExitPlanMode`) and asks consequential questions by ending its
+turn with them; the coordinator answers in the next turn. The App Server request
+and `respond` details below describe the Codex runtime.
+
 The coordinator must follow its own host mode. A coordinator in Plan Mode must not
 use a Default-mode worker to perform implementation that its host forbids. A worker
 mode change does not change the coordinator's mode or grant new authority.
@@ -35,6 +44,18 @@ relaying questions. Do not restart the process to answer a question.
 {"id":"plan-1","command":"turn","prompt":"Investigate the authorized change. Ask me through request_user_input when a consequential decision is missing, then return the plan. Do not edit files."}
 ```
 
+On Claude, use Claude model and effort values from the table below, and ask the
+worker to end its turn with questions instead of using `request_user_input`:
+
+```json
+{"id":"start-1","command":"start"}
+{"id":"plan-config-1","command":"configure","mode":"plan","model":"opus","effort":"xhigh"}
+{"id":"plan-1","command":"turn","prompt":"Investigate the authorized change. When a consequential decision is missing, end your turn with the exact question and options. Otherwise return the full plan as your final message. Do not edit files."}
+```
+
+A Claude worker never emits `request` events, so `respond` has nothing to answer;
+reply to its question with the next `turn`.
+
 Wait for each control reply before its dependent command. `turn` acknowledges the
 submission; wait for its `turn-completed` event with `success:true` before treating
 the work as completed. `message` contains an ordinary worker answer. Native Plan
@@ -52,12 +73,15 @@ This reference owns model selection for managed pair programming and synchronous
 phase work. Verify the live catalogue before configuration. Report an unavailable
 required model or effort; do not silently substitute.
 
-| Assignment | Model | Effort |
-| --- | --- | --- |
-| Bounded planning against an established design | `gpt-6.1-sol` | `xhigh` |
-| Complex unsettled architecture planning | `gpt-6-astra` | `high` |
-| Implementation | `gpt-6.1-sol` | `high` |
-| Independent review, initially with fresh context | `gpt-6-astra` | `medium` |
+| Assignment | Codex model | Codex effort | Claude model | Claude effort |
+| --- | --- | --- | --- | --- |
+| Bounded planning against an established design | `gpt-6.1-sol` | `xhigh` | `opus` | `xhigh` |
+| Complex unsettled architecture planning | `gpt-6-astra` | `high` | `opus` | `max` |
+| Implementation | `gpt-6.1-sol` | `high` | `opus` | `high` |
+| Independent review, initially with fresh context | `gpt-6-astra` | `medium` | `opus` | `medium` |
+
+Claude effort levels are `low`, `medium`, `high`, `xhigh` and `max`; model names
+accept the aliases `fable`, `opus`, `sonnet` and `haiku`, or full ids.
 
 Honor explicit bounded assignments. The visible coordinator keeps its host-selected
 model, tools and permissions. The transport validates availability; it does not

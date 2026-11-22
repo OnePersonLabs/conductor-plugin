@@ -25,7 +25,9 @@ The onboarding instruction must identify mode, repository, authorized operation
 and expected prior binding. The onboarding chat checks its actual native UUID,
 current owner and pending handoff before enabling or attaching. First enablement
 uses `conductor enable --host desktop --thread <actual UUID>` only within that
-authority. Verify the resulting binding and paused admission before reporting
+authority. `--host desktop` is the chat host of the selected runtime (on Claude
+Code, the user's own session bound by UUID; `--thread current` resolves it from
+`CLAUDE_CODE_SESSION_ID`); `--host daemon` is the service host. Verify the resulting binding and paused admission before reporting
 startup or issuing execution controls. Keep prior restrictions intact. Admission
 activation is separate: use `activate` only after the required decisions are
 integrated and execution is authorized; never clear a prior user pause by inference.
@@ -101,7 +103,8 @@ When the user selects a fresh chat, create a native local project chat without
 forking history. Supply the mode, repository, operation, expected prior binding,
 brief decision context and existing source links. Use native APIs, not UI
 automation or shared-daemon replacement threads. Do not create another chat when
-the saved owner or pending destination should be reused.
+the saved owner or pending destination should be reused. On Claude Code the
+fresh director is a new Claude Code session.
 
 The destination verifies its UUID and prior binding, then requests
 `conductor attach --host desktop --thread <its own UUID>`. From the old active
@@ -132,14 +135,20 @@ that gate. When settled and idle, end the turn; native completion establishes
 host idle, not the settle receipt. Say: “Conductor is idle. Say ‘wakeup’ to manually
 wake Conductor.”
 
-Lifecycle hooks report actual `UserPromptSubmit`, `Stop` and `Interrupt` receipts.
+Lifecycle hooks report actual `UserPromptSubmit`, `Stop` and (Codex only) `Interrupt` receipts.
 Missing or unknown activity suppresses automatic wakes; never synthesize idle.
 For `lifecycle-receipt-missing`, inspect native chat state and hook execution before
 resuming. Native queue delivery exercises lifecycle hooks; cross-chat messaging
 can bypass `UserPromptSubmit`. Use native queue APIs for lifecycle-qualified
 follow-ups. Do not prescribe routine restarts or hook toggles without diagnosis.
-The service queues wakes only when the director is known idle. Desktop must be
+The service queues wakes only when the director is known idle. Codex Desktop must be
 available to consume them; the service does not launch its private server.
+Claude Code has no native queue into a live chat: the service keeps a per-session
+wake queue and the director keeps `conductor director-wait` running as a
+background Bash task, re-arming it before ending each turn (see
+[workflow](../docs/workflow.md#claude-code-director-wakeups)). Claude Code has no
+Interrupt hook, so after an interrupted turn wakeups stay suppressed until the
+next prompt.
 
 The observer reconciles external GitHub changes on the configured interval
 (30 minutes by default), without a model

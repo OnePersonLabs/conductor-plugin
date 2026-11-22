@@ -38,7 +38,8 @@ Synchronous direction stays in the current chat. For background automation,
 when the request does not specify a chat, ask whether to use the current chat or
 a fresh director chat. Create a chat only after the user selects that option.
 Use native project chat creation, model `gpt-6.1-sol`, and reasoning `low` for a
-new chat. Rename an explicitly adopted current chat but keep its model. Use the
+new chat. On Claude Code a fresh director is a new Claude Code session
+(`sonnet`, `low` effort). Rename an explicitly adopted current chat but keep its model. Use the
 title `🎬 <project> <MM/DD/YYYY hh:mm AM/PM>` in the user's local time, for example
 `🎬 Psychord 11/06/2026 06:30 PM`.
 
@@ -67,9 +68,10 @@ calls and descendants; a title or a claim in a prompt does not grant ownership.
 Workers retain their recorded workspace authority. An independent worktree can
 be used for unrelated local work; shared issue and delivery ownership still applies.
 
-This protection covers supported Codex hook calls. It does not isolate the
+This protection covers supported Codex and Claude Code hook calls. It does not isolate the
 filesystem or stop external writers, already-running commands, existing terminal
-input sessions, or calls that bypass hooks. Hooks must be loaded and trusted;
+input sessions, or calls that bypass hooks. Hooks must be loaded and, in Codex, trusted
+(Claude Code has no trust step);
 host hook failures or timeouts can also prevent enforcement. Arbitrary code from
 an unguarded checkout can conceal a write target that the hook cannot inspect.
 A missing runner
@@ -141,7 +143,12 @@ The destination verifies its own actual UUID, repository, saved owner, and
 pending handoff. Resolve initial human questions before enabling new execution;
 keep initial admission paused when questions or execution authority remain
 unresolved. Then enable with `conductor enable --host desktop --thread <its own
-UUID>` or use the authorized attach path for an existing director. Verify the
+UUID>` or use the authorized attach path for an existing director.
+`--host desktop` means the chat host of the selected runtime (Codex Desktop, or
+the user's own interactive Claude Code session bound by session UUID) and
+`--host daemon` the service host (Codex App Server daemon, or a service-created
+headless Claude session). In Claude Code, `--thread current` resolves the
+current session from `CLAUDE_CODE_SESSION_ID`. Verify the
 saved binding and native completion before reporting startup complete. Existing
 holds and admission/runner pauses must not be released as an onboarding shortcut.
 
@@ -152,11 +159,13 @@ observation is active. The existing `conductor start --thread UUID` command
 remains available to bind and start an existing daemon-owned director for
 terminal clients.
 
-Desktop is the primary interactive surface. Lifecycle hooks report when its
+Desktop (on Claude, the interactive Claude Code session) is the primary interactive surface. Lifecycle hooks report when its
 director chat is active, idle or interrupted; the observer uses those signals
 to suppress wakeups while the director is active. Unknown host status suppresses
-automatic wakeups; Conductor never assumes unknown means idle. Trust the plugin
-hooks when Desktop requests hook review. Routine plugin refresh does not
+automatic wakeups; Conductor never assumes unknown means idle. Claude Code has no
+Interrupt hook: after an interrupted turn, activity stays active until the next
+prompt, so wakeups are suppressed until then. Trust the plugin
+hooks when Desktop requests hook review (Codex only). Routine plugin refresh does not
 establish a need to restart Desktop. Diagnose missing receipts against actual
 event delivery and execution before prescribing reloads. Do not bind
 a Desktop chat to the shared-daemon proxy or infer its live status from that
@@ -308,12 +317,13 @@ Select Sol in the invoking director chat for ordinary coordination; the service
 does not switch that chat's model. The director handles routine triage and backlog
 repair. For a concrete hard architecture or substantial planning decision that
 needs stronger reasoning, it deliberately selects the configured planner
-(default Astra) through native subagent delegation. The assignment names the
+(default Astra on Codex, `opus` at `max` on Claude) through native subagent
+delegation (the Agent tool on Claude Code). The assignment names the
 unresolved decision, model, effort, context and required evidence. The director
 explicitly selects `fork_turns: "none"` for the initial planner and independent
 design reviewer, supplies a complete brief, and resumes their own sessions for
 related follow-ups. Builders and code reviewers already start in separate fresh
-App Server threads and retain their own context for repairs. The director
+App Server threads (Claude sessions on Claude) and retain their own context for repairs. The director
 applies and verifies supported changes, rechecking current state and preserving
 unrelated edits. If a required planner model is unavailable, it reports the
 unfinished judgment and continues independent authorized work.
@@ -386,7 +396,8 @@ use this order:
 1. Finish all bundle changes, checks and publication.
 2. Refresh the Windows local installation, verify hook trust, and finish
    required post-refresh configuration and global-instruction checks. Do not
-   refresh WSL or another local Codex home unless asked.
+   refresh WSL or another local Codex home unless asked. For Claude Code, install
+with `claude plugin marketplace add <path>` and `claude plugin install conductor@conductor`.
 3. Create the fresh replacement chats and use the attach procedure below.
 4. Verify the saved bindings and matching native start/Stop receipts. Preserve
    jobs, holds and admission pauses throughout. If human-collaboration inbox
@@ -403,7 +414,8 @@ it does not establish the cause of a missing receipt or require routine toggles.
 Ask the current director “Move Conductor to a fresh chat”, or open a chat in
 the same project and say “Make this the Conductor runner”. Both requests use
 `$conductor:direct-workflow`. A fresh chat uses Sol 6.1 Low and the title
-`🎬 <project> <MM/DD/YYYY hh:mm AM/PM>`. It reads current instructions and receives
+`🎬 <project> <MM/DD/YYYY hh:mm AM/PM>` (on Claude Code, a new session on
+`sonnet` at `low` effort). It reads current instructions and receives
 the automated mode, repository, authorized operation, expected prior binding,
 brief context, and relevant links rather than inheriting the old conversation.
 
@@ -471,7 +483,7 @@ inspection and settling in the same turn. If it returns `idle: true`, finish the
 “Conductor is idle. Say ‘wakeup’ to manually wake Conductor.” Only finishing the
 turn makes the host thread idle; `settle` does not.
 
-Say `wakeup` in the Desktop director chat, or run `conductor wakeup` from the
+Say `wakeup` in the director chat, or run `conductor wakeup` from the
 configured checkout, to ensure the service is available and ask it to check
 current work. The Desktop activity hook marks this interaction active, so the
 service does not queue a redundant wakeup. After a system restart, a Conductor
@@ -486,6 +498,18 @@ the native session queue for Desktop to consume when it loads the bound chat.
 Automatic delivery across Desktop or system restart still needs a live trial;
 if work has not resumed, open the saved director chat and say `wakeup`.
 Terminal-hosted directors continue to use the shared daemon path.
+
+### Claude Code director wakeups
+
+Claude Code has no native queue into a live chat. Conductor keeps a per-session
+wake queue instead. The director keeps `conductor director-wait` running as a
+background Bash task; Claude Code re-invokes the director when a background task
+exits. `director-wait` blocks until a wake is queued for the bound director,
+prints it, records consumption and exits. The director handles the wake and
+re-arms `conductor director-wait` in the background before ending its turn. The
+Stop hook also delivers pending wakes by continuing the turn, and reminds the
+director once to arm the waiter if none is running. `claude-headless` directors
+are service-created sessions and need no waiter.
 
 Stopping Conductor pauses the local runner and automatic dispatch. Passive
 issue-change signals do not restart a deliberately stopped runner. Bare
@@ -508,7 +532,7 @@ is the explicit command to continue an interrupted issue job once reconciled.
 Do not treat a replacement director as permission to replace a worker.
 
 If status reports `queue-cancellation-failed`, an obsolete wake could not be
-removed from Desktop's queue. Restore the host connection, then send the
+removed from Desktop's native queue (Codex). Restore the host connection, then send the
 `retry-wakeup` control with the reported `batchId`. For a saved cancellation,
 this retries deletion of the same queue item rather than submitting a new wake.
 Refresh status and settle the inspected revision after recovery.
@@ -581,7 +605,7 @@ reconciliation.
 Machine recovery data lives under `conductor/` in the Git common directory,
 outside tracked project files. Preserve the state, original thread IDs,
 branches and per-issue worktrees while diagnosing interruptions. Windows and
-WSL have distinct process, Git and Codex ownership; recover in the environment
+WSL have distinct process, Git and Codex or Claude ownership; recover in the environment
 that created the work.
 
 Generated recovery receipts are temporary. Completed control receipts expire

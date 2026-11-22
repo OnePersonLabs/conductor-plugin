@@ -59,7 +59,7 @@ follow-ups in the same worker context; reconcile outstanding descendants and
 operations before return.
 
 For pair programming, $conductor:pair-program configures the managed worker in
-actual Plan Mode and relays its questions while the visible coordinator normally
+actual Plan Mode (`--permission-mode plan` on Claude) and relays its questions while the visible coordinator normally
 stays in Default mode. The coordinator saves the accepted plan after the planning
 turn completes. If the host coordinator is itself in Plan Mode, do not bypass
 its write restriction through a worker. Finish a standalone planning request with

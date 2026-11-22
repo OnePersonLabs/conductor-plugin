@@ -21,19 +21,21 @@ action never starts either coordinator or background automation.
 
 Use [phase artifacts](phase-artifacts.md) for the tracked plan/report lifecycle
 and [managed work](managed-work.md) for the exact foreground bridge command API.
-Do not invent an AppServer command or use native v2 subagent RPC. The coordinator
-remains visible in the current chat and owns ordinary managed workers. It does
+Do not invent an AppServer command or use native v2 subagent RPC (on Claude Code,
+workers are `claude -p` sessions, not Agent tool subagents). The coordinator
+remains visible in the current chat or session and owns ordinary managed workers. It does
 not take over Codex Desktop's private server or create a replacement user chat.
 
 For pair programming, the visible coordinator normally stays in Default mode.
-Configure its managed worker in actual Plan Mode, relay live questions to the
-human and complete the phase dialogue. After the planning turn has completed,
+Configure its managed worker in actual Plan Mode (`--permission-mode plan` on
+Claude), relay live questions to the human (on Claude the worker ends its turn
+with them) and complete the phase dialogue. After the planning turn has completed,
 the coordinator saves the accepted tracked plan. Compact at the completed-turn
 boundary and switch the worker to Default mode for implementation. Independently
 review and repair, then report and return to the human for the next phase decision.
 Finish authorized delivery and closure, then stop.
 
-If the coordinator's host is itself in Plan Mode, obey that host's write
+If the coordinator's host is itself in Plan Mode (Claude Code plan mode), obey that host's write
 restriction. Do not bypass it through a worker or save artifacts until a writable
 coordinator turn is authorized. A worker mode does not change the host mode.
 
